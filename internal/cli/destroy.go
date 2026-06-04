@@ -31,6 +31,8 @@ func newDestroyCmd() *cobra.Command {
 
   1. bnk-forge unregister  (if bnk_forge.enabled and reachable)
   2. remove the k3s node containers + the cluster's docker network
+  3. revert ~/.kube/config (remove if we created it, restore backup if
+     we overwrote it)
 
 Required gates:
   --yolo                   acknowledge destructive
@@ -115,6 +117,11 @@ func runDestroy(ctx context.Context, out io.Writer, f *destroyFlags) error {
 			}
 		}
 	}
+
+	// Revert ~/.kube/config: remove it if cluster up created it, or
+	// restore the user's original if it was overwritten. No-op otherwise.
+	fmt.Fprintln(out, "      reverting ~/.kube/config ...")
+	removeGlobalKubeconfig(out, repo)
 
 	// Drop kubeconfig + e2e state so next run can't accidentally reuse it.
 	_ = os.Remove(filepath.Join(repo, "artifacts", "kubeconfig"))

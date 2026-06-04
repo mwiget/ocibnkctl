@@ -35,6 +35,7 @@ type clusterUpFlags struct {
 	yolo           bool
 	confirmCluster string
 	skipBNKForge   bool
+	skipKubeconfig bool
 }
 
 func newClusterUpCmd() *cobra.Command {
@@ -64,6 +65,7 @@ Required gates:
 	cmd.Flags().BoolVar(&f.yolo, "yolo", false, "Acknowledge cluster creation is destructive")
 	cmd.Flags().StringVar(&f.confirmCluster, "confirm-cluster", "", "Must equal poc.yaml.metadata.name (typo guard)")
 	cmd.Flags().BoolVar(&f.skipBNKForge, "skip-bnk-forge", false, "Skip bnk-forge auto-registration even if enabled")
+	cmd.Flags().BoolVar(&f.skipKubeconfig, "skip-kubeconfig", false, "Don't install the cluster kubeconfig as ~/.kube/config")
 	return cmd
 }
 
@@ -232,6 +234,17 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		fmt.Fprintf(j, "- cluster: %s\n- nodes: %s\n", p.Cluster.Name, strings.Join(nodes, ", "))
 		j.Close()
 	}
+
+	// Install the cluster kubeconfig as ~/.kube/config so kubectl / k9s
+	// work without setting KUBECONFIG. Opt out with --skip-kubeconfig;
+	// destroy reverts it.
+	if !f.skipKubeconfig {
+		fmt.Fprintln(out, "Installing ~/.kube/config ...")
+		if err := installGlobalKubeconfig(out, repo, kubeconfigPath); err != nil {
+			fmt.Fprintf(out, "      WARN: could not install ~/.kube/config: %v\n", err)
+		}
+	}
+
 	fmt.Fprintf(out, "\nDONE.  Next: `%s deploy prereqs && deploy flo && deploy cne` (or run e2e).\n", invocationName())
 	return nil
 }

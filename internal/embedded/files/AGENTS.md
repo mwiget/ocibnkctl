@@ -80,13 +80,18 @@ artifacts/       rendered k3s.yaml, kubeconfig (0600), helm values, certs
 keys/            gitignored — FAR tgz + JWT live here
 ```
 
-Inspect the running cluster with the fetched kubeconfig:
+Inspect the running cluster. `cluster up` installs this cluster's
+kubeconfig as `~/.kube/config` by default (prompting before overwriting an
+existing one, keeping a backup), so `kubectl` / `k9s` work directly:
 
 ```
-export KUBECONFIG=$(pwd)/artifacts/kubeconfig
 kubectl get nodes          # k3s-<name>-server-0, k3s-<name>-agent-0
 kubectl get pods -A
 ```
+
+A PoC-scoped copy also lives at `artifacts/kubeconfig` (use it via
+`export KUBECONFIG=$(pwd)/artifacts/kubeconfig`). `destroy` reverts
+`~/.kube/config`; opt out at bring-up with `--skip-kubeconfig`.
 
 ## Scenarios
 

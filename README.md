@@ -383,14 +383,18 @@ artifacts/       rendered k3s.yaml, kubeconfig (0600), helm values, certs
 keys/            gitignored — FAR tgz + JWT live here
 ```
 
-Inspect the running cluster with the fetched kubeconfig (PoC-scoped — it
-is **not** merged into `~/.kube/config`):
+Inspect the running cluster. `cluster up` installs this cluster's
+kubeconfig as `~/.kube/config` by default (prompting before overwriting an
+existing one, keeping a backup), so `kubectl` / `k9s` work directly:
 
 ```
-export KUBECONFIG=$(pwd)/artifacts/kubeconfig
 kubectl get nodes          # k3s-<name>-server-0, k3s-<name>-agent-0
 kubectl get pods -A
 ```
+
+A PoC-scoped copy also lives at `artifacts/kubeconfig` (use it via
+`export KUBECONFIG=$(pwd)/artifacts/kubeconfig`). `destroy` reverts
+`~/.kube/config`; opt out at bring-up with `--skip-kubeconfig`.
 
 #### Scenarios
 
@@ -475,18 +479,21 @@ keys/            gitignored — FAR tgz + JWT live here
 .gitignore       excludes all secret material
 ```
 
-The cluster kubeconfig lands at `artifacts/kubeconfig` (mode 0600) and is
-**PoC-scoped — never merged into `~/.kube/config`**, so it can't clobber
-your existing contexts. To poke around the cluster yourself:
+`cluster up` installs this cluster's kubeconfig as **`~/.kube/config`** by
+default, so `kubectl` / `k9s` / etc. work without any `export`:
 
-```bash
-export KUBECONFIG=$(pwd)/artifacts/kubeconfig   # from inside the PoC dir
-kubectl get nodes        # k3s-<name>-server-0, k3s-<name>-agent-0
-```
+- if `~/.kube/config` doesn't exist → it's created;
+- if it exists → you're **prompted before overwriting**, and the original
+  is backed up to `~/.kube/config.ocibnkctl-bak`;
+- `destroy` reverts it — removes the file if we created it, or **restores
+  your backup** if we overwrote one;
+- opt out entirely with `cluster up --skip-kubeconfig` (non-interactive
+  runs / CI never overwrite an existing config).
 
-(`ocibnkctl` itself drives `kubectl`/`helm` by passing this path via the
-`KUBECONFIG` env, so it never touches your global config either. `destroy`
-removes the file.)
+A PoC-scoped copy also lands at `artifacts/kubeconfig` (mode 0600) — use
+it explicitly via `export KUBECONFIG=$(pwd)/artifacts/kubeconfig`.
+`ocibnkctl` itself always drives `kubectl`/`helm` through that PoC-scoped
+path regardless.
 
 ## Network topology
 
