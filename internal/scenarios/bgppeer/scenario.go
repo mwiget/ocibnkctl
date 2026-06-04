@@ -3,7 +3,7 @@
 // NetworkAttachmentDefinition (the bridge CNI). Maps to F5 BNK how-to
 // #3 (Dynamic Routing with BGP).
 //
-// Architecture on kind + demoMode:
+// Architecture on k3s + demoMode:
 //
 //	┌──────────────────────────────┐    ┌──────────────────────────┐
 //	│ TMM pod                      │    │ scn-frr pod              │
@@ -17,18 +17,20 @@
 //
 // Why this works (where the previous attempt didn't):
 //   - Multus attaches a second interface (net1) into each pod via the
-//     bridge CNI, plumbed through the same Linux bridge on the kind
+//     bridge CNI, plumbed through the same Linux bridge on the k3s
 //     node. Pod-to-pod traffic over net1 is direct L2 — no TMM hook.
 //   - ZeBOS gets `update-source net1` and a neighbor at 192.168.99.11
 //     (FRR's hardcoded NAD IP). BGP packets exit via net1, never
 //     touching the TMM data plane.
 //   - FRR's NAD annotation pins it to 192.168.99.11; bridge-CNI is
 //     per-node, so podAffinity to `app=f5-tmm` co-locates both pods
-//     on smoke-worker.
+//     on the TMM worker (k3s agent).
 package bgppeer
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -38,6 +40,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"text/template"
@@ -53,18 +56,28 @@ const (
 	scnName  = "bgp-peer-frr"
 	scnTitle = "Dynamic routing with BGP (how-to #3) — FRR peer over Multus NAD"
 	// Multus thick-plugin upstream manifest. Pinned + SHA-256 verified —
-	// we apply this DaemonSet to every kind node, so a tampered manifest
+	// we apply this DaemonSet to every k3s node, so a tampered manifest
 	// would land cluster-wide CNI plumbing. The SHA was computed at the
 	// time this version was pinned; update both lines together when
 	// bumping multus.
 	multusManifestURL  = "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.1.4/deployments/multus-daemonset-thick.yml"
 	multusManifestSHA  = "33fef64fbb67ef5d68183bad5b2aec4163dad0ebb0b63abe25343155d0d8b4be"
-	// containernetworking/plugins release tarball. We extract just the
-	// `bridge` binary onto every kind node — that runs as root inside
-	// the node container, so SHA verification is load-bearing.
-	cniPluginsURL = "https://github.com/containernetworking/plugins/releases/download/v1.5.1/cni-plugins-linux-amd64-v1.5.1.tgz"
-	cniPluginsSHA = "77baa2f669980a82255ffa2f2717de823992480271ee778aa51a9c60ae89ff9b"
+	// containernetworking/plugins release. We extract just the `bridge`
+	// binary onto every k3s node — that runs as root inside the node
+	// container, so SHA verification is load-bearing. The tarball is
+	// arch-specific (k3s nodes match the host arch), so the URL +
+	// checksum are selected by the node architecture (see cniPluginsSHA).
+	cniPluginsVersion = "v1.5.1"
+	cniPluginsBaseURL = "https://github.com/containernetworking/plugins/releases/download/" +
+		cniPluginsVersion + "/cni-plugins-linux-"
 )
+
+// cniPluginsSHA maps the node architecture (Kubernetes/GOARCH style) to
+// the sha256 of the matching cni-plugins-linux-<arch>-<ver>.tgz.
+var cniPluginsSHA = map[string]string{
+	"amd64": "77baa2f669980a82255ffa2f2717de823992480271ee778aa51a9c60ae89ff9b",
+	"arm64": "c2a292714d0fad98a3491ae43df8ad58354b3c0bdf5d5a3e281777967c70fcff",
+}
 
 func init() { scenarios.Register(&scenario{}) }
 
@@ -161,13 +174,13 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 		return fmt.Errorf("ensure Multus: %w", err)
 	}
 
-	// 1a. Install the bridge CNI plugin on every kind node. The
-	// kind base image ships Calico + a few standard plugins
-	// (host-local, loopback, portmap, ptp, tuning) but NOT bridge.
+	// 1a. Install the bridge CNI plugin on every k3s node. The
+	// rancher/k3s node image ships Calico + a few standard plugins
+	// (host-local, loopback, portmap, tuning) but NOT bridge.
 	// Without it, the bnk-bgp NetworkAttachmentDefinition fails
 	// with "failed to find plugin 'bridge' in path [/opt/cni/bin]".
 	if err := ensureBridgeCNI(ctx); err != nil {
-		return fmt.Errorf("install bridge CNI plugin on kind nodes: %w", err)
+		return fmt.Errorf("install bridge CNI plugin on cluster nodes: %w", err)
 	}
 
 	// 2. Namespace + NAD + FRR config + FRR Deployment.
@@ -595,10 +608,10 @@ func podBnkBgpIP(ctx *scenarios.Context, namespace, podName string) (string, err
 	return "", fmt.Errorf("bnk-bgp entry not in network-status: %q", oneLine(netStatus, 200))
 }
 
-// ensureBridgeCNI downloads the containernetworking/plugins
-// release tarball into each kind node and extracts just the
-// `bridge` binary into /opt/cni/bin/bridge. Idempotent — skips
-// nodes where the binary is already present.
+// ensureBridgeCNI downloads the containernetworking/plugins release
+// tarball host-side, extracts just the `bridge` binary, and `docker cp`s
+// it into each node's /opt/cni/bin/bridge. Idempotent — skips nodes
+// where the binary is already present.
 //
 // Why we don't bake this into `cluster up`: the bridge plugin
 // is only needed when a scenario uses a bridge-CNI-backed NAD,
@@ -641,40 +654,104 @@ func ensureBridgeCNI(ctx *scenarios.Context) error {
 		"-o", "jsonpath={range .items[*]}{.metadata.name}\n{end}")
 	nodes := strings.Fields(out)
 	if len(nodes) == 0 {
-		return fmt.Errorf("no kind nodes found")
+		return fmt.Errorf("no cluster nodes found")
 	}
-	// Single-line POSIX sh script: short-circuit if the bridge
-	// binary is already present, otherwise download the plugins
-	// tarball, verify its SHA-256, extract bridge, install it,
-	// clean up. SHA verification is load-bearing: this binary
-	// runs as root inside the kind node container, so a tampered
-	// download would land arbitrary root code on every node.
-	script := `set -e; ` +
-		`if [ -x /opt/cni/bin/bridge ]; then echo present; exit 0; fi; ` +
-		`cd /tmp; ` +
-		`curl -fsSL -o plugins.tgz ` + cniPluginsURL + `; ` +
-		`echo '` + cniPluginsSHA + `  plugins.tgz' | sha256sum -c -; ` +
-		`tar xzf plugins.tgz ./bridge; ` +
-		`install -m 0755 bridge /opt/cni/bin/bridge; ` +
-		`rm -f plugins.tgz bridge; ` +
-		`echo installed`
+	// Select the CNI plugins tarball by node architecture — k3s nodes
+	// match the host arch, so an amd64 binary on an arm64 node (Apple
+	// Silicon / arm64 Linux) would fail with "exec format error".
+	archOut, _ := r.KubectlCapture(ctx.Ctx, "get", "nodes",
+		"-o", "jsonpath={.items[0].status.nodeInfo.architecture}")
+	arch := strings.TrimSpace(archOut)
+	sha, ok := cniPluginsSHA[arch]
+	if !ok {
+		return fmt.Errorf("unsupported node architecture %q for the bridge CNI plugin (have: amd64, arm64)", arch)
+	}
+	url := cniPluginsBaseURL + arch + "-" + cniPluginsVersion + ".tgz"
+
+	// Fetch + SHA-verify the CNI plugins tarball host-side, extract just
+	// the `bridge` binary, and `docker cp` it into each node's
+	// /opt/cni/bin. Doing the download + extraction on the host (in Go)
+	// rather than inside the node container means we don't depend on the
+	// node image shipping curl/wget/tar — the minimal rancher/k3s image
+	// has no curl, which broke the old in-node `curl … | tar` approach.
+	// SHA verification stays load-bearing: this binary runs as root
+	// inside every node, so a tampered download would land arbitrary
+	// root code on the cluster.
+	tgz, err := downloadAndVerify(ctx.Ctx, url, sha)
+	if err != nil {
+		return fmt.Errorf("fetch CNI plugins (%s): %w", arch, err)
+	}
+	bridgeBin, err := extractBridge(tgz)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "bridge-cni-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(bridgeBin); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+		return err
+	}
+
 	for _, n := range nodes {
 		fmt.Fprintf(ctx.Out, "      | bridge CNI on %s ... ", n)
-		// docker exec rather than crictl — kind nodes are docker
-		// containers and this runs from the host. Use os/exec
-		// directly because Runner doesn't expose a generic
-		// shell-exec method (and bumping its surface for one
-		// scenario isn't worth it).
-		cmd := exec.CommandContext(ctx.Ctx, "docker", "exec", n, "sh", "-c", script)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			fmt.Fprintln(ctx.Out, "ERROR")
-			return fmt.Errorf("install bridge plugin on %s: %w (output: %s)", n, err, strings.TrimSpace(string(out)))
+		// Skip nodes that already have it (idempotent re-runs).
+		if exec.CommandContext(ctx.Ctx, "docker", "exec", n, "test", "-x", "/opt/cni/bin/bridge").Run() == nil {
+			fmt.Fprintln(ctx.Out, "present")
+			continue
 		}
-		fmt.Fprintln(ctx.Out, strings.TrimSpace(string(out)))
+		// docker cp the host-extracted binary in. `docker exec` is used
+		// throughout this scenario because the nodes are docker
+		// containers reachable from the host; podman would need
+		// `podman cp/exec` (a pre-existing limitation).
+		if cpOut, err := exec.CommandContext(ctx.Ctx, "docker", "cp",
+			tmp.Name(), n+":/opt/cni/bin/bridge").CombinedOutput(); err != nil {
+			fmt.Fprintln(ctx.Out, "ERROR")
+			return fmt.Errorf("docker cp bridge to %s: %w (output: %s)", n, err, strings.TrimSpace(string(cpOut)))
+		}
+		// docker cp doesn't reliably preserve mode — ensure +x.
+		if chOut, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
+			"chmod", "0755", "/opt/cni/bin/bridge").CombinedOutput(); err != nil {
+			fmt.Fprintln(ctx.Out, "ERROR")
+			return fmt.Errorf("chmod bridge on %s: %w (output: %s)", n, err, strings.TrimSpace(string(chOut)))
+		}
+		fmt.Fprintln(ctx.Out, "installed")
 	}
 	_ = r
 	return nil
+}
+
+// extractBridge gunzips + untars the CNI plugins release tarball and
+// returns the `bridge` binary's bytes. The release stores plugins at
+// top level (e.g. "./bridge").
+func extractBridge(tgz []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimPrefix(hdr.Name, "./") == "bridge" {
+			return io.ReadAll(tr)
+		}
+	}
+	return nil, fmt.Errorf("`bridge` binary not found in CNI plugins tarball")
 }
 
 // ensureMultus installs the upstream Multus thick-plugin DaemonSet
@@ -683,7 +760,7 @@ func ensureBridgeCNI(ctx *scenarios.Context) error {
 //
 // The 50Mi default OOMKills under sustained CNI churn — repeated
 // scenario apply/clean cycles or scaling the cluster past a handful
-// of pods on the worker tips it over within minutes. On kind that
+// of pods on the worker tips it over within minutes. On this shape that
 // looks like CrashLoopBackOff or "failed to send CNI request:
 // Post 'http://dummy/cni': EOF" sandbox-create errors. 500Mi
 // comfortably holds through full scenario suites; the request stays

@@ -177,7 +177,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		"--network", net,
 		"--label", k3sClusterLabel + "=" + name,
 		"--label", k3sRoleLabel + "=server",
-		"--tmpfs", "/run", "--tmpfs", "/var/run",
+		"--tmpfs", "/run",
 		"-e", "K3S_TOKEN=" + k.token(name),
 		"-e", "K3S_KUBECONFIG_MODE=644",
 		"-p", "127.0.0.1::6443",
@@ -187,6 +187,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 	serverArgs = append(serverArgs, k3sServerArgs...)
 	if err := k.runVisible(ctx, serverArgs...); err != nil {
 		return fmt.Errorf("start k3s server: %w", err)
+	}
+	if err := k.linkVarRun(ctx, server); err != nil {
+		return fmt.Errorf("k3s server: %w", err)
 	}
 	if err := k.makeRshared(ctx, server); err != nil {
 		return fmt.Errorf("k3s server: %w", err)
@@ -203,7 +206,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		"--network", net,
 		"--label", k3sClusterLabel + "=" + name,
 		"--label", k3sRoleLabel + "=agent",
-		"--tmpfs", "/run", "--tmpfs", "/var/run",
+		"--tmpfs", "/run",
 		"-e", "K3S_TOKEN=" + k.token(name),
 		"-e", "K3S_URL=https://" + server + ":6443",
 		nodeImage, "agent",
@@ -212,6 +215,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
 		return fmt.Errorf("start k3s agent: %w", err)
 	}
+	if err := k.linkVarRun(ctx, agent); err != nil {
+		return fmt.Errorf("k3s agent: %w", err)
+	}
 	if err := k.makeRshared(ctx, agent); err != nil {
 		return fmt.Errorf("k3s agent: %w", err)
 	}
@@ -219,6 +225,39 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		return fmt.Errorf("agent node did not register: %w", err)
 	}
 	return nil
+}
+
+// linkVarRun makes /var/run a symlink to /run on the node. The
+// rancher/k3s image ships them as two separate directories, but
+// containerd creates pod netns under /var/run/netns while the Multus
+// thick-plugin daemon mounts host /run/netns (and kind's node image,
+// which the predecessor ran on, symlinks the two). Without the symlink
+// the paths diverge and every Multus-attached pod fails sandbox
+// creation with "no net namespace … found". Done right after container
+// start, before any pods (so netns) exist, so /var/run is still the
+// image's empty dir and replacing it is safe.
+func (k *K3s) linkVarRun(ctx context.Context, container string) error {
+	const script = `[ -L /var/run ] || { rm -rf /var/run && ln -s /run /var/run; }`
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		c := k.run(ctx, "exec", container, "sh", "-c", script)
+		var errb bytes.Buffer
+		c.Stdout = io.Discard
+		c.Stderr = &errb
+		if err := c.Run(); err == nil {
+			return nil
+		} else if s := strings.TrimSpace(errb.String()); s != "" {
+			lastErr = fmt.Errorf("%s", s)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("symlink /var/run -> /run in %s: %w", container, lastErr)
 }
 
 // makeRshared remounts the node container's rootfs as rshared so mount

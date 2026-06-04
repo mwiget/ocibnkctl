@@ -170,6 +170,16 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if err := r.Apply(ctx, string(nadCRD)); err != nil {
 		return fmt.Errorf("apply NetworkAttachmentDefinition CRD: %w", err)
 	}
+	// BNK PVCs request storageClassName: standard (kind's default SC
+	// name). k3s names its default local-path, so add a `standard` SC
+	// backed by the same provisioner or every BNK PVC stays Pending.
+	standardSC, err := embedded.Templates.ReadFile("templates/standard-sc.yaml")
+	if err != nil {
+		return fmt.Errorf("read embedded standard-sc.yaml: %w", err)
+	}
+	if err := r.Apply(ctx, string(standardSC)); err != nil {
+		return fmt.Errorf("apply standard StorageClass: %w", err)
+	}
 	// Wait for Calico controller — gives the CNI rollout enough time
 	// that subsequent `kubectl` calls don't race it.
 	if err := r.Wait(ctx, "kube-system", "Available", "deployment/calico-kube-controllers",
