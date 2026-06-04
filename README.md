@@ -135,7 +135,7 @@ requests.
 ## bnk-forge integration
 
 If a local [bnk-forge](https://github.com/sp-prod-field/bnk-forge)
-clone exists at `~/git/bnk-forge` (or `$KINDBNKCTL_BNK_FORGE_PATH`)
+clone exists at `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`)
 when `ocibnkctl init` runs, the new PoC's `bnk_forge:` block is
 pre-filled and enabled. On `cluster up`, ocibnkctl best-effort
 registers the kind cluster with bnk-forge — if the local bnk-forge

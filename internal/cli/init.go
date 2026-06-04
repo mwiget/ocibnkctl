@@ -38,7 +38,7 @@ The repo contains:
 
 Initializes a git repo unless --no-git.
 
-Auto-detects bnk-forge: if $KINDBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge
+Auto-detects bnk-forge: if $OCIBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge
 exists (with a Makefile inside), the bnk_forge: block is pre-filled and
 enabled. Otherwise it's written disabled. Either way, deployment never
 blocks on bnk-forge presence.`,
@@ -140,11 +140,11 @@ var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$`)
 func validName(s string) bool { return nameRE.MatchString(s) }
 
 // detectBNKForge looks for a local bnk-forge clone. Checks
-// $KINDBNKCTL_BNK_FORGE_PATH first, then ~/git/bnk-forge. Returns the
+// $OCIBNKCTL_BNK_FORGE_PATH first, then ~/git/bnk-forge. Returns the
 // path if a directory containing a Makefile is found, else "".
 func detectBNKForge() string {
 	candidates := []string{}
-	if env := strings.TrimSpace(os.Getenv("KINDBNKCTL_BNK_FORGE_PATH")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("OCIBNKCTL_BNK_FORGE_PATH")); env != "" {
 		candidates = append(candidates, expandTilde(env))
 	}
 	if h, err := os.UserHomeDir(); err == nil {

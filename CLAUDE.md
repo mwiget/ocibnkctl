@@ -146,7 +146,7 @@ binding. The full topology diagram is in README.md "Network topology".
 
 ## bnk-forge integration
 
-Optional. If `~/git/bnk-forge` (or `$KINDBNKCTL_BNK_FORGE_PATH`) exists at
+Optional. If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists at
 `init` time, the `bnk_forge:` block is pre-filled and `cluster up` best-effort
 registers the kind cluster with bnk-forge. If bnk-forge isn't running, the
 hook logs a clean skip and continues — deployment never blocks on it.

@@ -1,52 +1,140 @@
-# ocibnkctl PoC operations guide
+# AGENTS.md — ocibnkctl PoC operator + agent guide
 
-This PoC repo deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a
-two-node kind cluster — one combined control-plane + worker, one
-worker dedicated to TMM. TMM runs in demo mode (virtio inside the pod
-netns); no DPU, no SR-IOV, no Multus.
+> You are driving a **PoC repo** created by `ocibnkctl init`. This file is
+> your operating manual; `CLAUDE.md` in this directory simply `@`-includes
+> it. Read `poc.yaml` first — it is the single source of truth for this
+> deployment. Everything below is how to act on it safely.
 
-## Pipeline
+## What this PoC deploys
+
+F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a **two-node k3s cluster**:
+one combined control-plane + worker (server) and one worker (agent)
+dedicated to TMM. The k3s nodes run directly as containers on the host
+OCI runtime (docker or podman) — there is **no kind, no k3d, no
+third-party orchestrator binary**. TMM runs in **demo mode** (virtio
+inside the pod netns); no DPU, no SR-IOV, no Multus on the base cluster.
+
+## Prerequisites (verify with `ocibnkctl doctor`)
+
+- a container runtime: **docker or podman**
+- **kubectl** and **helm** on PATH
+- ~12 cores / ~24 GB free for the full BNK stack (see `doctor`)
+
+No cluster tool to install — the k3s nodes are launched via the runtime
+directly.
+
+## Customer-supplied secrets — required before any deploy
+
+Drop these into `keys/` (gitignored) before running a deploy phase:
+
+- `keys/f5-far-auth-key.tgz` — FAR image-pull credentials for repo.f5.com
+- `keys/.jwt` — TEEM activation token
+
+Both come from F5's normal license-portal channels. **Never commit them,
+never echo their contents, never paste them into a chat or a report.**
+
+## The pipeline
 
 ```
 validate  →  cluster up  →  deploy prereqs  →  deploy flo  →  deploy cne
 ```
 
-End-to-end with one command:
+Each phase is idempotent and resume-safe. Run them individually, or
+chain all five with one command:
 
 ```
 ocibnkctl e2e --yolo --confirm-cluster <poc-name>
 ```
 
-The full run typically takes 10–20 minutes on a laptop with a warm
-Docker cache.
+A full run takes ~10–20 min on a laptop with a warm image cache. Per-phase:
 
-## Customer-supplied files
+```
+ocibnkctl validate
+ocibnkctl cluster up     --yolo --confirm-cluster <poc-name>
+ocibnkctl deploy prereqs --yolo --confirm-deploy <poc-name>
+ocibnkctl deploy flo     --yolo --confirm-deploy <poc-name>
+ocibnkctl deploy cne     --yolo --confirm-deploy <poc-name>
+```
 
-Drop these into `keys/` (gitignored) before running anything:
+### Safety gates (do not bypass without the operator's say-so)
 
-- `keys/f5-far-auth-key.tgz` — FAR image-pull credentials for repo.f5.com
-- `keys/.jwt` — TEEM activation token
+Every mutating phase requires **two** flags:
 
-Both come from F5's normal license-portal channels.
+- `--yolo` — acknowledges the action is destructive
+- `--confirm-cluster <name>` (cluster mutations) **or**
+  `--confirm-deploy <name>` (in-cluster mutations) — the value must echo
+  `poc.yaml.metadata.name`. This is a typo-guard against acting on the
+  wrong PoC.
 
-## What's different from dpubnkctl
+Before running anything destructive, confirm the PoC name and scope with
+the operator. `destroy` runs the pipeline in reverse (bnk-forge
+unregister → remove k3s node containers + network).
 
-| Phase | dpubnkctl (bare-metal + DPU) | ocibnkctl (kind + demo TMM) |
-|---|---|---|
-| discover | probes hosts + DPUs over SSH | **dropped** |
-| provision | BFB-flashes DPUs | **dropped** |
-| host network | netplan VLAN sub-ifs | **dropped** |
-| cluster up | kubespray over SSH | `kind create cluster` |
-| deploy network | Multus / SR-IOV / NAD / F5SPKVlan | **dropped** |
-| deploy flo | same | same |
-| deploy cne | CNEInstance + License | same, demo-mode flipped on |
+## PoC layout
 
-## bnk-forge
+```
+poc.yaml         source of truth — tear-down + redeploy read only this
+AGENTS.md        this guide          CLAUDE.md  @AGENTS.md include
+journal/         append-only markdown log written during runs
+artifacts/       rendered k3s.yaml, kubeconfig (0600), helm values, certs
+keys/            gitignored — FAR tgz + JWT live here
+```
 
-If `~/git/bnk-forge` (or `$KINDBNKCTL_BNK_FORGE_PATH`) exists when
-`ocibnkctl init` runs, the PoC's `bnk_forge:` block gets pre-filled
-and `cluster up` auto-registers the kind cluster with bnk-forge. If
-the local bnk-forge stack isn't running, registration is skipped —
-deployment never blocks on it.
+Inspect the running cluster with the fetched kubeconfig:
 
-`ocibnkctl` will not install or start bnk-forge for you.
+```
+export KUBECONFIG=$(pwd)/artifacts/kubeconfig
+kubectl get nodes          # k3s-<name>-server-0, k3s-<name>-agent-0
+kubectl get pods -A
+```
+
+## Scenarios
+
+After a successful deploy, exercise BNK features. Each scenario maps to
+an F5 how-to article, renders manifests, applies them, asserts state,
+and writes a JSON+md report under `reports/<timestamp>/`.
+
+```
+ocibnkctl scenario list            # names + ratings (green/amber/red)
+ocibnkctl scenario run --all       # all green scenarios
+ocibnkctl scenario run <name>      # one scenario
+ocibnkctl scenario clean <name>    # delete what a scenario applied
+```
+
+Ratings: **green** = fully testable in this demo shape; **amber** =
+control-plane verifies but data-plane plumbing is partially missing;
+**red** = needs DPUs / real upstream BIG-IP (never executed here). Many
+scenarios depend on `bgp-peer-frr`, which installs Multus + an FRR BGP
+peer on demand (the base cluster has no Multus).
+
+## bnk-forge (optional)
+
+If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists when
+`ocibnkctl init` runs, the `bnk_forge:` block is pre-filled and
+`cluster up` best-effort registers the cluster with bnk-forge. If the
+local stack isn't running, registration is skipped — deployment never
+blocks on it. `ocibnkctl` will not install or start bnk-forge.
+
+```
+ocibnkctl bnk-forge launch       # ensure bnk-forge sees this cluster
+ocibnkctl bnk-forge unregister   # remove it
+```
+
+## How to act as an agent here
+
+- **Read `poc.yaml` and the latest `journal/` entry first** to learn the
+  current state before proposing any action.
+- **Prefer `ocibnkctl` subcommands over ad-hoc kubectl/helm/docker.** The
+  CLI is idempotent and journals what it does; raw commands drift from
+  the source of truth. Before writing a new script for something, check
+  whether a subcommand or flag already does it (`ocibnkctl --help`,
+  `<cmd> --help`).
+- **Confirm scope before destructive actions** and never invent or
+  auto-fill the `--confirm-*` gate without the operator agreeing.
+- **Treat `keys/` as secret.** Never read, print, commit, or transmit its
+  contents. Reports are scrubbed of secrets before sharing.
+- **Surface failures honestly** — if a phase fails, show the real output
+  and the failing step; don't paper over it.
+- When stuck, `ocibnkctl doctor` and the per-phase logs under
+  `artifacts/` are the fastest way to see what the environment actually
+  reports.

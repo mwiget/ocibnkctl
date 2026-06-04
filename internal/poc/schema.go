@@ -85,7 +85,7 @@ type BNK struct {
 }
 
 // BNKForge mirrors dpubnkctl's bnk_forge block. Auto-populated by
-// `ocibnkctl init` when $KINDBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge
+// `ocibnkctl init` when $OCIBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge
 // exists locally; never blocks deployment when absent.
 type BNKForge struct {
 	Enabled       bool   `yaml:"enabled"`

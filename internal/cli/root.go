@@ -25,6 +25,10 @@ orchestrator binary:
 Each PoC lives in its own local dir (see "init"). poc.yaml holds the
 full declarative state needed to tear down and redeploy.
 
+Agentic: each PoC ships an AGENTS.md operator+agent guide. Point your
+favorite agentic CLI at it to deploy and manage BNK conversationally —
+see "ocibnkctl agent --help".
+
 Run "ocibnkctl doctor" after install to verify docker/podman, kubectl,
 and helm are reachable.`,
 		SilenceUsage:  true,
@@ -41,6 +45,7 @@ and helm are reachable.`,
 		newE2ECmd(),
 		newScenarioCmd(),
 		newBNKForgeCmd(),
+		newAgentCmd(),
 		newVersionCmd(),
 	)
 	return root
