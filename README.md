@@ -509,7 +509,7 @@ ocibnkctl e2e --poc demo --yolo --confirm-cluster demo   # cluster + full BNK
 k9s                       # picks up ~/.kube/config automatically — no export
 ```
 
-<!-- screenshot added in a follow-up: ![k9s navigating the BNK cluster on k3s](docs/k9s.png) -->
+![k9s navigating the BNK cluster on k3s](docs/k9s.jpg)
 
 In k9s: `0` shows all namespaces, `/f5-` filters to the F5 pods, `l` tails
 TMM's logs, `s` shells into a container.
