@@ -257,6 +257,44 @@ ocibnkctl deploy cne      --yolo --confirm-deploy  demo
 
 Every phase is idempotent and gated by `--yolo` plus a typo-guard.
 
+## Agentic workflow
+
+You can drive a PoC conversationally with an AI coding agent instead of
+typing the commands yourself — useful for getting your feet wet with BNK,
+or for letting an agent deploy, inspect, and troubleshoot the cluster and
+bnk-forge on your behalf.
+
+Every PoC created by `ocibnkctl init` ships an **`AGENTS.md`** — an
+operator + agent guide covering the pipeline, the `--yolo`/`--confirm-*`
+safety gates, cluster inspection, the scenario workflow, bnk-forge, and
+guardrails (read `poc.yaml` first, prefer `ocibnkctl` subcommands over
+ad-hoc kubectl, confirm scope before destructive actions, treat `keys/`
+as secret). A one-line **`CLAUDE.md`** `@`-includes it for Claude Code.
+
+ocibnkctl does **not** embed an LLM — you bring your own agent and model
+endpoint. The `agent` subcommand just prints the ready-to-paste
+invocation for your preferred CLI, each pointed at the PoC's `AGENTS.md`:
+
+```bash
+ocibnkctl agent                 # list supported CLIs
+ocibnkctl agent claude --poc ./demo   # print the invocation for Claude Code
+```
+
+```text
+# Claude Code (https://docs.claude.com/en/docs/claude-code)
+cd ./demo && \
+  claude
+# Then say:
+#   "Read AGENTS.md, then walk me through deploying BNK on this PoC
+#    (validate -> cluster up -> deploy), explaining each phase as you go."
+```
+
+Supported out of the box: `claude`, `gemini`, `aider`, `openai`,
+`pi`, `opencode`. Set a custom model endpoint with `--llm-endpoint`
+(or the CLI's own `ANTHROPIC_BASE_URL` / `OPENAI_API_BASE`). The agent
+runs the same gated `ocibnkctl` subcommands you would — nothing
+bypasses the `--confirm-*` typo-guards.
+
 ## Repo layout (the binary itself)
 
 ```
