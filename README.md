@@ -202,6 +202,11 @@ Verify after install:
 ocibnkctl doctor
 ```
 
+`doctor` checks each tool (docker/podman, kubectl, helm) and the host
+resource floor. For any that's **missing**, it prints a ready-to-run,
+OS/arch-aware install command (and a docs link) right under the failed
+check — so you can copy-paste the fix, or have an agent offer to run it.
+
 What customers supply themselves, dropped into `keys/` of the PoC repo
 (delivered through F5's normal channels):
 
@@ -437,6 +442,10 @@ ocibnkctl bnk-forge unregister   # remove it
 - When stuck, `ocibnkctl doctor` and the per-phase logs under
   `artifacts/` are the fastest way to see what the environment actually
   reports.
+- **If `doctor` reports a missing host tool** (docker/podman, kubectl,
+  helm) it prints a ready-to-run, OS-aware install command. Offer to run
+  it for the operator — but confirm first, since installing host tools is
+  a system change.
 
 </details>
 

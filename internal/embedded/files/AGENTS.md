@@ -138,3 +138,7 @@ ocibnkctl bnk-forge unregister   # remove it
 - When stuck, `ocibnkctl doctor` and the per-phase logs under
   `artifacts/` are the fastest way to see what the environment actually
   reports.
+- **If `doctor` reports a missing host tool** (docker/podman, kubectl,
+  helm) it prints a ready-to-run, OS-aware install command. Offer to run
+  it for the operator — but confirm first, since installing host tools is
+  a system change.

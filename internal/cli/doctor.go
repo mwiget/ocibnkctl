@@ -55,10 +55,15 @@ func runDoctor(ctx context.Context, out io.Writer, strict bool) error {
 			fails++
 		}
 		fmt.Fprintf(out, "  [%s] %-12s  %s\n", badge, r.name, r.detail)
+		if r.status == "fail" {
+			if h := installHint(r.name); h != "" {
+				fmt.Fprint(out, h)
+			}
+		}
 	}
 	fmt.Fprintln(out)
 	if fails > 0 {
-		return fmt.Errorf("%d failed check(s) — install the missing tools and retry", fails)
+		return fmt.Errorf("%d failed check(s) — install the missing tools (commands above) and retry", fails)
 	}
 	if strict && warns > 0 {
 		return fmt.Errorf("%d warning(s) with --strict", warns)
@@ -84,6 +89,40 @@ func checkRuntime(ctx context.Context) checkResult {
 		return checkResult{rt, "ok", "available"}
 	}
 	return checkResult{"runtime", "fail", "neither docker nor podman found on PATH"}
+}
+
+// installHint returns OS/arch-aware install guidance for a tool that
+// doctor found missing, indented to sit under its check line. Returns ""
+// when there's no canned hint (e.g. a tool present but broken). The
+// commands are copy-pasteable; an agent driving a PoC can offer to run
+// them (with the operator's OK — installing host tools is a system
+// change).
+func installHint(name string) string {
+	goos, goarch := runtime.GOOS, runtime.GOARCH
+	mac := goos == "darwin"
+	switch name {
+	case "runtime":
+		if mac {
+			return "       → brew install colima docker   (or install Docker Desktop)\n" +
+				"         docs: https://docs.docker.com/desktop/\n"
+		}
+		return "       → curl -fsSL https://get.docker.com | sh   (docker)\n" +
+			"         or podman: https://podman.io/docs/installation\n"
+	case "kubectl":
+		s := fmt.Sprintf("       → curl -LO \"https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/%s/%s/kubectl\" \\\n"+
+			"           && chmod +x kubectl && sudo mv kubectl /usr/local/bin/\n", goos, goarch)
+		if mac {
+			s += "         or: brew install kubectl\n"
+		}
+		return s + "         docs: https://kubernetes.io/docs/tasks/tools/\n"
+	case "helm":
+		s := "       → curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash\n"
+		if mac {
+			s += "         or: brew install helm\n"
+		}
+		return s + "         docs: https://helm.sh/docs/intro/install/\n"
+	}
+	return ""
 }
 
 func checkBinary(ctx context.Context, name string, args []string) checkResult {
