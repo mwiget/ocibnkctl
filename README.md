@@ -384,8 +384,8 @@ keys/            gitignored — FAR tgz + JWT live here
 ```
 
 Inspect the running cluster. `cluster up` installs this cluster's
-kubeconfig as `~/.kube/config` by default (prompting before overwriting an
-existing one, keeping a backup), so `kubectl` / `k9s` work directly:
+kubeconfig as `~/.kube/config` by default (backing up and overwriting any
+existing one — `--yolo` authorizes it), so `kubectl` / `k9s` work directly:
 
 ```
 kubectl get nodes          # k3s-<name>-server-0, k3s-<name>-agent-0
@@ -483,17 +483,36 @@ keys/            gitignored — FAR tgz + JWT live here
 default, so `kubectl` / `k9s` / etc. work without any `export`:
 
 - if `~/.kube/config` doesn't exist → it's created;
-- if it exists → you're **prompted before overwriting**, and the original
-  is backed up to `~/.kube/config.ocibnkctl-bak`;
+- if it exists → it's **backed up** to `~/.kube/config.ocibnkctl-bak`,
+  then overwritten — `cluster up` requires `--yolo`, which authorizes
+  this; the backup keeps it reversible;
 - `destroy` reverts it — removes the file if we created it, or **restores
   your backup** if we overwrote one;
-- opt out entirely with `cluster up --skip-kubeconfig` (non-interactive
-  runs / CI never overwrite an existing config).
+- opt out entirely with `cluster up --skip-kubeconfig`.
 
 A PoC-scoped copy also lands at `artifacts/kubeconfig` (mode 0600) — use
 it explicitly via `export KUBECONFIG=$(pwd)/artifacts/kubeconfig`.
 `ocibnkctl` itself always drives `kubectl`/`helm` through that PoC-scoped
 path regardless.
+
+### Browse the cluster with k9s
+
+Because `cluster up` installs `~/.kube/config`, a terminal UI like
+[k9s](https://k9scli.io/) works against the cluster with **zero config** —
+just launch it and you're navigating the live BNK deployment: both k3s
+nodes, the F5 control-plane pods, TMM and its 6 containers, logs, exec,
+port-forwards, the lot.
+
+```bash
+# install k9s if needed — macOS: brew install k9s ; linux: see k9scli.io
+ocibnkctl e2e --poc demo --yolo --confirm-cluster demo   # cluster + full BNK
+k9s                       # picks up ~/.kube/config automatically — no export
+```
+
+<!-- screenshot added in a follow-up: ![k9s navigating the BNK cluster on k3s](docs/k9s.png) -->
+
+In k9s: `0` shows all namespaces, `/f5-` filters to the F5 pods, `l` tails
+TMM's logs, `s` shells into a container.
 
 ## Network topology
 

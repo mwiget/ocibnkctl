@@ -81,8 +81,8 @@ keys/            gitignored — FAR tgz + JWT live here
 ```
 
 Inspect the running cluster. `cluster up` installs this cluster's
-kubeconfig as `~/.kube/config` by default (prompting before overwriting an
-existing one, keeping a backup), so `kubectl` / `k9s` work directly:
+kubeconfig as `~/.kube/config` by default (backing up and overwriting any
+existing one — `--yolo` authorizes it), so `kubectl` / `k9s` work directly:
 
 ```
 kubectl get nodes          # k3s-<name>-server-0, k3s-<name>-agent-0

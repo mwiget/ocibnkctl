@@ -9,7 +9,7 @@ import (
 
 // setupKube returns a fresh PoC repo (with artifacts/) and a source
 // kubeconfig path, and points HOME at a temp dir so ~/.kube/config
-// resolves into the sandbox. It restores HOME on cleanup.
+// resolves into the sandbox. HOME is restored on cleanup.
 func setupKube(t *testing.T) (repo, src, home string) {
 	t.Helper()
 	home = t.TempDir()
@@ -45,7 +45,9 @@ func TestGlobalKubeconfig_CreatesWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestGlobalKubeconfig_OverwriteYesThenRestore(t *testing.T) {
+// --yolo authorizes overwriting a pre-existing config; the original is
+// backed up and restored on destroy.
+func TestGlobalKubeconfig_OverwriteBacksUpAndRestores(t *testing.T) {
 	repo, src, home := setupKube(t)
 	dst := filepath.Join(home, ".kube", "config")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -54,11 +56,6 @@ func TestGlobalKubeconfig_OverwriteYesThenRestore(t *testing.T) {
 	if err := os.WriteFile(dst, []byte("MY-ORIGINAL-CONFIG\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	// Stub the prompt → yes.
-	orig := confirmKubeconfigOverwrite
-	confirmKubeconfigOverwrite = func(io.Writer, string) bool { return true }
-	defer func() { confirmKubeconfigOverwrite = orig }()
 
 	if err := installGlobalKubeconfig(io.Discard, repo, src); err != nil {
 		t.Fatal(err)
@@ -74,43 +71,13 @@ func TestGlobalKubeconfig_OverwriteYesThenRestore(t *testing.T) {
 		t.Fatalf("backup content = %q, want original", b)
 	}
 
-	// Destroy restores the original.
+	// Destroy restores the original and consumes the backup.
 	removeGlobalKubeconfig(io.Discard, repo)
 	if b, err := os.ReadFile(dst); err != nil || string(b) != "MY-ORIGINAL-CONFIG\n" {
 		t.Fatalf("original not restored: %q err=%v", b, err)
 	}
 	if _, err := os.Stat(st.Backup); !os.IsNotExist(err) {
 		t.Errorf("backup should be consumed by restore, stat err=%v", err)
-	}
-}
-
-func TestGlobalKubeconfig_OverwriteNoLeavesUntouched(t *testing.T) {
-	repo, src, home := setupKube(t)
-	dst := filepath.Join(home, ".kube", "config")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dst, []byte("MY-ORIGINAL-CONFIG\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	orig := confirmKubeconfigOverwrite
-	confirmKubeconfigOverwrite = func(io.Writer, string) bool { return false }
-	defer func() { confirmKubeconfigOverwrite = orig }()
-
-	if err := installGlobalKubeconfig(io.Discard, repo, src); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(dst); string(b) != "MY-ORIGINAL-CONFIG\n" {
-		t.Fatalf("config should be untouched, got %q", b)
-	}
-	if st, _ := readKubeState(repo); st.Action != "skipped" {
-		t.Fatalf("action = %q, want skipped", st.Action)
-	}
-	// Destroy must NOT touch a config we declined to overwrite.
-	removeGlobalKubeconfig(io.Discard, repo)
-	if b, err := os.ReadFile(dst); err != nil || string(b) != "MY-ORIGINAL-CONFIG\n" {
-		t.Fatalf("skipped config must survive destroy: %q err=%v", b, err)
 	}
 }
 
@@ -121,12 +88,7 @@ func TestGlobalKubeconfig_IdempotentRefresh(t *testing.T) {
 	if err := installGlobalKubeconfig(io.Discard, repo, src); err != nil {
 		t.Fatal(err)
 	}
-	// Second run must NOT prompt and must NOT back up our own file.
-	confirmKubeconfigOverwrite = func(io.Writer, string) bool {
-		t.Fatal("second install must not prompt")
-		return false
-	}
-	defer func() { confirmKubeconfigOverwrite = promptYesNo }()
+	// Second run must refresh in place without backing up our own file.
 	if err := installGlobalKubeconfig(io.Discard, repo, src); err != nil {
 		t.Fatal(err)
 	}

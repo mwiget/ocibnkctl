@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // globalKubeState records what `cluster up` did to ~/.kube/config so
@@ -17,10 +15,6 @@ type globalKubeState struct {
 	Action string `json:"action"`           // created | overwrote | skipped
 	Backup string `json:"backup,omitempty"` // backup of a pre-existing config (overwrote)
 }
-
-// confirmKubeconfigOverwrite decides whether to overwrite a pre-existing
-// ~/.kube/config. Indirected through a var so tests can stub the prompt.
-var confirmKubeconfigOverwrite = promptYesNo
 
 func globalKubePath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -35,11 +29,12 @@ func kubeStatePath(repo string) string {
 }
 
 // installGlobalKubeconfig copies the PoC kubeconfig to ~/.kube/config so
-// kubectl / k9s / etc. work without setting KUBECONFIG. Behaviour:
-//   - we already manage it (state file present) → just refresh it, no prompt
+// kubectl / k9s / etc. work without setting KUBECONFIG. `cluster up`
+// requires --yolo, which authorizes the overwrite; any pre-existing
+// config is backed up first so destroy can restore it. Behaviour:
+//   - we already manage it (state file present) → just refresh it
 //   - ~/.kube/config absent → create it
-//   - ~/.kube/config present → ask to overwrite; on yes, back the original
-//     up first so destroy can restore it; on no (or non-interactive), skip
+//   - ~/.kube/config present → back it up, then overwrite
 //
 // It records what it did in artifacts/kube-global.json for destroy.
 func installGlobalKubeconfig(out io.Writer, repo, srcPath string) error {
@@ -68,12 +63,9 @@ func installGlobalKubeconfig(out io.Writer, repo, srcPath string) error {
 
 	state := globalKubeState{Path: dst}
 	if _, statErr := os.Stat(dst); statErr == nil {
-		// Pre-existing config — ask before clobbering it.
-		if !confirmKubeconfigOverwrite(out, "~/.kube/config exists. Overwrite it to point at this cluster (a backup is kept)? [y/N]: ") {
-			fmt.Fprintf(out, "      left ~/.kube/config untouched — use: export KUBECONFIG=%s\n", srcPath)
-			state.Action = "skipped"
-			return writeKubeState(repo, state)
-		}
+		// Pre-existing config — back it up, then overwrite. --yolo (which
+		// cluster up requires) authorizes this; the backup keeps it
+		// reversible. Opt out entirely with --skip-kubeconfig.
 		bak := dst + ".ocibnkctl-bak"
 		if err := os.Rename(dst, bak); err != nil {
 			return fmt.Errorf("back up %s: %w", dst, err)
@@ -137,28 +129,4 @@ func readKubeState(repo string) (globalKubeState, error) {
 		return s, err
 	}
 	return s, json.Unmarshal(b, &s)
-}
-
-// promptYesNo reads a y/N answer from stdin. Returns false when stdin is
-// not a terminal (so automation / CI never hangs or clobbers a config).
-func promptYesNo(out io.Writer, question string) bool {
-	if !stdinIsTerminal() {
-		fmt.Fprintln(out, "      (non-interactive — leaving ~/.kube/config as is)")
-		return false
-	}
-	fmt.Fprint(out, "      "+question)
-	sc := bufio.NewScanner(os.Stdin)
-	if !sc.Scan() {
-		return false
-	}
-	ans := strings.ToLower(strings.TrimSpace(sc.Text()))
-	return ans == "y" || ans == "yes"
-}
-
-func stdinIsTerminal() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
