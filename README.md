@@ -479,21 +479,32 @@ keys/            gitignored — FAR tgz + JWT live here
 .gitignore       excludes all secret material
 ```
 
-`cluster up` installs this cluster's kubeconfig as **`~/.kube/config`** by
-default, so `kubectl` / `k9s` / etc. work without any `export`:
+### Cluster access — the `~/.kube/config` lifecycle
 
-- if `~/.kube/config` doesn't exist → it's created;
-- if it exists → it's **backed up** to `~/.kube/config.ocibnkctl-bak`,
-  then overwritten — `cluster up` requires `--yolo`, which authorizes
-  this; the backup keeps it reversible;
-- `destroy` reverts it — removes the file if we created it, or **restores
-  your backup** if we overwrote one;
-- opt out entirely with `cluster up --skip-kubeconfig`.
+`cluster up` installs this cluster's kubeconfig as **`~/.kube/config`** so
+`kubectl` / `k9s` / etc. work without any `export`, and `destroy` puts
+things back exactly as it found them:
 
-A PoC-scoped copy also lands at `artifacts/kubeconfig` (mode 0600) — use
-it explicitly via `export KUBECONFIG=$(pwd)/artifacts/kubeconfig`.
-`ocibnkctl` itself always drives `kubectl`/`helm` through that PoC-scoped
-path regardless.
+```
+cluster up ──┬─ ~/.kube/config absent  → create it
+             └─ ~/.kube/config exists  → back up to ~/.kube/config.ocibnkctl-bak,
+                                         then overwrite   (--yolo authorizes it)
+      │
+      ▼   kubectl · k9s · lens · … all work with no KUBECONFIG set
+      │
+destroy ─────┬─ we created it   → remove it
+             └─ we overwrote it → restore your backup (and consume it)
+```
+
+The state of what was done is recorded in `artifacts/kube-global.json`, so
+the revert is exact — your own config is never lost. Notes:
+
+- Opt out at bring-up with `cluster up --skip-kubeconfig` — your
+  `~/.kube/config` is then never touched.
+- A PoC-scoped copy also lands at `artifacts/kubeconfig` (mode 0600); use
+  it explicitly via `export KUBECONFIG=$(pwd)/artifacts/kubeconfig`.
+  `ocibnkctl` itself always drives `kubectl`/`helm` through that path,
+  independent of `~/.kube/config`.
 
 ### Browse the cluster with k9s
 
