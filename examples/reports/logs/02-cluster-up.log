@@ -1,31 +1,15 @@
-PoC:        demo  (BNK 2.3.0)
+PoC:        lab  (BNK 2.3.0)
 
 [1/6] Container-runtime preflight ...
       using docker
-      backend kind
-[2/6] Rendering kind.yaml + ensuring cluster exists ...
-      rendered → /home/mwiget/git/ocibnkctl/demo/artifacts/kind.yaml
-      | Creating cluster "demo" ...
-      |  • Ensuring node image (kindest/node:v1.30.8) 🖼  ...
-      |  ✓ Ensuring node image (kindest/node:v1.30.8) 🖼
-      |  • Preparing nodes 📦 📦   ...
-      |  ✓ Preparing nodes 📦 📦 
-      |  • Writing configuration 📜  ...
-      |  ✓ Writing configuration 📜
-      |  • Starting control-plane 🕹️  ...
-      |  ✓ Starting control-plane 🕹️
-      |  • Installing StorageClass 💾  ...
-      |  ✓ Installing StorageClass 💾
-      |  • Joining worker nodes 🚜  ...
-      |  ✓ Joining worker nodes 🚜
-      | Set kubectl context to "kind-demo"
-      | You can now use your cluster with:
-      | 
-      | kubectl cluster-info --context kind-demo
-      | 
-      | Thanks for using kind! 😊
+      backend k3s
+[2/6] Rendering k3s.yaml + ensuring cluster exists ...
+      rendered → /tmp/ocibnk-lab/artifacts/k3s.yaml
+      | 1a1a7ab94402dd39cbbb472d3ed3de300e437de0d534d812fa7a9bf4a613b591
+      | 93c5e65154e75a69491babc9bd53af71492d28229a295d747c1736eabf0df17e
+      | 75670985df4f23226dfae0f0f35c7d1f158cf074e983af0b95d5a6cc4e9826c4
 [3/6] Fetching kubeconfig ...
-      /home/mwiget/git/ocibnkctl/demo/artifacts/kubeconfig
+      /tmp/ocibnk-lab/artifacts/kubeconfig
 [4/6] Applying Calico CNI + NetworkAttachmentDefinition CRD ...
       | poddisruptionbudget.policy/calico-kube-controllers created
       | serviceaccount/calico-kube-controllers created
@@ -59,9 +43,10 @@ PoC:        demo  (BNK 2.3.0)
       | daemonset.apps/calico-node created
       | deployment.apps/calico-kube-controllers created
       | customresourcedefinition.apiextensions.k8s.io/network-attachment-definitions.k8s.cni.cncf.io created
+      | storageclass.storage.k8s.io/standard created
       | deployment.apps/calico-kube-controllers condition met
 [5/6] Labelling worker node for TMM ...
-      | node/demo-worker labeled
+      | node/k3s-lab-agent-0 labeled
 [6/6] bnk-forge registration ...
   bnk-forge not responding at https://localhost: Get "https://localhost/api/system/health": dial tcp 127.0.0.1:443: connect: connection refused
       bnk-forge configured but not running — skipping. (bnk-forge is not running at https://localhost — start it manually (e.g. `cd /home/mwiget/git/bnk-forge && make deploy`) and retry)

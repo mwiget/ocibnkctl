@@ -67,12 +67,13 @@ rather than all piling onto one worker. The Kubernetes scheduler admits
 pods against their `requests`, not their actual RSS, and the chart
 reserves heavily:
 
-> The per-pod table below was measured on the kind-based predecessor,
-> where the control-plane was tainted and the entire stack landed on a
-> single worker — i.e. the worst-case single-node concentration. On the
-> native k3s backend the non-TMM load spreads across both schedulable
-> nodes, so effective per-node pressure is lower; the totals are pending
-> re-measurement on k3s.
+> The per-pod values below are the BNK chart's request reservations
+> (backend-independent), tabulated as a single-worker total. On the kind
+> predecessor the tainted control-plane forced the whole stack onto one
+> worker. On k3s the server node is schedulable, so the non-TMM load
+> spreads across both nodes — measured ~13 pods on the server / ~7 on the
+> agent in the validated run — easing per-node pressure. The host floor
+> still applies, since one docker daemon backs both node containers.
 
 | Pod (on the worker)                 | Memory request | CPU request |
 |---|---|---|
@@ -395,15 +396,15 @@ exercises a slice of BNK functionality end-to-end: render manifests
 into `artifacts/scenarios/<name>/`, apply them, assert reconciled
 state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
-> **k3s re-validation pending.** The ratings, wall times, the reference
-> report, and the per-scenario behavioral notes below were measured on
-> the kind-based predecessor (`kindbnkctl`). The scenario *assertions*
-> are backend-agnostic and the cluster shape is identical (two-node,
-> Calico, k8s 1.30.8), so parity is expected — but the suite has not yet
-> been re-run on the native k3s backend. Numbers and "🟡/🟢" verdicts
-> here should be treated as inherited until that run lands. Behavioral
-> notes that mention node-level specifics (storage class, node
-> filesystem) are the most likely to shift on k3s.
+> **Validated on native k3s.** A clean run — fresh cluster → `e2e`
+> deploy → `scenario run --all` — passes **12/12 green, 0 failed** on the
+> k3s backend (measured 2026-06-04, full parity with the kind
+> predecessor). The ratings below hold as measured; the wall times are
+> indicative — the authoritative current timings are in the checked-in
+> [reference report](#reference-run-report). Getting there took four
+> k3s-specific fixes (a `standard` StorageClass, a `/var/run`→`/run`
+> symlink for Multus netns, host-side `docker cp` of the bridge CNI, and
+> arch-aware plugin selection) — all in `cluster up` / the scenarios now.
 
 ```bash
 ocibnkctl scenario list                            # all known scenarios + rating
@@ -480,9 +481,9 @@ in topo-sorted dependency order, writing an aggregate
 `reports/<stamp>/run.{json,md}` summary alongside the per-scenario
 JSONs.
 
-Cluster bring-up itself (`ocibnkctl e2e`) is **5m44s**:
-validate 0s · cluster-up 48s · deploy-prereqs 20s · deploy-flo
-24s · deploy-cne 4m12s (includes waiting on `bnk-gatewayclass`
+Cluster bring-up itself (`ocibnkctl e2e`) is **~5m10s**:
+validate 0s · cluster-up 31s · deploy-prereqs 20s · deploy-flo
+23s · deploy-cne 3m56s (includes waiting on `bnk-gatewayclass`
 to reach `Accepted=True` — required to keep first-run scenario
 Gateways from being marked-for-deletion by the controller).
 
@@ -585,15 +586,14 @@ k3s worker container's filesystem to confirm capture.
 
 A complete `e2e --with-scenarios` report from a clean cluster
 is checked in at
-[`examples/reports/run-demo-2026-06-03T06-47-53Z.md`](examples/reports/run-demo-2026-06-03T06-47-53Z.md)
+[`examples/reports/run-lab-2026-06-04T16-45-09Z.md`](examples/reports/run-lab-2026-06-04T16-45-09Z.md)
 so a reader can see the full report shape (versions, host
 resources, cluster topology, F5 control-plane pods, every deploy
 phase, and every scenario row) without running anything locally.
 
-> This checked-in report is from the **kind-based predecessor**
-> (`kindbnkctl`), retained to show the report format. A native-k3s
-> reference run will replace it once the deploy pipeline + scenario
-> suite are re-run on this backend.
+> This is a **native-k3s** run (`e2e --with-scenarios --no-resume` from a
+> fresh cluster on 2026-06-04): **17 ok, 0 failed** — deploy 5/5 +
+> scenarios 12/12 green.
 
 Reproduce on your own host with:
 
@@ -608,8 +608,8 @@ ocibnkctl e2e \
 Output lands at `<pocdir>/reports/<stamp>/run-<pocname>-<stamp>.md`
 (plus the JSON twin, per-phase logs under `logs/`, and
 per-scenario JSONs under `scenarios/`).
-The checked-in report ran 16m42s end-to-end: ~6m deploy
-(validate → cluster-up → deploy-prereqs/flo/cne) plus ~11m
+The checked-in report ran 15m4s end-to-end: ~5m deploy
+(validate → cluster-up → deploy-prereqs/flo/cne) plus 9m47s
 running 12 green scenarios topo-sorted by dependency order
 (the one amber scenario — `fic-dynamic-ip` — is skipped by
 `--all` and must be run explicitly).

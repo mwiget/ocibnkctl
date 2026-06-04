@@ -26,8 +26,8 @@
       "got": "5/5 (lastBody=ocibnkctl-scenario-udp-lb-OK)"
     }
   ],
-  "manifest_path": "/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/udp-l4-loadbalance/01-namespace.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/udp-l4-loadbalance/02-bnkgateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/udp-l4-loadbalance/03-backend.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/udp-l4-loadbalance/04-gateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/udp-l4-loadbalance/05-l4route.yaml",
+  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/udp-l4-loadbalance/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/udp-l4-loadbalance/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/udp-l4-loadbalance/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/udp-l4-loadbalance/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/udp-l4-loadbalance/05-l4route.yaml",
   "scenario": "udp-l4-loadbalance",
-  "started_at": "2026-06-03T07:03:53.202931234Z",
-  "duration": "42s"
+  "started_at": "2026-06-04T16:59:33.60130985Z",
+  "duration": "41s"
 }

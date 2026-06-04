@@ -1,6 +1,6 @@
-PoC:     demo
-Cluster: /home/mwiget/git/ocibnkctl/demo/artifacts/kubeconfig
-FAR:     /home/mwiget/git/ocibnkctl/demo/keys/f5-far-auth-key.tgz
+PoC:     lab
+Cluster: /tmp/ocibnk-lab/artifacts/kubeconfig
+FAR:     /tmp/ocibnk-lab/keys/f5-far-auth-key.tgz
 
 [1/5] Tools preflight ...
       ok
@@ -18,7 +18,7 @@ FAR:     /home/mwiget/git/ocibnkctl/demo/keys/f5-far-auth-key.tgz
 [5/5] Installing cert-manager ...
       | Release "cert-manager" does not exist. Installing it now.
       | NAME: cert-manager
-      | LAST DEPLOYED: Wed Jun  3 08:48:43 2026
+      | LAST DEPLOYED: Thu Jun  4 18:45:42 2026
       | NAMESPACE: cert-manager
       | STATUS: deployed
       | REVISION: 1

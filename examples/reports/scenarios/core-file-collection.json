@@ -10,7 +10,7 @@
     {
       "description": "CoreMond DaemonSet exists with at least one desired replica",
       "ok": true,
-      "got": "name=f5-coremond desired=1"
+      "got": "name=f5-coremond desired=2"
     },
     {
       "description": "TMM Deployment template includes a core-dump volume",
@@ -23,8 +23,8 @@
       "got": "value=True"
     }
   ],
-  "manifest_path": "/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/core-file-collection/01-cneinstance-patch.yaml",
+  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/core-file-collection/01-cneinstance-patch.yaml",
   "scenario": "core-file-collection",
-  "started_at": "2026-06-03T06:58:32.189311568Z",
-  "duration": "3m0s"
+  "started_at": "2026-06-04T16:54:32.612796344Z",
+  "duration": "2m49s"
 }

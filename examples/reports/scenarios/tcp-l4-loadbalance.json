@@ -35,8 +35,8 @@
       "got": "A=14 B=6 (of 20)"
     }
   ],
-  "manifest_path": "/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/tcp-l4-loadbalance/01-namespace.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/tcp-l4-loadbalance/02-bnkgateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/tcp-l4-loadbalance/03-backend.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/tcp-l4-loadbalance/04-gateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/tcp-l4-loadbalance/05-l4route.yaml",
+  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/tcp-l4-loadbalance/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/tcp-l4-loadbalance/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/tcp-l4-loadbalance/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/tcp-l4-loadbalance/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/tcp-l4-loadbalance/05-l4route.yaml",
   "scenario": "tcp-l4-loadbalance",
-  "started_at": "2026-06-03T07:03:23.179174945Z",
-  "duration": "30s"
+  "started_at": "2026-06-04T16:59:10.636743334Z",
+  "duration": "22s"
 }

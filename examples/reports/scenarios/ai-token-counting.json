@@ -33,11 +33,11 @@
     {
       "description": "TMM token-counting iRule fired (TOKEN(...) cumulative log lines)",
       "ok": true,
-      "got": "\u003c134\u003eJun 3 06:58:26 f5-tmm-5df4568476-hnq9p tmm[55]: Rule scn-tokencount-gateway-scn-tokencount-token-counting \u003cJSON_RESPONSE\u003e: TOKEN(1): source=json user_ref=user-808b5bf2f1ab8cab5eee7f99dfe65b10215f19ad0edd04e8caeeb597a2dfce40 model=gpt-stub bucket…"
+      "got": "\u003c134\u003eJun 4 16:54:26 f5-tmm-897866d47-njx67 tmm[41]: Rule scn-tokencount-gateway-scn-tokencount-token-counting \u003cJSON_RESPONSE\u003e: TOKEN(1): source=json user_ref=user-1f638021e00ebc88f6bdc7be9578c047050ce0bfbb7af38752b837ccce35fbb3 model=gpt-stub bucket_…"
     }
   ],
-  "manifest_path": "/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/ai-token-counting/01-namespace.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/ai-token-counting/02-bnkgateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/ai-token-counting/03-backend.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/ai-token-counting/04-gateway.yaml,/home/mwiget/git/ocibnkctl/demo/artifacts/scenarios/ai-token-counting/05-httproute.yaml",
+  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/ai-token-counting/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-token-counting/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-token-counting/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-token-counting/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-token-counting/05-httproute.yaml",
   "scenario": "ai-token-counting",
-  "started_at": "2026-06-03T06:58:03.430500322Z",
-  "duration": "23s"
+  "started_at": "2026-06-04T16:54:05.042010088Z",
+  "duration": "22s"
 }
