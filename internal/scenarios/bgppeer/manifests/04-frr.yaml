@@ -1,0 +1,86 @@
+# FRR BGP-peer pod, attached to the bnk-bgp bridge NAD on a static
+# 192.168.99.11 IP so TMM's ZeBOS config can reference it
+# deterministically across restarts. PodAffinity to f5-tmm-labelled
+# nodes forces co-location on smoke-worker, which is required because
+# bridge-CNI NADs are per-node (no cross-node L2).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scn-frr
+  namespace: scn-bgp
+  labels: {app: scn-frr}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: scn-frr}
+  template:
+    metadata:
+      labels: {app: scn-frr}
+      annotations:
+        # Attach the bnk-bgp NAD as net1. host-local IPAM hands out
+        # the next free IP from 192.168.99.20-250; first attacher
+        # gets .20. The scenario discovers FRR's actual IP at
+        # runtime and renders that into ZeBOS.conf for TMM's
+        # `neighbor` setting.
+        k8s.v1.cni.cncf.io/networks: |
+          [{"name":"bnk-bgp","interface":"net1"}]
+    spec:
+      # Pin to the same node TMM runs on (smoke-worker — labelled
+      # app=f5-tmm by `ocibnkctl cluster up`). bridge-CNI NADs are
+      # per-node, so co-location is required for L2. nodeAffinity
+      # (not podAffinity) because we co-locate on the NODE label,
+      # not on a pod label — TMM may be unscheduled when FRR comes
+      # up.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: app
+                operator: In
+                values: [f5-tmm]
+      initContainers:
+      - name: bootstrap
+        image: quay.io/frrouting/frr:9.1.0
+        command:
+        - sh
+        - -c
+        - |
+          cp /tmp/frr-cm/* /etc/frr/ && \
+          chown -R frr:frr /etc/frr && \
+          chmod 640 /etc/frr/* && \
+          ls -la /etc/frr/
+        volumeMounts:
+        - {name: frr-config, mountPath: /tmp/frr-cm}
+        - {name: frr-etc,    mountPath: /etc/frr}
+      containers:
+      - name: frr
+        image: quay.io/frrouting/frr:9.1.0
+        securityContext:
+          capabilities:
+            add: [NET_ADMIN, NET_RAW, SYS_ADMIN]
+        volumeMounts:
+        - {name: frr-etc, mountPath: /etc/frr}
+        readinessProbe:
+          exec:
+            command: ["vtysh", "-c", "show bgp summary"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 20m, memory: 32Mi}
+          limits:   {cpu: 200m, memory: 128Mi}
+      volumes:
+      - name: frr-config
+        configMap: {name: frr-config}
+      - name: frr-etc
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scn-frr
+  namespace: scn-bgp
+spec:
+  selector: {app: scn-frr}
+  ports:
+  - {name: bgp, port: 179, targetPort: 179}

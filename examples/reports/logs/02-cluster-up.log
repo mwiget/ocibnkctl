@@ -1,0 +1,70 @@
+PoC:        demo  (BNK 2.3.0)
+
+[1/6] Container-runtime preflight ...
+      using docker
+      backend kind
+[2/6] Rendering kind.yaml + ensuring cluster exists ...
+      rendered → /home/mwiget/git/ocibnkctl/demo/artifacts/kind.yaml
+      | Creating cluster "demo" ...
+      |  • Ensuring node image (kindest/node:v1.30.8) 🖼  ...
+      |  ✓ Ensuring node image (kindest/node:v1.30.8) 🖼
+      |  • Preparing nodes 📦 📦   ...
+      |  ✓ Preparing nodes 📦 📦 
+      |  • Writing configuration 📜  ...
+      |  ✓ Writing configuration 📜
+      |  • Starting control-plane 🕹️  ...
+      |  ✓ Starting control-plane 🕹️
+      |  • Installing StorageClass 💾  ...
+      |  ✓ Installing StorageClass 💾
+      |  • Joining worker nodes 🚜  ...
+      |  ✓ Joining worker nodes 🚜
+      | Set kubectl context to "kind-demo"
+      | You can now use your cluster with:
+      | 
+      | kubectl cluster-info --context kind-demo
+      | 
+      | Thanks for using kind! 😊
+[3/6] Fetching kubeconfig ...
+      /home/mwiget/git/ocibnkctl/demo/artifacts/kubeconfig
+[4/6] Applying Calico CNI + NetworkAttachmentDefinition CRD ...
+      | poddisruptionbudget.policy/calico-kube-controllers created
+      | serviceaccount/calico-kube-controllers created
+      | serviceaccount/calico-node created
+      | serviceaccount/calico-cni-plugin created
+      | configmap/calico-config created
+      | customresourcedefinition.apiextensions.k8s.io/bgpconfigurations.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/bgpfilters.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/bgppeers.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/blockaffinities.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/caliconodestatuses.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/clusterinformations.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/felixconfigurations.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/globalnetworkpolicies.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/globalnetworksets.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/hostendpoints.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/ipamblocks.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/ipamconfigs.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/ipamhandles.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/ippools.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/ipreservations.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/kubecontrollersconfigurations.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/networkpolicies.crd.projectcalico.org created
+      | customresourcedefinition.apiextensions.k8s.io/networksets.crd.projectcalico.org created
+      | clusterrole.rbac.authorization.k8s.io/calico-kube-controllers created
+      | clusterrole.rbac.authorization.k8s.io/calico-node created
+      | clusterrole.rbac.authorization.k8s.io/calico-cni-plugin created
+      | clusterrolebinding.rbac.authorization.k8s.io/calico-kube-controllers created
+      | clusterrolebinding.rbac.authorization.k8s.io/calico-node created
+      | clusterrolebinding.rbac.authorization.k8s.io/calico-cni-plugin created
+      | daemonset.apps/calico-node created
+      | deployment.apps/calico-kube-controllers created
+      | customresourcedefinition.apiextensions.k8s.io/network-attachment-definitions.k8s.cni.cncf.io created
+      | deployment.apps/calico-kube-controllers condition met
+[5/6] Labelling worker node for TMM ...
+      | node/demo-worker labeled
+[6/6] bnk-forge registration ...
+  bnk-forge not responding at https://localhost: Get "https://localhost/api/system/health": dial tcp 127.0.0.1:443: connect: connection refused
+      bnk-forge configured but not running — skipping. (bnk-forge is not running at https://localhost — start it manually (e.g. `cd /home/mwiget/git/bnk-forge && make deploy`) and retry)
+      poc.yaml updated
+
+DONE.  Next: `ocibnkctl deploy prereqs && deploy flo && deploy cne` (or run e2e).
