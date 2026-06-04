@@ -224,7 +224,7 @@ type Cluster struct {
 // ClusterListEntry is one row from ListProjectClusters. APIServer is the
 // apiserver URL bnk-forge has stored — used by the launch flow to detect
 // kubeconfig drift when the local cluster has been destroyed and rebuilt
-// (kind rotates the apiserver port on each create, so a stored
+// (the k3s server's mapped apiserver port rotates on each create, so a stored
 // "https://127.0.0.1:43601" against a fresh "https://127.0.0.1:38217" is
 // the trigger we look for).
 type ClusterListEntry struct {
@@ -377,7 +377,7 @@ func RequireRunning(ctx context.Context, cfg Config, out io.Writer) error {
 // KubeconfigAPIServer extracts the apiserver URL from the first cluster
 // entry of a kubeconfig YAML body. Used by the launch flow to detect
 // drift between bnk-forge's stored cluster row and the freshly-localized
-// kubeconfig — kind rotates the apiserver port on each cluster create,
+// kubeconfig — the k3s mapped apiserver port rotates on each cluster create,
 // so a destroy+redeploy with the same PoC name leaves the bnk-forge
 // entry pointing at a dead port. Comparing server URLs catches this
 // reliably for the local-dev case; for production setups with stable

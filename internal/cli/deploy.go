@@ -446,7 +446,7 @@ spec:
 	// 5. Patch f5-tmm Deployment strategy to Recreate.
 	// FLO ships the Deployment with RollingUpdate (maxSurge=25%,
 	// maxUnavailable=25%) which on a 1-replica deployment runs two
-	// pods during rollover — wasteful on a kind worker and prone to
+	// pods during rollover — wasteful on the k3s worker and prone to
 	// wedging Multus when veth churn is high. We have no HA goal
 	// here, so Recreate is strictly better: terminate the old pod,
 	// then create the new one. FLO does not reconcile this back

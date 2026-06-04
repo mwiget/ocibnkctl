@@ -57,13 +57,13 @@ const (
 	FLOChartOCIRef = "oci://repo.f5.com/charts/f5-lifecycle-operator"
 
 	// CalicoManifestURL is the upstream Calico manifest applied right
-	// after `kind create cluster` (which is configured with
+	// after the k3s cluster is created (with its bundled CNI
 	// disableDefaultCNI: true). Pinned to the same minor track BNK 2.3
 	// declares as supported on the cluster side.
 	CalicoManifestURL = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 
 	// DockerNetworkInternal / External are the default names used when
-	// poc.yaml leaves networks.{internal,external}.name unset. The kind
+	// poc.yaml leaves networks.{internal,external}.name unset. The k3s
 	// cluster's two node containers both join these networks so
 	// operator-supplied test client / router containers have a routable
 	// path alongside TMM (which itself runs in demo mode and uses
@@ -92,8 +92,8 @@ type ResourceSpec struct {
 // against `requests`, not RSS — and the F5 chart reserves heavily on
 // the worker node where every F5 pod lands (the control-plane node
 // holds the standard NoSchedule taint and the charts don't tolerate
-// it). Each kind node container reports the underlying daemon's
-// memory and CPU as its allocatable; kind does not partition.
+// it). Each k3s node container reports the underlying daemon's
+// memory and CPU as its allocatable; k3s does not partition.
 //
 // Sum of `requests` on demo-worker for BNK 2.3.0 (measured 2026-05-21
 // on macOS Docker Desktop, stock CNE manifest 2.3.0-3.2598.3-0.0.170):

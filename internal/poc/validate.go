@@ -93,7 +93,7 @@ func (p *PoC) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "bnk.jwt_ref: required (path to JWT under the PoC repo)")
 	}
 	if !p.BNK.DemoMode {
-		r.Warnings = append(r.Warnings, "bnk.demo_mode is false: TMM will require SR-IOV / DPU-backed interfaces, which kind cannot provide. Set it true for kind deployments.")
+		r.Warnings = append(r.Warnings, "bnk.demo_mode is false: TMM will require SR-IOV / DPU-backed interfaces, which the k3s demo shape cannot provide. Set it true for this deployment.")
 	}
 
 	if p.BNKForge.Enabled {

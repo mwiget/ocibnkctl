@@ -284,8 +284,8 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 		}
 	}
 
-	// Cluster-side environment probes — k8s server version, kind
-	// cluster name, etc. — only meaningful once deploy-cne has put
+	// Cluster-side environment probes — k8s server version, cluster
+	// name, etc. — only meaningful once deploy-cne has put
 	// an apiserver behind the kubeconfig. Skip if any deploy phase
 	// failed; the kubeconfig might be missing or stale.
 	if !f.dryRun && deployFailed == 0 && report.Environment != nil {
@@ -406,7 +406,7 @@ func printPlan(out io.Writer, p *poc.PoC, repo, binary string, selected []e2ePha
 	fmt.Fprintf(out, "PoC: %s   (BNK %s)\n", p.Metadata.Name, p.Metadata.BNKVersion)
 	fmt.Fprintf(out, "Repo: %s\n\n", repo)
 	fmt.Fprintln(out, "`ocibnkctl e2e` runs the full deploy pipeline end-to-end. It is")
-	fmt.Fprintln(out, "DESTRUCTIVE (kind create cluster, helm installs, CR applies) and")
+	fmt.Fprintln(out, "DESTRUCTIVE (k3s cluster create, helm installs, CR applies) and")
 	fmt.Fprintln(out, "typically takes 10–20 minutes with a warm Docker cache.")
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "Phases (%d) — would run, in order:\n\n", len(selected))

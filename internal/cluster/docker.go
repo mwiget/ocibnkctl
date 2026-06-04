@@ -87,7 +87,7 @@ func (d *DockerCLI) RemoveNetwork(ctx context.Context, name string) error {
 }
 
 // ConnectNetwork attaches the named docker network to a container
-// (kind node). Idempotent — if the container is already on the
+// (k3s node). Idempotent — if the container is already on the
 // network, this is a no-op.
 func (d *DockerCLI) ConnectNetwork(ctx context.Context, network, container string) error {
 	if attached, err := d.IsAttached(ctx, network, container); err != nil {
@@ -126,15 +126,13 @@ func (d *DockerCLI) IsAttached(ctx context.Context, network, container string) (
 }
 
 // NodeContainers returns the docker container names of the cluster's
-// nodes, matched by the backend's node-container label filter (kind:
-// `io.x-k8s.kind.cluster=<name>` → `<cluster>-control-plane` /
-// `<cluster>-worker`; k3d: `k3d.cluster=<name>` → `k3d-<cluster>-server-0`
-// / `k3d-<cluster>-agent-0`). The filter is supplied by the
-// Provisioner via NodeContainerLabel.
+// nodes, matched by the backend's node-container label filter (k3s:
+// `ocibnk.cluster=<name>` → `k3s-<cluster>-server-0` /
+// `k3s-<cluster>-agent-0`). The filter is supplied by the Provisioner
+// via NodeContainerLabel.
 func (d *DockerCLI) NodeContainers(ctx context.Context, labelFilter string) ([]string, error) {
-	// We can't trust `kind get nodes` for the exact container names on
-	// older kind versions (and k3d names them differently); ask the
-	// runtime directly with the backend's node-container label.
+	// Ask the runtime directly with the backend's node-container label
+	// rather than relying on any orchestrator-specific listing.
 	c := d.cmd(ctx, "ps", "--filter", "label="+labelFilter,
 		"--format", "{{.Names}}")
 	var stdout bytes.Buffer

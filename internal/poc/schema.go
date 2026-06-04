@@ -45,13 +45,13 @@ type Versions struct {
 // Cluster is the cluster shape. Topology is hard-coded at two
 // nodes (one combined control-plane+worker, one worker labelled for
 // TMM) — the only knobs an operator turns are the cluster name and
-// which container provider kind uses (docker vs podman).
+// which container runtime the k3s nodes run on (docker vs podman).
 type Cluster struct {
 	Name     string `yaml:"name"`
 	Provider string `yaml:"provider"` // "docker" or "podman"
 }
 
-// Networks are the two docker bridge networks attached to both kind
+// Networks are the two docker bridge networks attached to both k3s
 // node containers. They exist as "scenery" — a routable space where
 // operators can spin up test clients, routers, or upstreams alongside
 // TMM. TMM itself runs in demo mode and uses virtio inside its pod
@@ -71,11 +71,11 @@ type BNK struct {
 	JWTRef    string `yaml:"jwt_ref"`
 	// DemoMode toggles CNEInstance.advanced.demoMode.enabled. Without
 	// it, TMM expects SR-IOV / DPU-backed interfaces; with it, TMM
-	// uses virtio inside the pod netns — the only mode that works on
-	// kind. Default true; leaving it false is an explicit choice the
-	// operator makes.
+	// uses virtio inside the pod netns — the only mode that works in
+	// this shape. Default true; leaving it false is an explicit choice
+	// the operator makes.
 	DemoMode bool `yaml:"demo_mode"`
-	// TMM node label: ocibnkctl labels the kind worker container
+	// TMM node label: ocibnkctl labels the k3s worker container
 	// `app=f5-tmm` so TMM nodeSelector lands TMM there. The label is
 	// hard-coded matching f5-bnk-udf convention; only surfaced here
 	// so an operator who wants to override it (e.g. test multi-node)

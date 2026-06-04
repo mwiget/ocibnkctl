@@ -61,7 +61,7 @@ cluster:
   surprise: extra-field
 versions:
   k8s: "1.30"
-  kind_node_image: kindest/node:v1.30.8
+  node_image: rancher/k3s:v1.30.8-k3s1
   cne_manifest: x
 networks:
   internal: {name: i, subnet: 10.0.0.0/24}

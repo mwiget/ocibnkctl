@@ -24,7 +24,7 @@ import (
 func newClusterCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
-		Short: "Bring up (or down) the kind cluster",
+		Short: "Bring up (or down) the k3s cluster",
 	}
 	cmd.AddCommand(newClusterUpCmd())
 	return cmd
@@ -41,17 +41,16 @@ func newClusterUpCmd() *cobra.Command {
 	f := &clusterUpFlags{}
 	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Create the kind cluster, install Calico, attach docker networks, label TMM worker (DESTRUCTIVE)",
-		Long: `Drive the kind cluster bring-up:
+		Short: "Create the k3s cluster, install Calico, label TMM worker (DESTRUCTIVE)",
+		Long: `Drive the k3s cluster bring-up:
 
   1. Container-runtime preflight
-  2. Render kind.yaml + ensure cluster exists (kind create cluster)
-  3. Apply Calico manifest (default CNI is disabled in our kind.yaml)
-  4. Create internal + external docker bridge networks and attach both
-     to every node container (control-plane and worker)
+  2. Render k3s.yaml + ensure cluster exists (start k3s server + agent
+     containers and join them; bundled flannel is disabled)
+  3. Fetch kubeconfig to artifacts/kubeconfig (mode 0600)
+  4. Apply Calico CNI + NetworkAttachmentDefinition CRD
   5. Label the worker node app=f5-tmm for TMM nodeSelector
-  6. Fetch kubeconfig to artifacts/kubeconfig (mode 0600)
-  7. If bnk_forge.enabled and the local stack is reachable, register
+  6. If bnk_forge.enabled and the local stack is reachable, register
      the cluster with bnk-forge. Soft-skip on absence.
 
 Required gates:
@@ -153,7 +152,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	// demo mode (where no NADs are actually used) — without it, FLO's
 	// controller-runtime informers stall and the crd-installer never
 	// reconciles the License CRD. We install just the CRD (not the
-	// full Multus daemonset) since the kind cluster doesn't actually
+	// full Multus daemonset) since the cluster does not actually
 	// route through Multus.
 	fmt.Fprintln(out, "[4/6] Applying Calico CNI + NetworkAttachmentDefinition CRD ...")
 	r := &deploy.Runner{
@@ -171,8 +170,8 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if err := r.Apply(ctx, string(nadCRD)); err != nil {
 		return fmt.Errorf("apply NetworkAttachmentDefinition CRD: %w", err)
 	}
-	// Wait for Calico controller — gives kindnet replacement enough time
-	// that subsequent `kubectl` calls don't race the CNI rollout.
+	// Wait for Calico controller — gives the CNI rollout enough time
+	// that subsequent `kubectl` calls don't race it.
 	if err := r.Wait(ctx, "kube-system", "Available", "deployment/calico-kube-controllers",
 		5*time.Minute); err != nil {
 		fmt.Fprintf(out, "      WARN: calico-kube-controllers not Available in 5min: %v\n", err)
@@ -180,7 +179,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 
 	// 5. Label the worker node for TMM. We dropped the
 	// bnk-internal / bnk-external docker bridges that earlier
-	// versions of ocibnkctl attached to the kind nodes — no
+	// versions of ocibnkctl attached to the node containers — no
 	// scenario actually consumed them, and the Gateway IP pool
 	// (203.0.113.0/24) is plumbed entirely via the bnk-bgp Multus
 	// NAD bridge that scenarios create on demand.
@@ -274,8 +273,9 @@ func registerWithBNKForge(ctx context.Context, out io.Writer, repo string, p *po
 	// Cluster registration with drift detection: when a cluster row
 	// already exists for this PoC name, compare the stored apiserver
 	// URL against the localized kubeconfig. If they differ, the row
-	// is stale (e.g. destroy + redeploy with the same PoC name; kind
-	// rotates the apiserver port on each create) — DELETE the stale
+	// is stale (e.g. destroy + redeploy with the same PoC name; the
+	// k3s server's mapped apiserver port rotates on each create) —
+	// DELETE the stale
 	// row and POST a fresh one so bnk-forge talks to the new cluster.
 	clusters, err := cli.ListProjectClusters(ctx, projectID)
 	if err != nil {

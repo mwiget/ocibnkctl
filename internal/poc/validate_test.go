@@ -151,7 +151,7 @@ func TestNewPopulatesBinaryPins(t *testing.T) {
 		t.Errorf("cne_manifest: got %q want %q", p.Versions.CNEManifest, version.CNEManifestVersion)
 	}
 	if !p.BNK.DemoMode {
-		t.Errorf("demo_mode: want true (kind requires demo TMM)")
+		t.Errorf("demo_mode: want true (k3s demo shape requires demo TMM)")
 	}
 	if p.Cluster.Provider != "docker" {
 		t.Errorf("cluster.provider: got %q want docker", p.Cluster.Provider)

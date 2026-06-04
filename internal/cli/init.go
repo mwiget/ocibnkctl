@@ -32,7 +32,7 @@ The repo contains:
   AGENTS.md        instructions for any agentic CLI driving this PoC
   CLAUDE.md        @AGENTS.md include for Claude Code
   journal/         append-only markdown log written during the PoC
-  artifacts/       rendered kind.yaml, kubeconfig, helm values
+  artifacts/       rendered k3s.yaml, kubeconfig, helm values
   keys/            gitignored — drop FAR tgz + JWT here
   .gitignore       excludes all secret material
 

@@ -10,13 +10,14 @@ import (
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ocibnkctl",
-		Short: "Deploy F5 BIG-IP Next for Kubernetes (BNK) on a kind cluster with demo-mode TMM",
+		Short: "Deploy F5 BIG-IP Next for Kubernetes (BNK) on a native k3s cluster with demo-mode TMM",
 		Long: `ocibnkctl provisions a BNK ` + version.BNKVersion + ` deployment on a
-two-node kind cluster (1 combined control-plane + worker, 1 worker
-dedicated to TMM in demo mode):
+two-node k3s cluster (1 combined control-plane + worker, 1 worker
+dedicated to TMM in demo mode). The k3s nodes run directly as
+containers on the host OCI runtime (docker or podman) — no third-party
+orchestrator binary:
 
-  cluster up  -> create the kind cluster, install Calico, attach
-                 internal + external docker networks, label the TMM
+  cluster up  -> create the k3s cluster, install Calico, label the TMM
                  worker, fetch kubeconfig
   deploy      -> install BNK platform (cert-manager, FLO, License CR,
                  CNEInstance with demoMode=true)
@@ -24,8 +25,8 @@ dedicated to TMM in demo mode):
 Each PoC lives in its own local dir (see "init"). poc.yaml holds the
 full declarative state needed to tear down and redeploy.
 
-Run "ocibnkctl doctor" after install to verify docker/kind/kubectl/helm
-are reachable.`,
+Run "ocibnkctl doctor" after install to verify docker/podman, kubectl,
+and helm are reachable.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

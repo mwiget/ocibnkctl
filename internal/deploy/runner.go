@@ -1,12 +1,12 @@
-// Package deploy installs the BNK platform on top of a kind cluster:
+// Package deploy installs the BNK platform on top of the k3s cluster:
 // namespaces, FAR pull secret, cert-manager, FLO, License CR,
 // CNEInstance.
 //
 // Unlike dpubnkctl which shells kubectl/helm through an alpine/k8s
 // container (so the operator only needs Docker for the kubespray path),
 // ocibnkctl uses the operator's locally installed kubectl + helm.
-// Rationale: kind itself runs on Docker so Docker is already required,
-// and any operator running kind almost always has kubectl + helm
+// Rationale: the k3s nodes run on the container runtime already required,
+// and any operator running this almost always has kubectl + helm
 // installed alongside it. `ocibnkctl doctor` enforces this up front.
 package deploy
 

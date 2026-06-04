@@ -36,7 +36,7 @@ func New(name string) *PoC {
 		},
 		// Networks: left empty by default. Earlier versions
 		// preallocated bnk-internal / bnk-external docker bridges and
-		// attached them to the kind nodes as "scenery for external
+		// attached them to the k3s nodes as "scenery for external
 		// test clients", but no scenario actually consumed them — the
 		// Gateway IP pool (203.0.113.0/24) is plumbed via the bnk-bgp
 		// Multus NAD bridge that scenarios create on demand. The

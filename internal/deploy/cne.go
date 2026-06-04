@@ -11,7 +11,7 @@ import (
 )
 
 // CNEInputs is the flat shape passed to cne-instance.yaml.tmpl. Much
-// smaller than dpubnkctl's because the kind path runs TMM in demo mode
+// smaller than dpubnkctl's because the demo path runs TMM in demo mode
 // — no DPU, no SR-IOV, no NetworkAttachments, no dynamicRouting / ACL.
 type CNEInputs struct {
 	InstanceName    string
@@ -21,9 +21,9 @@ type CNEInputs struct {
 	TMMNodeLabelVal string
 }
 
-// RenderCNEInstance builds the CNEInstance YAML for a kind PoC. Demo
+// RenderCNEInstance builds the CNEInstance YAML for a PoC. Demo
 // mode is mandatory in this build — TMM relies on virtio inside its
-// pod netns; SR-IOV / DPU pathways do not exist on kind.
+// pod netns; SR-IOV / DPU pathways do not exist in the demo shape.
 func RenderCNEInstance(p *poc.PoC) (string, error) {
 	k, v := p.BNK.TMMLabel()
 	in := CNEInputs{

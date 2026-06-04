@@ -26,12 +26,11 @@ func newDestroyCmd() *cobra.Command {
 	f := &destroyFlags{}
 	cmd := &cobra.Command{
 		Use:   "destroy",
-		Short: "Tear down the kind cluster (and bnk-forge registration), drop docker networks",
+		Short: "Tear down the k3s cluster (and bnk-forge registration)",
 		Long: `Symmetric tear-down:
 
   1. bnk-forge unregister  (if bnk_forge.enabled and reachable)
-  2. kind delete cluster
-  3. docker network rm internal + external
+  2. remove the k3s node containers + the cluster's docker network
 
 Required gates:
   --yolo                   acknowledge destructive

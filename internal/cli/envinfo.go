@@ -35,18 +35,17 @@ type EnvInfo struct {
 	CPUModel   string `json:"cpu_model,omitempty"`  // /proc/cpuinfo "model name"
 	MemTotalKB int64  `json:"mem_total_kb,omitempty"`
 	DockerVer  string `json:"docker_version,omitempty"`
-	KindVer    string `json:"kind_version,omitempty"`
 	KubectlVer string `json:"kubectl_client_version,omitempty"`
 	GoVer      string `json:"go_version,omitempty"`
 
 	// ocibnkctl + BNK metadata (compiled-in).
-	KindBNKCtlVersion  string `json:"ocibnkctl_version,omitempty"`
+	OcibnkctlVersion   string `json:"ocibnkctl_version,omitempty"`
 	BNKVersion         string `json:"bnk_version,omitempty"`
 	CNEManifestVersion string `json:"cne_manifest_version,omitempty"`
 
 	// Cluster-side (collected after deploy succeeds — empty otherwise).
 	K8sServerVersion string `json:"k8s_server_version,omitempty"`
-	KindClusterName  string `json:"kind_cluster_name,omitempty"`
+	ClusterName      string `json:"cluster_name,omitempty"`
 
 	// Topology — populated alongside K8sServerVersion.
 	Nodes        []NodeInfo `json:"nodes,omitempty"`
@@ -91,7 +90,7 @@ func collectHostInfo(ctx context.Context) EnvInfo {
 		Arch:               runtime.GOARCH,
 		CPUCores:           runtime.NumCPU(),
 		GoVer:              runtime.Version(),
-		KindBNKCtlVersion:  version.Version,
+		OcibnkctlVersion:   version.Version,
 		BNKVersion:         version.BNKVersion,
 		CNEManifestVersion: version.CNEManifestVersion,
 	}
@@ -109,14 +108,6 @@ func collectHostInfo(ctx context.Context) EnvInfo {
 	}
 	if v := firstLine(captureCmd(ctx, "docker", "version", "--format", "{{.Server.Version}}")); v != "" {
 		e.DockerVer = v
-	}
-	if v := firstLine(captureCmd(ctx, "kind", "version")); v != "" {
-		// kind prints "kind v0.27.0 go1.23.0 linux/amd64" — keep
-		// the kind-specific prefix only for brevity.
-		if i := strings.Index(v, " go"); i > 0 {
-			v = v[:i]
-		}
-		e.KindVer = v
 	}
 	if v := firstLine(captureCmd(ctx, "kubectl", "version", "--client=true", "--output=yaml")); v != "" {
 		// `--output=yaml` prints "clientVersion:\n  gitVersion: vX.Y.Z\n  …"
@@ -147,21 +138,16 @@ func collectClusterInfo(ctx context.Context, kubectl func(args ...string) (strin
 			}
 		}
 	}
-	// kind cluster name: derive from the current kubeconfig context.
-	// kind names contexts `kind-<clustername>`, so the prefix-strip
-	// gives us the cluster name without relying on node labels
-	// (which kind doesn't always add).
-	if v, err := kubectl("config", "current-context"); err == nil {
-		v = strings.TrimSpace(v)
-		e.KindClusterName = strings.TrimPrefix(v, "kind-")
-	}
-
 	// Nodes + topology.
 	if data, err := kubectl("get", "nodes", "-o", "json"); err == nil {
 		if nodes := parseNodes(data); len(nodes) > 0 {
 			e.Nodes = nodes
 		}
 	}
+	// Cluster name: derive from the control-plane node container name
+	// (`k3s-<name>-server-0`). The native k3s kubeconfig context is
+	// always "default", so the cluster name isn't recoverable from it.
+	e.ClusterName = clusterNameFromNodes(e.Nodes)
 	// All pods, used both for per-namespace counts AND key-pods lookup.
 	if data, err := kubectl("get", "pods", "-A", "-o", "json"); err == nil {
 		ns, key, byNode := parsePods(data)
@@ -172,6 +158,22 @@ func collectClusterInfo(ctx context.Context, kubectl func(args ...string) (strin
 			e.Nodes[i].Pods = byNode[e.Nodes[i].Name]
 		}
 	}
+}
+
+// clusterNameFromNodes recovers the ocibnkctl cluster name from the
+// control-plane node, whose container/node name is `k3s-<name>-server-0`.
+// Returns "" if no node matches that pattern.
+func clusterNameFromNodes(nodes []NodeInfo) string {
+	for _, n := range nodes {
+		if n.Role != "control-plane" {
+			continue
+		}
+		s := strings.TrimSuffix(strings.TrimPrefix(n.Name, "k3s-"), "-server-0")
+		if s != "" && s != n.Name {
+			return s
+		}
+	}
+	return ""
 }
 
 // parseNodes pulls node summary rows from `kubectl get nodes -o json`.
@@ -451,17 +453,17 @@ func sortKeyPods(p []PodInfo) {
 	})
 }
 
-// renderTopologyDiagram emits an ASCII block diagram of the kind
-// cluster: one box per node with its key F5 pods listed underneath.
-// Wrapped in a code fence by the caller; never escapes the table
-// view. Best-effort: empty fields render gracefully.
+// renderTopologyDiagram emits an ASCII block diagram of the cluster:
+// one box per node with its key F5 pods listed underneath. Wrapped in a
+// code fence by the caller; never escapes the table view. Best-effort:
+// empty fields render gracefully.
 func renderTopologyDiagram(e *EnvInfo) string {
 	var b strings.Builder
-	cluster := e.KindClusterName
+	cluster := e.ClusterName
 	if cluster == "" {
-		cluster = "kind cluster"
+		cluster = "cluster"
 	} else {
-		cluster = "kind cluster: " + cluster
+		cluster = "cluster: " + cluster
 	}
 	// Group key pods by node name.
 	byNode := map[string][]PodInfo{}
@@ -620,16 +622,15 @@ func renderEnvironment(e *EnvInfo) string {
 
 	b.WriteString("### Versions\n\n")
 	b.WriteString("| Component | Version |\n|---|---|\n")
-	fmt.Fprintf(&b, "| ocibnkctl | %s |\n", dash(e.KindBNKCtlVersion))
+	fmt.Fprintf(&b, "| ocibnkctl | %s |\n", dash(e.OcibnkctlVersion))
 	fmt.Fprintf(&b, "| BNK | %s |\n", dash(e.BNKVersion))
 	fmt.Fprintf(&b, "| CNE manifest | %s |\n", dash(e.CNEManifestVersion))
-	fmt.Fprintf(&b, "| kind | %s |\n", dash(e.KindVer))
 	fmt.Fprintf(&b, "| kubectl (client) | %s |\n", dash(e.KubectlVer))
 	fmt.Fprintf(&b, "| Kubernetes (server) | %s |\n", dash(e.K8sServerVersion))
-	fmt.Fprintf(&b, "| Docker | %s |\n", dash(e.DockerVer))
+	fmt.Fprintf(&b, "| container runtime | %s |\n", dash(e.DockerVer))
 	fmt.Fprintf(&b, "| Go (build) | %s |\n", dash(e.GoVer))
-	if e.KindClusterName != "" {
-		fmt.Fprintf(&b, "| kind cluster | %s |\n", e.KindClusterName)
+	if e.ClusterName != "" {
+		fmt.Fprintf(&b, "| cluster | %s |\n", e.ClusterName)
 	}
 	b.WriteString("\n")
 

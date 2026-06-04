@@ -12,7 +12,7 @@ import (
 func TestCollectHostInfo_PopulatesCompiledInFields(t *testing.T) {
 	// The collector probes the host best-effort, but the four
 	// compiled-in fields must always populate regardless of the
-	// build environment (no docker, no kind, no /proc, etc.).
+	// build environment (no docker, no kubectl, no /proc, etc.).
 	e := collectHostInfo(context.Background())
 
 	if e.OS == "" {
@@ -27,8 +27,8 @@ func TestCollectHostInfo_PopulatesCompiledInFields(t *testing.T) {
 	if !strings.HasPrefix(e.GoVer, "go") {
 		t.Errorf("GoVer=%q, want go-version string", e.GoVer)
 	}
-	if e.KindBNKCtlVersion == "" {
-		t.Error("KindBNKCtlVersion empty")
+	if e.OcibnkctlVersion == "" {
+		t.Error("OcibnkctlVersion empty")
 	}
 	if e.BNKVersion == "" {
 		t.Error("BNKVersion empty")
@@ -48,14 +48,13 @@ func TestRenderEnvironment_AllFieldsPresent(t *testing.T) {
 		CPUModel:           "Intel(R) Test CPU",
 		MemTotalKB:         32 * 1024 * 1024,
 		DockerVer:          "27.5.1",
-		KindVer:            "kind v0.27.0",
 		KubectlVer:         "v1.31.4",
 		GoVer:              "go1.23.4",
-		KindBNKCtlVersion:  "dev",
+		OcibnkctlVersion:   "dev",
 		BNKVersion:         "2.3.0",
 		CNEManifestVersion: "2.3.0-3.2598.3-0.0.170",
 		K8sServerVersion:   "v1.30.8",
-		KindClusterName:    "smoke",
+		ClusterName:        "smoke",
 	}
 	md := renderEnvironment(e)
 	for _, want := range []string{
@@ -63,13 +62,12 @@ func TestRenderEnvironment_AllFieldsPresent(t *testing.T) {
 		"### Versions",
 		"### Host",
 		"ocibnkctl", "BNK", "CNE manifest",
-		"kind", "kubectl (client)", "Kubernetes (server)", "Docker", "Go (build)", "kind cluster",
+		"kubectl (client)", "Kubernetes (server)", "container runtime", "Go (build)", "| cluster |",
 		"linux/amd64",
 		"6.8.0-117-generic",
 		"32768 MiB", "32.00 GiB",
 		"test-host",
 		"24",
-		"v0.27.0",
 		"v1.31.4",
 		"v1.30.8",
 		"27.5.1",
@@ -83,22 +81,22 @@ func TestRenderEnvironment_AllFieldsPresent(t *testing.T) {
 
 func TestRenderEnvironment_MissingFieldsRenderAsDash(t *testing.T) {
 	// Only compiled-in fields populated — host probes failed
-	// (no /proc, no docker, no kind). Output should still render
+	// (no /proc, no docker, no kubectl). Output should still render
 	// without panic and show "—" for missing strings.
 	e := &EnvInfo{
 		OS:                 "darwin",
 		Arch:               "arm64",
 		CPUCores:           8,
 		GoVer:              "go1.23.4",
-		KindBNKCtlVersion:  "dev",
+		OcibnkctlVersion:   "dev",
 		BNKVersion:         "2.3.0",
 		CNEManifestVersion: "2.3.0-3.2598.3-0.0.170",
-		// Kernel, Hostname, CPUModel, MemTotalKB, Docker, kind,
+		// Kernel, Hostname, CPUModel, MemTotalKB, runtime,
 		// kubectl, server version, cluster name all empty.
 	}
 	md := renderEnvironment(e)
-	if !strings.Contains(md, "| Docker | — |") {
-		t.Errorf("expected dash for missing Docker, got:\n%s", md)
+	if !strings.Contains(md, "| container runtime | — |") {
+		t.Errorf("expected dash for missing container runtime, got:\n%s", md)
 	}
 	if !strings.Contains(md, "| Hostname | — |") {
 		t.Errorf("expected dash for missing Hostname")
@@ -110,8 +108,8 @@ func TestRenderEnvironment_MissingFieldsRenderAsDash(t *testing.T) {
 	if strings.Contains(md, "| Memory |") {
 		t.Errorf("Memory row should be omitted when zero")
 	}
-	if strings.Contains(md, "| kind cluster |") {
-		t.Errorf("kind cluster row should be omitted when empty")
+	if strings.Contains(md, "| cluster |") {
+		t.Errorf("cluster row should be omitted when empty")
 	}
 }
 
@@ -259,7 +257,7 @@ func TestParsePods_KeyPodsExcludeInstallerAndNonF5(t *testing.T) {
 func TestRenderEnvironment_WithTopology(t *testing.T) {
 	e := &EnvInfo{
 		OS: "linux", Arch: "amd64", CPUCores: 8,
-		KindBNKCtlVersion: "dev", BNKVersion: "2.3.0",
+		OcibnkctlVersion: "dev", BNKVersion: "2.3.0",
 		CNEManifestVersion: "2.3.0-3.2598.3-0.0.170",
 		Nodes: []NodeInfo{
 			{Name: "smoke-control-plane", Role: "control-plane", Ready: "True",
@@ -322,7 +320,7 @@ func TestTrimHash(t *testing.T) {
 
 func TestRenderTopologyDiagram(t *testing.T) {
 	e := &EnvInfo{
-		KindClusterName: "smoke",
+		ClusterName: "smoke",
 		Nodes: []NodeInfo{
 			{Name: "smoke-control-plane", Role: "control-plane",
 				Ready: "True", K8sVersion: "v1.30.8", Pods: 6},
@@ -338,7 +336,7 @@ func TestRenderTopologyDiagram(t *testing.T) {
 	}
 	d := renderTopologyDiagram(e)
 	for _, want := range []string{
-		"kind cluster: smoke",
+		"cluster: smoke",
 		"smoke-control-plane",
 		"smoke-worker",
 		"default/f5-tmm  6/6 Running",     // hash stripped
