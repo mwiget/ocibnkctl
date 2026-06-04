@@ -2,16 +2,19 @@
 
 ![BNK](https://img.shields.io/badge/BNK-2.3.0-0a3a5c)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30.8-326ce5?logo=kubernetes&logoColor=white)
-![kind](https://img.shields.io/badge/kind-v0.26%2B-1f6feb)
+![k3s](https://img.shields.io/badge/k3s-v1.30.8-ffc61c)
 ![Go](https://img.shields.io/github/go-mod/go-version/mwiget/ocibnkctl)
 ![License](https://img.shields.io/github/license/mwiget/ocibnkctl)
 ![Last commit](https://img.shields.io/github/last-commit/mwiget/ocibnkctl)
 [![Release](https://img.shields.io/github/v/release/mwiget/ocibnkctl?label=download)](https://github.com/mwiget/ocibnkctl/releases/latest)
 
 Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.0
-on a two-node [kind](https://kind.sigs.k8s.io/) cluster — one combined
-control-plane + worker, one worker dedicated to TMM running in demo
-mode (virtio inside the pod netns; no DPU, no SR-IOV, no Multus).
+on a two-node [k3s](https://k3s.io/) cluster — one combined
+control-plane + worker (server), one worker (agent) dedicated to TMM
+running in demo mode (virtio inside the pod netns; no DPU, no SR-IOV, no
+Multus). The k3s nodes run directly as containers on the host OCI
+runtime (docker or podman) — **no kind, no k3d, no third-party
+orchestrator binary**.
 
 Aimed at low-spec corporate laptops where dpubnkctl's bare-metal +
 DPU pipeline is overkill. Same poc.yaml-driven, resume-safe shape;
@@ -21,18 +24,18 @@ much shorter pipeline.
 
 Drives a BNK deployment in three phases:
 
-1. **cluster up** — `kind create cluster`, install Calico (acts as a
-   simulator for larger SR-IOV deployments), create internal + external
-   docker bridge networks and attach both to every kind node container,
-   label the worker for TMM, fetch kubeconfig.
+1. **cluster up** — start the k3s server + agent containers and join
+   them, install Calico (acts as a simulator for larger SR-IOV
+   deployments) in place of k3s's bundled flannel, label the worker for
+   TMM, fetch kubeconfig.
 2. **deploy prereqs** — namespaces, FAR pull secret, cert-manager.
 3. **deploy flo + cne** — FLO from the release-manifest chart at
    `repo.f5.com`, License CR with the operator's JWT, CNEInstance with
    `advanced.demoMode.enabled: true` and TMM pinned via `nodeSelector:
    app=f5-tmm`.
 
-Symmetric **`destroy`** unwinds it: bnk-forge unregister → `kind
-delete cluster` → docker network rm.
+Symmetric **`destroy`** unwinds it: bnk-forge unregister → remove the
+k3s node containers → remove the cluster's docker network.
 
 ## Pinned versions
 
@@ -40,7 +43,7 @@ delete cluster` → docker network rm.
 |---|---|
 | BNK | 2.3.0 |
 | CNE release manifest | 2.3.0-3.2598.3-0.0.170 |
-| Kubernetes (kind node image) | 1.30.8 (kind v0.26 ships this) |
+| Kubernetes (k3s node image) | 1.30.8 (`rancher/k3s:v1.30.8-k3s1`) |
 | Calico | v3.28.2 |
 | cert-manager | v1.16.2 |
 | FLO chart | resolved at deploy time from the release manifest |
@@ -57,11 +60,19 @@ Colima use the same numbers — same underlying Linux VM model.)
 
 ### Why so much for a "demo"
 
-In the two-node shape every F5 pod lands on `demo-worker` —
-`demo-control-plane` holds the standard `node-role.kubernetes.io/control-plane`
-taint and the BNK 2.3.0 charts don't tolerate it. The Kubernetes
-scheduler admits pods against their `requests`, not their actual
-RSS, and the chart reserves heavily:
+TMM is pinned to the agent node via `nodeSelector: app=f5-tmm`. Unlike
+kind, **k3s leaves the server node schedulable** (no control-plane
+`NoSchedule` taint), so the remaining BNK pods spread across both nodes
+rather than all piling onto one worker. The Kubernetes scheduler admits
+pods against their `requests`, not their actual RSS, and the chart
+reserves heavily:
+
+> The per-pod table below was measured on the kind-based predecessor,
+> where the control-plane was tainted and the entire stack landed on a
+> single worker — i.e. the worst-case single-node concentration. On the
+> native k3s backend the non-TMM load spreads across both schedulable
+> nodes, so effective per-node pressure is lower; the totals are pending
+> re-measurement on k3s.
 
 | Pod (on the worker)                 | Memory request | CPU request |
 |---|---|---|
@@ -79,12 +90,11 @@ RSS, and the chart reserves heavily:
 | otel-collector / flo                | 256 Mi each    | 500m / 250m |
 | **Sum on the worker**               | **~20 Gi**     | **~12 cores**|
 
-Each kind node container reports the docker daemon's full memory and
-CPU as its allocatable — kind does not partition. So the worker won't
+Each k3s node container reports the docker daemon's full memory and
+CPU as its allocatable — there is no partitioning. So the cluster won't
 schedule the full stack until the daemon (or Docker Desktop VM) is
-sized above the request total, plus ~4 Gi headroom for the
-control-plane pods sharing the same VM and kernel overhead in both
-node containers.
+sized above the request total, plus headroom for the control-plane pods
+and kernel overhead in both node containers.
 
 ### What the cluster actually uses
 
@@ -109,11 +119,12 @@ just won't *get there* without first satisfying the K8s scheduler's
 `ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Six pods
 (`f5-dssm-db-0`, `f5-dssm-sentinel-0`, `f5-spk-cwc-*`,
 `f5-observer-{0,receiver-0,operator-*}`) sit `Pending` with
-`FailedScheduling: Insufficient memory` on the worker, and
-`CNEInstance.Available` never goes true. Quick check:
+`FailedScheduling: Insufficient memory`, and
+`CNEInstance.Available` never goes true. Quick check (nodes are
+`k3s-<poc>-server-0` / `k3s-<poc>-agent-0`):
 
 ```bash
-kubectl --kubeconfig <poc>/artifacts/kubeconfig describe node demo-worker \
+kubectl --kubeconfig <poc>/artifacts/kubeconfig describe node k3s-<poc>-agent-0 \
   | grep -E "Allocatable:|Allocated resources:" -A6
 ```
 
@@ -123,9 +134,9 @@ deploy cne …`) — it's idempotent.
 
 ### Disk
 
-1.4 GB (kindest/node image) + ~2.4 GB (F5 container images pulled to
+~0.3 GB (`rancher/k3s` image) + ~2.4 GB (F5 container images pulled to
 the worker) + ~0.5 GB (cert-manager, alpine/k8s tooling, manifests) +
-~5 GB headroom for kind cluster state and logs.
+~5 GB headroom for k3s cluster state and logs.
 
 `ocibnkctl doctor` reports the host's actual CPU count and fails
 when it falls below `MinBaseline`. Override the constants in
@@ -138,7 +149,7 @@ If a local [bnk-forge](https://github.com/sp-prod-field/bnk-forge)
 clone exists at `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`)
 when `ocibnkctl init` runs, the new PoC's `bnk_forge:` block is
 pre-filled and enabled. On `cluster up`, ocibnkctl best-effort
-registers the kind cluster with bnk-forge — if the local bnk-forge
+registers the k3s cluster with bnk-forge — if the local bnk-forge
 stack isn't running, the auto-hook logs a clean skip and continues.
 
 **`ocibnkctl` never installs or starts bnk-forge for you.** If it's
@@ -179,9 +190,7 @@ below.
 
 | Tool | Why |
 |---|---|
-| **Docker** or **Podman** | kind runs Kubernetes nodes as containers; FLO + cert-gen also shell into an `alpine/k8s:1.31.5` container at deploy time |
-| **kind** | cluster bring-up (default backend) |
-| **k3d** *(optional)* | alternative backend, selected via the `k3dbnkctl` symlink (see [Cluster backend](#cluster-backend-kind--k3d)) |
+| **Docker** or **Podman** | runs the k3s nodes as containers; FLO + cert-gen also shell into an `alpine/k8s:1.31.5` container at deploy time. No separate cluster tool — the k3s nodes are launched via the runtime directly |
 | **kubectl** | cluster reads/writes (apply, wait, label) |
 | **helm** | cert-manager + FLO install, release-manifest pull |
 | **git** *(optional)* | `init` git-inits the PoC repo (skippable with `--no-git`) |
@@ -198,24 +207,20 @@ What customers supply themselves, dropped into `keys/` of the PoC repo
 - FAR tarball — image-pull credentials for `repo.f5.com`
 - JWT — TEEM activation token
 
-## Cluster backend (kind / k3d)
+## Cluster backend (native k3s)
 
-kind is the default backend. **k3d** (k3s-in-docker) is available as an
-option, selected by the binary's own name: symlink `k3dbnkctl` to the
-installed `ocibnkctl` and invoke the symlink to drive k3d instead.
+ocibnkctl ships a single backend: the k3s nodes (`rancher/k3s:v1.30.8-k3s1`)
+run directly as containers on the host OCI runtime, driven through the
+docker/podman CLI — there is **no third-party orchestrator binary** to
+install. `cluster up` starts a server (combined control-plane + worker)
+and an agent (the TMM worker), joins them over a per-cluster docker
+bridge network, remounts each node's rootfs `rshared` (so Calico's
+`mount-bpffs` init works), then layers Calico on top of k3s with its
+bundled flannel/traefik/servicelb disabled. The result is the same
+two-node, Calico-CNI, k8s-v1.30.8 shape the deploy pipeline expects.
 
-```bash
-ln -sf ocibnkctl ~/.local/bin/k3dbnkctl
-k3dbnkctl cluster up --poc demo --yolo --confirm-cluster demo   # uses k3d
-ocibnkctl cluster up --poc demo --yolo --confirm-cluster demo  # uses kind
-```
-
-Both backends build the same two-node, Calico-CNI, k8s-v1.30.8 shape and
-share the entire BNK deploy pipeline. Warm, k3d brings the cluster up
-~18 % faster and idles ~200 MiB lighter (5 pods vs 12). Full
-measurements and the trade-offs are in
-[docs/kind-vs-k3d.md](docs/kind-vs-k3d.md). (Requires the `k3d` CLI on
-PATH; `k3dbnkctl doctor` checks for it.)
+Podman works through the same code path — set `cluster.provider: podman`
+in `poc.yaml` (or let `doctor`/`cluster up` auto-detect the runtime).
 
 ## Quick start
 
@@ -258,7 +263,7 @@ cmd/ocibnkctl/        main entrypoint
 internal/cli/          cobra commands (init, validate, doctor, cluster,
                        deploy, destroy, e2e, bnk-forge, version)
 internal/poc/          poc.yaml schema + I/O
-internal/cluster/      kind + docker wrappers
+internal/cluster/      native k3s backend + docker/podman wrappers
 internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen
 internal/bnkforge/     bnk-forge HTTP client (copy-fork of dpubnkctl)
 internal/embedded/     go:embed AGENTS.md, CLAUDE.md, templates/
@@ -272,7 +277,7 @@ poc.yaml         declarative state — source of truth
 AGENTS.md        operator + agent guide
 CLAUDE.md        @AGENTS.md include
 journal/         append-only markdown log
-artifacts/       rendered kind.yaml, kubeconfig, helm values, CWC certs
+artifacts/       rendered k3s.yaml, kubeconfig, helm values, CWC certs
 keys/            gitignored — FAR tgz + JWT live here
 .gitignore       excludes all secret material
 ```
@@ -280,25 +285,28 @@ keys/            gitignored — FAR tgz + JWT live here
 ## Network topology
 
 The shape after a full `e2e` plus `bgp-peer-frr` (everything the
-other scenarios build on). One docker bridge on the host (the
-kind cluster's own); two kind node containers; a Multus-managed
-Linux bridge inside the worker carries BGP traffic between TMM
-and the FRR helper pod. Scenario backends are plain Calico pods
-— the Gateway IPs they serve get plumbed via BGP, so the
-backends don't need to be on the NAD themselves.
+other scenarios build on) — the substance here (Calico, the Multus
+NAD bridge, ZeBOS/BGP) is backend-agnostic. One docker bridge on the
+host (the k3s cluster's own, `k3s-<poc>`); two k3s node containers
+(`k3s-<poc>-server-0` = control-plane + worker, `k3s-<poc>-agent-0` =
+TMM worker); a Multus-managed Linux bridge inside the worker carries
+BGP traffic between TMM and the FRR helper pod. Scenario backends are
+plain Calico pods — the Gateway IPs they serve get plumbed via BGP, so
+the backends don't need to be on the NAD themselves. (Illustrative node
+names below are shortened for the diagram.)
 
 ```
 +----------------------------------------------------------------------------+
 | HOST  (Linux or macOS Docker Desktop)                                      |
 |                                                                            |
-|   docker bridge: kind  172.18.0.0/16                                       |
+|   docker bridge: k3s   172.20.0.0/16                                       |
 |       |                                                                    |
 +-------|--------------------------------------------------------------------+
         |
 +-------+--------------+   +-------------------------------------------------+
-| smoke-control-plane  |   | smoke-worker  (kind node container)             |
-| (kind node container)|   | label: app=f5-tmm                               |
-| eth0 172.18.0.2      |   | eth0 172.18.0.3                                 |
+| smoke-control-plane  |   | smoke-worker  (k3s node container)              |
+| (k3s node container) |   | label: app=f5-tmm                               |
+| eth0 172.20.0.2      |   | eth0 172.20.0.3                                 |
 |                      |   |                                                 |
 | pods:                |   |  +-------------------------------------------+  |
 |   Calico  Multus     |   |  | TMM pod        ns=default  app=f5-tmm     |  |
@@ -387,6 +395,16 @@ exercises a slice of BNK functionality end-to-end: render manifests
 into `artifacts/scenarios/<name>/`, apply them, assert reconciled
 state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
+> **k3s re-validation pending.** The ratings, wall times, the reference
+> report, and the per-scenario behavioral notes below were measured on
+> the kind-based predecessor (`kindbnkctl`). The scenario *assertions*
+> are backend-agnostic and the cluster shape is identical (two-node,
+> Calico, k8s 1.30.8), so parity is expected — but the suite has not yet
+> been re-run on the native k3s backend. Numbers and "🟡/🟢" verdicts
+> here should be treated as inherited until that run lands. Behavioral
+> notes that mention node-level specifics (storage class, node
+> filesystem) are the most likely to shift on k3s.
+
 ```bash
 ocibnkctl scenario list                            # all known scenarios + rating
 ocibnkctl scenario run http-routing --poc ./demo   # apply + verify + report
@@ -471,14 +489,14 @@ Gateways from being marked-for-deletion by the controller).
 How-tos **#5** ([DOCA Offloads on DPU](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/traffic-offload.html)),
 **#11** ([Static Active-Standby Interface Bonding](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-static-active-standby-bonding.html)),
 and **#12** ([TMOS DNS Service Integration with CIS](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-tmos-dns-service-integration-with-container-ingress-services.html))
-are omitted from the table because they require resources kind
-can't provide: DPU silicon (#5), bondable physical NICs (#11),
+are omitted from the table because they require resources this
+shape can't provide: DPU silicon (#5), bondable physical NICs (#11),
 and a real upstream BIG-IP GTM box (#12). They remain valid BNK
 features outside the ocibnkctl shape.
 
 Ratings are assigned only after a scenario is built and run.
 Implemented scenarios that pan out land as 🟢; ones that
-hit a real architectural barrier on kind+demoMode get 🟡
+hit a real architectural barrier on k3s+demoMode get 🟡
 with the gap documented in the scenario's `Description()`.
 Empty cell = scenario not yet built.
 
@@ -515,7 +533,7 @@ kubectl -n scn-bgp exec deploy/scn-frr -c frr -- \
 balance to non-Service backends) via the BNK `Pool` CR. HTTPRoute
 `backendRefs` points at a `Pool {group:k8s.f5net.com, kind:Pool}`
 instead of a Service; `Pool.spec.members` lists endpoints by
-IP+port. On kind, the "external" backend is an nginx pod attached
+IP+port. In this shape, the "external" backend is an nginx pod attached
 to the bnk-bgp NAD (same bridge TMM uses), with its NAD IP
 auto-discovered and rendered into the Pool CR. Gateway address
 is 203.0.113.101 to avoid collision with `http-routing-e2e`.
@@ -550,7 +568,7 @@ turning into "broken header" errors and curl `(52) Empty reply`.
 `core-file-collection` (green) — implements how-to #4 (set up
 core file collection). One-line CNEInstance.spec.coreCollection.
 enabled=true flip plus `advanced.coremon.hostPath=true` so the
-CoreMond DaemonSet survives kind's single-node-RWO storage class.
+CoreMond DaemonSet survives the single-node-RWO storage class.
 FLO auto-creates a CoreMond CR + DaemonSet in f5-cne-core and
 adds kernel-cores / f5-core-store / tmm-core volumes to the TMM
 Deployment template. The scenario asserts the CR exists, the
@@ -561,7 +579,7 @@ crashing TMM mid-scenario destabilises the cluster, and the
 follow-up "did a core file land in /var/crash" check needs a
 privileged node-level read we'd rather not bake in. Operators
 can run the kill manually after the scenario and inspect the
-kind worker container's filesystem to confirm capture.
+k3s worker container's filesystem to confirm capture.
 
 ## Reference run report
 
@@ -571,6 +589,11 @@ is checked in at
 so a reader can see the full report shape (versions, host
 resources, cluster topology, F5 control-plane pods, every deploy
 phase, and every scenario row) without running anything locally.
+
+> This checked-in report is from the **kind-based predecessor**
+> (`kindbnkctl`), retained to show the report format. A native-k3s
+> reference run will replace it once the deploy pipeline + scenario
+> suite are re-run on this backend.
 
 Reproduce on your own host with:
 
@@ -606,7 +629,7 @@ non-cluster-dependent surface area in one shot.
 - **[dpubnkctl](https://github.com/mwiget/dpubnkctl)** — the
   bare-metal + DPU sister tool. ocibnkctl is a copy-fork:
   `internal/poc`, `internal/cluster`, `internal/cli` are rewritten
-  for the kind path; `internal/bnkforge`, `internal/deploy` are
+  for the k3s path; `internal/bnkforge`, `internal/deploy` are
   forked verbatim with minor adjustments (local kubectl/helm
   instead of containerized).
 - **[f5-bnk-udf](https://github.com/f5devcentral/f5-bnk-udf/tree/v2.2.0)**
@@ -614,5 +637,5 @@ non-cluster-dependent surface area in one shot.
   `advanced.demoMode.enabled: true` + node label + nodeSelector,
   ZeBOS dynamic-routing ConfigMap pattern, multi-worker
   topology. Same CNEInstance recipe family; ocibnkctl adapts it
-  to a two-node kind cluster with Multus NADs replacing the
+  to a two-node k3s cluster with Multus NADs replacing the
   macvlan-on-bare-metal approach used in f5-bnk-udf.

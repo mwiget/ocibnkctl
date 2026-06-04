@@ -5,25 +5,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this binary is
 
 `ocibnkctl` is a single-binary Go CLI that drives a full F5 BIG-IP Next for
-Kubernetes (BNK) 2.3.0 deployment onto a two-node kind cluster — one combined
-control-plane+worker, one worker dedicated to TMM running in **demo mode**
-(virtio inside the pod netns, no DPU/SR-IOV/Multus required for the base
-shape). It is a copy-fork of [`dpubnkctl`](https://github.com/mwiget/dpubnkctl)
-with the bare-metal/DPU/kubespray pipeline replaced by `kind`, but with
-`internal/deploy` and `internal/bnkforge` forked verbatim (with local
-kubectl/helm instead of containerized).
+Kubernetes (BNK) 2.3.0 deployment onto a two-node k3s cluster — one combined
+control-plane+worker (server), one worker (agent) dedicated to TMM running in
+**demo mode** (virtio inside the pod netns, no DPU/SR-IOV/Multus required for
+the base shape). It is a copy-fork of
+[`dpubnkctl`](https://github.com/mwiget/dpubnkctl) with the
+bare-metal/DPU/kubespray pipeline replaced by native k3s-in-containers, but
+with `internal/deploy` and `internal/bnkforge` forked verbatim (with local
+kubectl/helm instead of containerized). It is itself the successor to
+`kindbnkctl` (the kind/k3d-backed predecessor).
 
 Versions are pinned in `internal/version/version.go` and stamped into the
 binary via `-ldflags` (see Makefile).
 
-**Cluster backend.** `internal/cluster` defines a `Provisioner` interface
-with two implementations: `Kind` (default) and `K3d` (k3s-in-docker). The
-backend is chosen from `os.Args[0]` basename (`internal/cli/backend.go`):
-invoking the binary as `k3dbnkctl` (a symlink to `ocibnkctl`) selects k3d.
-Both backends render their own config (`templates/{kind,k3d}.yaml.tmpl`),
-build the same two-node Calico-CNI v1.30.8 shape, and feed the identical
-deploy pipeline. See `docs/kind-vs-k3d.md` for the measured trade-offs;
-kind stays the reference backend for scenarios + the reference report.
+**Cluster backend.** A single native **k3s** backend (`internal/cluster/k3s.go`,
+implementing the `Provisioner` interface). It runs `rancher/k3s` server +
+agent containers directly on the host OCI runtime (docker or podman) via the
+runtime CLI — **no kind, no k3d, no third-party orchestrator binary**.
+`CreateCluster` starts the server, remounts each node's rootfs `rshared` (so
+Calico's `mount-bpffs` init works — plain `docker run` is `rprivate`), joins
+the agent over a per-cluster bridge network with a shared token, and extracts
+the kubeconfig via `docker exec`, rewriting it to the host-mapped API port.
+k3s's bundled flannel/traefik/servicelb are disabled so Calico is the CNI;
+the result is the same two-node Calico-CNI v1.30.8 shape the deploy pipeline
+expects. Note k3s leaves the server node **schedulable** (no control-plane
+taint, unlike kind), so non-TMM pods spread across both nodes.
 
 ## Build / test / run
 
@@ -57,7 +63,7 @@ holds the declarative state for one cluster:
 poc.yaml         # source of truth (see internal/poc/schema.go)
 AGENTS.md        # embedded operator guide (also @-included by CLAUDE.md)
 journal/         # append-only markdown log of runs
-artifacts/       # rendered kind.yaml, kubeconfig, helm values, CWC certs
+artifacts/       # rendered k3s.yaml, kubeconfig, helm values, CWC certs
 keys/            # gitignored — FAR tgz + JWT live here
 ```
 
@@ -76,8 +82,8 @@ validate → cluster up → deploy prereqs → deploy flo → deploy cne
 Each phase is idempotent and gated by `--yolo` plus a typo-guard:
 `--confirm-cluster <name>` (cluster mutations) or `--confirm-deploy <name>`
 (in-cluster mutations) must echo the PoC name. `e2e` chains all five phases.
-`destroy` runs them in reverse: bnk-forge unregister → `kind delete cluster`
-→ docker network rm.
+`destroy` runs them in reverse: bnk-forge unregister → remove k3s node containers
+→ remove the cluster's docker network.
 
 The deploy phase composes three things: cert-manager via helm, the FLO chart
 pulled at deploy time from the BNK release manifest at `repo.f5.com`, and a
@@ -92,7 +98,7 @@ dependency at deploy time.
 cmd/ocibnkctl/        main entrypoint (just wires internal/cli.NewRootCmd)
 internal/cli/          cobra subcommands — root.go assembles the tree
 internal/poc/          poc.yaml schema + I/O + validation
-internal/cluster/      Provisioner (kind | k3d) + docker bridge wrappers
+internal/cluster/      native k3s backend (Provisioner) + docker/podman wrappers
 internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kubectl/helm wrapper)
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
@@ -118,7 +124,7 @@ Ratings — set by the scenario itself, only after it's been run:
 | Rating | Meaning |
 |---|---|
 | **green** | fully testable in the 2-node demo-TMM shape |
-| **amber** | control-plane verifies; data-plane plumbing partially missing (a real BNK 2.3 gap, the kind shape, or both — see the scenario's `Description()` for which) |
+| **amber** | control-plane verifies; data-plane plumbing partially missing (a real BNK 2.3 gap, the k3s shape, or both — see the scenario's `Description()` for which) |
 | **red**   | requires DPUs / real upstream BIG-IP / bondable NICs — listed for discoverability, never executed |
 
 When adding a new scenario, the convention is: subpackage under
@@ -148,7 +154,7 @@ binding. The full topology diagram is in README.md "Network topology".
 
 Optional. If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists at
 `init` time, the `bnk_forge:` block is pre-filled and `cluster up` best-effort
-registers the kind cluster with bnk-forge. If bnk-forge isn't running, the
+registers the k3s cluster with bnk-forge. If bnk-forge isn't running, the
 hook logs a clean skip and continues — deployment never blocks on it.
 `ocibnkctl` will not install or start bnk-forge.
 
