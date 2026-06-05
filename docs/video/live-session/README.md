@@ -1,9 +1,11 @@
 # Live-session demo video — production kit
 
-This is the pipeline behind the **~3.5 min training video** that shows
+This is the pipeline behind the **~3 min training video** that shows
 `ocibnkctl` deploying F5 BIG-IP Next for Kubernetes by driving a **real,
 live Claude Code session on a local model** — recorded headless on a server,
 no screen, no GUI editor.
+
+▶ **Watch it on YouTube: https://youtu.be/uUyO17K6r5M**
 
 The video is a real Claude Code session (Claude Code pointed at a local
 `qwen3-coder` model via `ollama launch claude`), driven over `tmux send-keys`
