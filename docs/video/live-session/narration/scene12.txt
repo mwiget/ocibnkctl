@@ -1,0 +1,1 @@
+And when you're done, one more prompt tears it all down. The cluster, the containers, and your kubeconfig restored from backup. A complete F Five, big I P Next deployment, on plain Docker, driven end to end by an AI agent, on a local model.

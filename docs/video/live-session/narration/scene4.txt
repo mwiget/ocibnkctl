@@ -1,0 +1,1 @@
+The agent reads the operator guide, then runs the doctor check. Docker, the Kubernetes and Helm clients, and the C P U and memory floor. All verified. The host is ready, and the two license secrets are still needed.

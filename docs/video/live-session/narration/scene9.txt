@@ -1,0 +1,1 @@
+To prove it works, the agent runs the full scenario suite. Each one mapping to an F Five how to article. Twelve of twelve pass green.

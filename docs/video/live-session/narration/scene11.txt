@@ -1,0 +1,1 @@
+Throughout, because a bnk-forge instance is running locally, the cluster registered itself there automatically. Its F Five, big I P dashboard shows the platform healthy. And the traffic flow from every scenario, visualized end to end: gateways, routes, and backends.

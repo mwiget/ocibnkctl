@@ -1,0 +1,1 @@
+We point the agent at the F Five license files: the activation token, and the image pull key. It copies them into place, without ever printing their contents, and re-runs validate. The project is ready to deploy.

@@ -1,0 +1,1 @@
+With the stack up, we ask the agent to list every pod, across all namespaces. About thirty of them. The full F Five control plane and data plane, running across the two nodes.

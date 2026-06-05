@@ -1,0 +1,1 @@
+F. Five. Big I P. Next for Kubernetes. Version 2.3.0. An agentic deployment on plain Docker, driven by an AI agent, on a local model. Let's watch it work.

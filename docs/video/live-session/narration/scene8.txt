@@ -1,0 +1,1 @@
+When something goes wrong, here, a pod stuck pending, the agent doesn't guess. It inspects the events and logs, finds the cause, and explains it in plain language.

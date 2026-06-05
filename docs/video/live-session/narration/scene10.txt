@@ -1,0 +1,1 @@
+Every run writes a detailed report. We ask the agent where to find them, and to open one. It walks through a scenario's results: the reconciled state, and the data path it verified.

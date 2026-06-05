@@ -1,0 +1,1 @@
+One prompt kicks off the whole pipeline. The agent runs the end to end deploy. It brings up a lightweight two node Kubernetes cluster as Docker containers, installs cert manager and the F Five Flo chart, then the C N E instance with T M M in demo mode. Five phases, about five minutes.

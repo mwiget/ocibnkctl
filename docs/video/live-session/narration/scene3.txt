@@ -1,0 +1,1 @@
+Now we launch the agent inside that folder, pointed at a local model through ollama. So nothing leaves the machine. Then we simply tell it what we want.

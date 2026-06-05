@@ -1,0 +1,1 @@
+First, one command. The O C I bink cuttle binary scaffolds a self contained project folder it calls a pock. It holds the deployment's state, an operator guide for the agent, and a place for the license keys.
