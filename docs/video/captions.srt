@@ -1,0 +1,276 @@
+1
+00:00:00,000 --> 00:00:02,480
+This host has nothing installed, but Docker.
+
+2
+00:00:02,480 --> 00:00:05,400
+No Kubernetes, no F5 tooling.
+
+3
+00:00:05,400 --> 00:00:06,700
+In the next five minutes,
+
+4
+00:00:06,700 --> 00:00:09,920
+Claude Code will deploy a full F5 BIG-IP Next
+
+5
+00:00:09,920 --> 00:00:11,440
+for Kubernetes stack
+
+6
+00:00:11,440 --> 00:00:13,680
+and fix the problems it hits along the way.
+
+7
+00:00:14,680 --> 00:00:17,000
+One Go binary drives everything.
+
+8
+00:00:17,000 --> 00:00:18,700
+We build and install it,
+
+9
+00:00:18,700 --> 00:00:20,040
+then ask it to check the host.
+
+10
+00:00:20,040 --> 00:00:22,320
+ocibnkctl doctor inspects the runtime,
+
+11
+00:00:22,320 --> 00:00:25,360
+kubectl, helm, and the CPU and memory floor.
+
+12
+00:00:25,360 --> 00:00:26,880
+Here it finds a missing tool
+
+13
+00:00:26,880 --> 00:00:29,120
+and prints the exact, operating-system-
+
+14
+00:00:29,120 --> 00:00:31,120
+aware command to install it.
+
+15
+00:00:31,120 --> 00:00:33,040
+Claude offers to run that for us.
+
+16
+00:00:33,040 --> 00:00:34,880
+This is the pattern for the whole demo.
+
+17
+00:00:34,880 --> 00:00:36,320
+The tool reports the truth.
+
+18
+00:00:36,320 --> 00:00:37,620
+The agent acts on it.
+
+19
+00:00:38,600 --> 00:00:41,040
+Every deployment lives in a self-contained folder
+
+20
+00:00:41,040 --> 00:00:44,680
+called a PoC. ocibnkctl init demo scaffolds it.
+
+21
+00:00:44,680 --> 00:00:47,680
+Inside: poc.yaml, the single source of truth;
+
+22
+00:00:47,680 --> 00:00:50,320
+AGENTS.md, the operating manual Claude reads first;
+a gitignored keys folder for secrets.
+
+23
+00:00:50,320 --> 00:00:53,400
+The agent always reads poc.yaml before it acts.
+
+24
+00:00:54,360 --> 00:00:56,160
+The deploy needs two customer secrets
+
+25
+00:00:56,160 --> 00:00:58,000
+from F5's license portal.
+
+26
+00:00:58,000 --> 00:01:01,240
+A TEEM activation token, the JWT,
+
+27
+00:01:01,240 --> 00:01:04,800
+and a FAR image-pull tarball for the F5 registry.
+
+28
+00:01:04,800 --> 00:01:06,520
+Without them, the deploy stops
+
+29
+00:01:06,520 --> 00:01:08,560
+and tells us exactly what's missing.
+
+30
+00:01:08,560 --> 00:01:10,800
+Claude explains where each one comes from,
+
+31
+00:01:10,800 --> 00:01:12,920
+and we drop them into the keys folder.
+
+32
+00:01:12,920 --> 00:01:14,840
+We never print their contents.
+
+33
+00:01:14,840 --> 00:01:17,600
+They stay out of the journal and out of every report.
+
+34
+00:01:18,560 --> 00:01:19,820
+Now the payload.
+
+35
+00:01:19,820 --> 00:01:22,540
+One command runs the whole pipeline: validate,
+
+36
+00:01:22,540 --> 00:01:23,760
+bring up a two-node k3s cluster
+
+37
+00:01:23,760 --> 00:01:26,240
+directly as Docker containers,
+
+38
+00:01:26,240 --> 00:01:29,320
+install cert-manager and the F5 FLO chart,
+
+39
+00:01:29,320 --> 00:01:32,160
+then the CNE instance with TMM in demo mode.
+
+40
+00:01:32,160 --> 00:01:34,720
+The first four phases finish in about a minute.
+
+41
+00:01:34,720 --> 00:01:37,880
+The last one, the F5 control plane reconciling,
+
+42
+00:01:37,880 --> 00:01:40,660
+takes a few minutes more, which we've sped up here.
+
+43
+00:01:40,660 --> 00:01:41,960
+With a warm image cache,
+
+44
+00:01:41,960 --> 00:01:44,840
+the whole deploy is about five and a half minutes.
+
+45
+00:01:44,840 --> 00:01:48,260
+The first run, pulling images, is closer to fifteen.
+
+46
+00:01:48,260 --> 00:01:51,380
+Watch the pods schedule and turn ready in k9s,
+
+47
+00:01:51,380 --> 00:01:53,660
+thirty of them across two nodes.
+
+48
+00:01:54,560 --> 00:01:58,060
+No kind, no k3d, no third-party orchestrator,
+
+49
+00:01:58,060 --> 00:01:59,040
+just Docker.
+
+50
+00:02:00,020 --> 00:02:01,860
+Real deployments hit snags.
+
+51
+00:02:01,860 --> 00:02:03,780
+Here a pod is stuck Pending.
+
+52
+00:02:03,780 --> 00:02:04,940
+Instead of guessing,
+
+53
+00:02:04,940 --> 00:02:08,300
+Claude runs doctor and reads the pod's events and logs,
+
+54
+00:02:08,300 --> 00:02:10,540
+then names the cause in plain language
+
+55
+00:02:10,540 --> 00:02:12,240
+and proposes the fix.
+
+56
+00:02:12,240 --> 00:02:15,780
+The agent isn't just typing commands, it's diagnosing.
+
+57
+00:02:16,740 --> 00:02:19,660
+To prove it works, we run the scenario suite.
+
+58
+00:02:19,660 --> 00:02:22,060
+Each one maps to an F5 how-to article,
+
+59
+00:02:22,060 --> 00:02:24,220
+twelve of twelve pass green.
+
+60
+00:02:24,220 --> 00:02:25,940
+And because cluster up installed
+
+61
+00:02:25,940 --> 00:02:27,260
+the kubeconfig for us,
+
+62
+00:02:27,260 --> 00:02:30,500
+kubectl and k9s talk to the cluster directly.
+
+63
+00:02:30,500 --> 00:02:32,880
+Browse the whole F5 stack live.
+
+64
+00:02:33,840 --> 00:02:35,760
+One command tears it all down.
+
+65
+00:02:35,760 --> 00:02:37,420
+Containers, network,
+
+66
+00:02:37,420 --> 00:02:40,600
+and it even restores your original kubeconfig from backup.
+
+67
+00:02:40,600 --> 00:02:44,080
+A full F5 BIG-IP Next for Kubernetes deployment
+
+68
+00:02:44,080 --> 00:02:47,520
+on plain Docker, driven end to end by Claude Code.
+
+69
+00:02:47,520 --> 00:02:50,860
+The tool is on GitHub at mwiget slash ocibnkctl.
