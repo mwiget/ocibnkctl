@@ -71,7 +71,23 @@ its narration length (`setpts`), add a 0.8 s freeze-frame gap (matching the gaps
 in `vo-full.wav`), normalize to a 1920×1080 letterboxed canvas, then concat all
 scenes, **burn `captions.srt`**, and **mux `vo-full.wav`**. Because each scene is
 stretched to its own VO duration, the result stays in sync with the voiceover
-without any editor.
+without any editor. This produces the **tight ~3 min cut** (video length == VO
+length).
+
+### Extended cut — `build-extended.sh` (~5–6 min)
+
+`build.sh` compresses every scene to its narration. For a longer training cut
+that lets the **deploy and scenario footage breathe**, use `build-extended.sh`:
+it gives each scene an explicit **TARGET** duration (edit the `TARGETS=(...)`
+array). Scenes 5 (deploy) and 7 (scenarios) run well past their VO — the
+narration plays at the scene's start, real footage continues after, silence pads
+the audio, and captions are shifted to stay in sync. The committed defaults
+(`14.6 23.9 15.8 24.2 150 16.7 75 18`) yield a **5 m 38 s** video at 1920×1080.
+
+```bash
+cd ~/demo
+~/git/ocibnkctl/docs/video/build-extended.sh demo.mp4
+```
 
 ### Tuning knobs
 
