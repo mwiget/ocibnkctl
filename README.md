@@ -20,6 +20,16 @@ Aimed at low-spec corporate laptops where dpubnkctl's bare-metal +
 DPU pipeline is overkill. Same poc.yaml-driven, resume-safe shape;
 much shorter pipeline.
 
+## Demo
+
+▶ **[Watch the ~3.5-minute demo](docs/video/ocibnkctl-demo.mp4)** — a real,
+**live Claude Code session on a local model** drives `ocibnkctl` end to end:
+scaffold the PoC → deploy F5 BIG-IP Next 2.3.0 → inspect every pod → diagnose a
+stuck pod → run the scenario suite (12/12 green) → bnk-forge auto-registration
+with live Traffic Flow → teardown. The whole production pipeline (headless
+asciinema capture, Piper voiceover, playwright slides + bnk-forge UI shots,
+ffmpeg assembly) is in [`docs/video/live-session/`](docs/video/live-session/).
+
 ## What this tool does
 
 Drives a BNK deployment in three phases:
