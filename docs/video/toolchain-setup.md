@@ -1,5 +1,12 @@
 # ocibnkctl demo video — toolchain setup (Ubuntu 24.04)
 
+> **Capturing from an iPad / no local desktop?** You don't need this two-machine
+> split. See **[`recording-on-lake1.md`](recording-on-lake1.md)** for the
+> fully headless path: record the SSH terminal with `asciinema` on lake1 and
+> assemble the MP4 with `agg` + `ffmpeg` + `build.sh` — captions and Piper VO
+> included, no GUI editor. The OBS/Kdenlive flow below is the desktop
+> alternative when you want pixel-level GUI control.
+
 Two machines, by necessity:
 
 - **lake1 (headless, 28 cores)** — runs `ocibnkctl`, the k3s cluster, and the
