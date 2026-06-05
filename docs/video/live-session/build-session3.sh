@@ -2,7 +2,7 @@
 # v3: chapter slides + per-beat prompt banners + amy "the agent" VO.
 set -euo pipefail
 CAST=$HOME/demo-rec/full2.cast
-VODIR=$HOME/piper/vo3
+VODIR=$HOME/piper/vo-kokoro
 SL=$HOME/demo-rec/slides
 STILLS=$HOME/demo-rec/bnkforge-stills.mp4
 OUT=${1:-$HOME/demo-rec/demo3-final.mp4}
@@ -92,7 +92,7 @@ PY
 echo "── captions ──"
 python3 - "$WORK/caps.srt" <<'PY'
 import sys,re,wave
-out=sys.argv[1]; vodir="/home/mwiget/piper/vo3"
+out=sys.argv[1]; vodir="/home/mwiget/piper/vo-kokoro"
 def sd(n): w=wave.open(f"{vodir}/scene{n}.wav");return w.getnframes()/w.getframerate()
 SD={n:sd(n) for n in range(1,13)}
 disp={

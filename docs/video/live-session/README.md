@@ -19,7 +19,8 @@ for the base asciinema capture mechanism.
 
 | File | What it does |
 |------|--------------|
-| `narration/scene{1..12}.txt` | Piper TTS **input** for the voiceover. Voiced by `en_US-amy-medium`. Says **"the agent"** (Piper can't reliably pronounce "Claude" — it drifts to "cloud"); the brand stays on the captions/slides/TUI. Phonetic spellings: `O C I bink cuttle`, `pock` (PoC), `Flo` (FLO), `F. Five` (F5), `big I P` (BIG-IP). |
+| `narration/scene{1..12}.txt` | TTS **input** for the voiceover. Voiced by **Kokoro-82M** (`af_heart`). Says **"the agent"** for the deploying agent; the Claude Code brand stays on the captions/slides/TUI. Phonetic spellings carried over from the Piper era and still read cleanly: `O C I bink cuttle`, `pock` (PoC), `Flo` (FLO), `F. Five` (F5), `big I P` (BIG-IP). |
+| `gen-kokoro.py` | Kokoro TTS **generator**: reads `narration/scene*.txt`, synthesizes each on the GPU with `af_heart`, writes 24 kHz wavs (the build step resamples to 22050/mono/16-bit). Swap the voice via its first arg. |
 | `render-slides.js` | playwright → 8 full-screen chapter slides (1920×1080 PNG): narrated **title** (F5 BNK 2.3.0 + agentic), 6 chapter cards, and a **closing** card pointing to `github.com/mwiget/ocibnkctl`. |
 | `render-banners.js` | playwright → transparent **"prompt banner"** PNGs overlaid at the top of each beat, highlighting exactly what the user typed (`YOU ❯ …` / `COMMAND $ …`). |
 | `bnkforge-capture.js` | playwright → screenshots of the local **bnk-forge** UI (auto-registered project, K8s dashboard, F5 BNK health) over its API-authenticated login. |
@@ -30,7 +31,7 @@ for the base asciinema capture mechanism.
 
 ```
 record live Claude session (tmux + asciinema)         → full2.cast
-Piper amy narration            (narration/*.txt)      → vo3/scene*.wav
+Kokoro af_heart narration      (narration/*.txt)      → vo-kokoro/scene*.wav
 chapter slides + prompt banners (playwright)          → slides/*.png
 bnk-forge UI screenshots        (playwright)           → uishot/*.png
                        │
@@ -51,9 +52,9 @@ cloud LLM (the model is local), no external services.
 | **asciinema** | 2.4.0 | Records the terminal session → `.cast` (text, deterministic) |
 | **agg** | 1.5.0 | Renders the cast → GIF frames (`--speed` time-compression, monokai theme) |
 | **ffmpeg** | 6.1.1 | Whole assembly: gif→mp4, `setpts` retiming, `concat`, banner `overlay`, slide `xfade` crossfades, `subtitles` caption burn-in, audio mux |
-| **Piper** | rhasspy/piper | Local neural TTS for the voiceover |
-| **en_US-amy-medium** | — | The Piper female voice model |
-| **Whisper** | openai-whisper (small.en) | Pronunciation verification (the "Claude"→"cloud", "F. Five", "big I-P" testing) |
+| **Kokoro-82M** | hexgrad/Kokoro (Apache-2.0) | Local neural TTS for the voiceover — runs on the GPU via torch+CUDA, far more natural than the earlier Piper track |
+| **af_heart** | — | The Kokoro narrator voice model (US English, female) |
+| **Whisper** | openai-whisper (small.en) | Pronunciation verification (the "F. Five", "big I-P" testing) |
 | **Playwright + Chromium** | npm | Renders chapter slides + "YOU ❯" prompt banners (HTML→PNG) **and** screenshots the bnk-forge UI |
 | **Node.js** | v24 | Runs Playwright |
 | **Python 3** | 3.12 | Cast slicing, audio-track building (`wave`), caption SRT generation, amplitude checks |
