@@ -38,11 +38,33 @@ bnk-forge UI screenshots        (playwright)           → uishot/*.png
               build-session3.sh   →  demo3-final.mp4  (1920×1080, h264+aac)
 ```
 
-## Dependencies
+## Tools
 
-- `asciinema` + `agg` (terminal capture/render) — see `../recording-on-lake1.md`
-- `ffmpeg` (assembly), `python3` (cast slicing, audio/caption generation)
-- `piper` + `en_US-amy-medium` voice (TTS)
-- `node` + `playwright` chromium (slides, banners, bnk-forge UI shots)
-- a running local `ollama` with a tool-capable model (`qwen3-coder`) for the
-  live Claude Code session
+Everything ran **locally and headless** — no GUI editor, no cloud TTS, no
+cloud LLM (the model is local), no external services.
+
+### Production (making the video)
+
+| Tool | Version | Role |
+|------|---------|------|
+| **tmux** | 3.4 | Hosts the Claude Code TUI; driven non-interactively via `send-keys` |
+| **asciinema** | 2.4.0 | Records the terminal session → `.cast` (text, deterministic) |
+| **agg** | 1.5.0 | Renders the cast → GIF frames (`--speed` time-compression, monokai theme) |
+| **ffmpeg** | 6.1.1 | Whole assembly: gif→mp4, `setpts` retiming, `concat`, banner `overlay`, slide `xfade` crossfades, `subtitles` caption burn-in, audio mux |
+| **Piper** | rhasspy/piper | Local neural TTS for the voiceover |
+| **en_US-amy-medium** | — | The Piper female voice model |
+| **Whisper** | openai-whisper (small.en) | Pronunciation verification (the "Claude"→"cloud", "F. Five", "big I-P" testing) |
+| **Playwright + Chromium** | npm | Renders chapter slides + "YOU ❯" prompt banners (HTML→PNG) **and** screenshots the bnk-forge UI |
+| **Node.js** | v24 | Runs Playwright |
+| **Python 3** | 3.12 | Cast slicing, audio-track building (`wave`), caption SRT generation, amplitude checks |
+
+### Content (what's shown *in* the video)
+
+| Tool | Role |
+|------|------|
+| **ocibnkctl** | The CLI being demoed (init → deploy → scenarios → destroy) |
+| **Claude Code** | 2.1.165 — the agent driving the deployment (the subject) |
+| **ollama** | 0.24.0 — serves the local model + `ollama launch claude` wires Claude Code to it |
+| **qwen3-coder** | The local model that drove Claude Code |
+| **Docker / k3s / kubectl** | Container runtime, cluster, and the commands the agent ran |
+| **bnk-forge** | The local app whose F5 BNK / Traffic Flow UI was screenshotted |
