@@ -9,7 +9,7 @@
     {
       "description": "Authenticated GET /status returns HTTP 200 with license JSON",
       "ok": true,
-      "got": "{\"Status\":{\"ClusterDetails\":{\"Name\":\"CNE Cluster\"},\"LicenseDetails\":{\"DigitalAssetID\":\"4b9ea265-e54e-4819-a309-c1cc6349256b\",\"EntitlementType\":\"paid\",\"LicenseExpiryDate\":\"2026-12-01T16:49:20Z\",\"LicenseExpiryInDays\":\"179\"},\"LicenseStatus\":{\"State\":\"Ve…"
+      "got": "{\"Status\":{\"ClusterDetails\":{\"Name\":\"CNE Cluster\"},\"LicenseDetails\":{\"DigitalAssetID\":\"9c46defc-5b1f-4e35-815a-80fe190e99d6\",\"EntitlementType\":\"paid\",\"LicenseExpiryDate\":\"2027-02-28T19:12:27Z\",\"LicenseExpiryInDays\":\"267\"},\"LicenseStatus\":{\"State\":\"Ve…"
     },
     {
       "description": "Unauthenticated GET /status is rejected (no token in header)",
@@ -22,8 +22,8 @@
       "got": "invalid token __HTTP_CODE__=401"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/cwc-admin-access/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/cwc-admin-access/02-probe.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cwc-admin-access/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cwc-admin-access/02-probe.yaml",
   "scenario": "cwc-admin-access",
-  "started_at": "2026-06-04T16:57:21.710137426Z",
-  "duration": "8s"
+  "started_at": "2026-06-06T12:52:04.200056Z",
+  "duration": "5s"
 }

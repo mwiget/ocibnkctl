@@ -22,7 +22,7 @@
     {
       "description": "k8s.f5.com/ai semantic-cache annotation present on Gateway",
       "ok": true,
-      "got": "semantic_cache=enabled, semantic_cache_ip_port=10.43.232.102:5050, semantic_cache_recv_timeout=1000"
+      "got": "semantic_cache=enabled, semantic_cache_ip_port=10.43.183.229:5050, semantic_cache_recv_timeout=1000"
     },
     {
       "description": "k8s.f5.com/sse-enabled annotation present on HTTPRoute",
@@ -42,11 +42,11 @@
     {
       "description": "TMM semantic-cache iRule fired (CLIENT_ACCEPTED + HTTP_REQUEST events)",
       "ok": true,
-      "got": "\u003c134\u003eJun 4 16:54:04 f5-tmm-897866d47-njx67 tmm[41]: Rule scn-semcache-gateway-scn-semcache-semantic-cache \u003cHTTP_REQUEST\u003e: SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered /v1/chat/completions client=192.168.99.20 method=POST | \u003c134\u003eJun 4 16:54:04 f5-tmm-…"
+      "got": "\u003c134\u003eJun 6 12:48:37 f5-tmm-d54559c-jzkb6 tmm[41]: Rule scn-semcache-gateway-scn-semcache-semantic-cache \u003cHTTP_REQUEST\u003e: SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered /v1/chat/completions client=192.168.99.20 method=POST | \u003c134\u003eJun 6 12:48:37 f5-tmm-d5…"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/ai-semantic-cache/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-semantic-cache/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-semantic-cache/03-stubs.yaml,/tmp/ocibnk-lab/artifacts/scenarios/ai-semantic-cache/04-gateway.yaml.tmpl,/tmp/ocibnk-lab/artifacts/scenarios/ai-semantic-cache/05-httproute.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/ai-semantic-cache/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/ai-semantic-cache/02-bnkgateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/ai-semantic-cache/03-stubs.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/ai-semantic-cache/04-gateway.yaml.tmpl,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/ai-semantic-cache/05-httproute.yaml",
   "scenario": "ai-semantic-cache",
-  "started_at": "2026-06-04T16:53:33.98464107Z",
-  "duration": "31s"
+  "started_at": "2026-06-06T12:48:03.509329Z",
+  "duration": "34s"
 }

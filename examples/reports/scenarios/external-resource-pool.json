@@ -18,7 +18,7 @@
     {
       "description": "Pool CR has at least one member entry on :80",
       "ok": true,
-      "got": "192.168.138.170:80"
+      "got": "192.168.183.235:80"
     },
     {
       "description": "FRR BGP table has 203.0.113.101/32 advertised by TMM",
@@ -31,8 +31,8 @@
       "got": "5/5 curls returned marker"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/05-pool.yaml.tmpl,/tmp/ocibnk-lab/artifacts/scenarios/external-resource-pool/06-httproute.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/02-bnkgateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/03-backend.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/04-gateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/05-pool.yaml.tmpl,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/external-resource-pool/06-httproute.yaml",
   "scenario": "external-resource-pool",
-  "started_at": "2026-06-04T16:57:30.587185997Z",
-  "duration": "15s"
+  "started_at": "2026-06-06T12:52:09.453463Z",
+  "duration": "18s"
 }

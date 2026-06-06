@@ -20,7 +20,7 @@
     {
       "description": "ZeBOS in TMM sees neighbor on bnk-bgp bridge",
       "ok": true,
-      "got": "BGP router identifier 192.168.45.78, local AS number 65000 BGP table version is 3 2 BGP AS-PATH entries 0 BGP community entries Neighbor V AS MsgRcv MsgSen TblVer InQ OutQ Up/Down State/PfxRcd 192.168…"
+      "got": "BGP router identifier 192.168.5.78, local AS number 65000 BGP table version is 3 2 BGP AS-PATH entries 0 BGP community entries Neighbor V AS MsgRcv MsgSen TblVer InQ OutQ Up/Down State/PfxRcd 192.168.…"
     },
     {
       "description": "BGP session Established between FRR and TMM/ZeBOS",
@@ -33,8 +33,8 @@
       "got": "BGP table version is 3, local router ID is 192.168.99.20, vrf id 0 Default local pref 100, local AS 65001 Status codes: s suppressed, d damped, h history, * valid, \u003e best, = multipath, i internal, r RIB-failure, S Stale, R Removed Nexthop codes: @NNN…"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/bgp-peer-frr/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/bgp-peer-frr/02-nad.yaml,/tmp/ocibnk-lab/artifacts/scenarios/bgp-peer-frr/03-frr-config.yaml,/tmp/ocibnk-lab/artifacts/scenarios/bgp-peer-frr/04-frr.yaml,/tmp/ocibnk-lab/artifacts/scenarios/bgp-peer-frr/05-zebos-template.yaml.tmpl",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/bgp-peer-frr/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/bgp-peer-frr/02-nad.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/bgp-peer-frr/03-frr-config.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/bgp-peer-frr/04-frr.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/bgp-peer-frr/05-zebos-template.yaml.tmpl",
   "scenario": "bgp-peer-frr",
-  "started_at": "2026-06-04T16:50:22.247246352Z",
-  "duration": "3m11s"
+  "started_at": "2026-06-06T12:44:56.991453Z",
+  "duration": "3m6s"
 }

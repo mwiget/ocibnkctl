@@ -26,8 +26,8 @@
       "got": "True"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/cluster-wide-watch/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/cluster-wide-watch/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/cluster-wide-watch/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/cluster-wide-watch/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/cluster-wide-watch/05-httproute.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cluster-wide-watch/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cluster-wide-watch/02-bnkgateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cluster-wide-watch/03-backend.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cluster-wide-watch/04-gateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/cluster-wide-watch/05-httproute.yaml",
   "scenario": "cluster-wide-watch",
-  "started_at": "2026-06-04T16:54:27.595089479Z",
-  "duration": "5s"
+  "started_at": "2026-06-06T12:49:01.436016Z",
+  "duration": "2s"
 }

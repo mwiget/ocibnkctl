@@ -861,14 +861,15 @@ k3s worker container's filesystem to confirm capture.
 
 A complete `e2e --with-scenarios` report from a clean cluster
 is checked in at
-[`examples/reports/run-lab-2026-06-04T16-45-09Z.md`](examples/reports/run-lab-2026-06-04T16-45-09Z.md)
+[`examples/reports/run-air-2026-06-06T12-39-52Z.md`](examples/reports/run-air-2026-06-06T12-39-52Z.md)
 so a reader can see the full report shape (versions, host
 resources, cluster topology, F5 control-plane pods, every deploy
 phase, and every scenario row) without running anything locally.
 
 > This is a **native-k3s** run (`e2e --with-scenarios --no-resume` from a
-> fresh cluster on 2026-06-04): **17 ok, 0 failed** — deploy 5/5 +
-> scenarios 12/12 green.
+> fresh cluster on 2026-06-06, on a **10-core MacBook M4 / Docker
+> Desktop**): **17 ok, 0 failed** — deploy 5/5 + scenarios 12/12 green,
+> including the data-plane scenarios fixed by `bridge-nf-call-iptables=0`.
 
 Reproduce on your own host with:
 
@@ -883,9 +884,9 @@ ocibnkctl e2e \
 Output lands at `<pocdir>/reports/<stamp>/run-<pocname>-<stamp>.md`
 (plus the JSON twin, per-phase logs under `logs/`, and
 per-scenario JSONs under `scenarios/`).
-The checked-in report ran 15m4s end-to-end: ~5m deploy
-(validate → cluster-up → deploy-prereqs/flo/cne) plus 9m47s
-running 12 green scenarios topo-sorted by dependency order
+The checked-in report ran 14m58s end-to-end: ~5m deploy
+(validate → cluster-up → deploy-prereqs/flo/cne) plus the
+12 green scenarios topo-sorted by dependency order
 (the one amber scenario — `fic-dynamic-ip` — is skipped by
 `--all` and must be run explicitly).
 
