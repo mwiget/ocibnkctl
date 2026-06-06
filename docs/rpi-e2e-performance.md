@@ -34,7 +34,7 @@ targets, not a roomy reference machine.
 
 `ocibnkctl e2e --poc <poc> --yolo --confirm-cluster <poc> --no-resume --with-scenarios`
 
-- **Build:** ocibnkctl `08ae9e6` · BNK 2.3.0 · CNE manifest 2.3.0-3.2598.3-0.0.170
+- **Build:** ocibnkctl `9c0592e` · BNK 2.3.0 · CNE manifest 2.3.0-3.2598.3-0.0.170
 - **Result:** deploy **6/6 ok** · scenarios **12/12 green, 0 failed**
 - **Timing:** deploy from an empty host in **8m41s** (cold, fresh `destroy`
   first); the all-green scenario sweep in **7m54s** (`scenario run --all` on
