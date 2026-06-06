@@ -28,9 +28,18 @@ func TestRenderCNEInstance_MetricSubsystemByProfile(t *testing.T) {
 		if idx < 0 {
 			t.Fatalf("profile %q: no metricSubsystem block:\n%s", c.profile, got)
 		}
+		// Look only at a short window right after "metricSubsystem:" — its
+		// `enabled:` line sits there (the only other `enabled:` is under
+		// loggingSubsystem, which is above this index). Cap the window so a
+		// short render can never slice out of range.
 		block := got[idx:]
-		if !strings.Contains(block[:strings.Index(block, "\n")+40], c.want) {
-			t.Errorf("profile %q: want metricSubsystem %q\n--- got ---\n%s", c.profile, c.want, block[:80])
+		end := 80
+		if end > len(block) {
+			end = len(block)
+		}
+		window := block[:end]
+		if !strings.Contains(window, c.want) {
+			t.Errorf("profile %q: want metricSubsystem %q\n--- got ---\n%s", c.profile, c.want, window)
 		}
 	}
 }

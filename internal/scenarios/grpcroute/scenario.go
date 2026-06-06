@@ -231,8 +231,11 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		})
 		return res
 	}
+	// Idempotent, but guard on the binary actually *running* — not just
+	// being present — so a /tmp/grpcurl left from an earlier run on a
+	// different arch (wrong exec format) is replaced rather than reused.
 	installScript := `set -e
-if [ -x /tmp/grpcurl ]; then echo present; exit 0; fi
+if /tmp/grpcurl --version >/dev/null 2>&1; then echo present; exit 0; fi
 command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1
 cd /tmp
 curl -fsSL -o grpcurl.tgz ` + grpcurlURL + `

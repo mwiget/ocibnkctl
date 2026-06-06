@@ -5,6 +5,12 @@
 # (TLS gRPC); we use 9000 only here. Available services include
 # grpcbin.GRPCBin (Empty, Index, DummyUnary, ...) and the standard
 # reflection API, which lets grpcurl introspect without proto files.
+#
+# Pinned by digest (the multi-arch image index, which still resolves to the
+# right per-arch image) so the build is reproducible and a future push to
+# the `latest` tag can't silently change the binary — or drop the arm64
+# variant and reintroduce the exec-format-error bug. Digest current as of
+# 2026-06; bump deliberately when you want a newer grpcbin.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +27,7 @@ spec:
     spec:
       containers:
       - name: grpcbin
-        image: kong/grpcbin:latest
+        image: kong/grpcbin@sha256:2e85538340e419415c81b6368e0e2b6a73a2b87b885a76029dc49ca462aacc6d
         ports:
         - {name: grpc, containerPort: 9000}
         readinessProbe:

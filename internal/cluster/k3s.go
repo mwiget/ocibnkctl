@@ -93,18 +93,26 @@ func (k *K3s) rt() string {
 // resolvers out of systemd-resolved's own resolv.conf and pin them on the
 // containers directly, bypassing the broken proxy. When the host already
 // exposes real (non-loopback) resolvers we return nil and don't override.
-func hostResolvers() []string {
+// publicFallbackResolvers are pinned only as a last resort — when neither
+// /etc/resolv.conf nor systemd-resolved's uplink file exposes a usable
+// (non-loopback) resolver — so image pulls still work on an otherwise
+// stub-only host. On an air-gapped or split-horizon network this is the
+// wrong answer, so dnsArgs warns when it fires.
+var publicFallbackResolvers = []string{"1.1.1.1", "8.8.8.8"}
+
+func hostResolvers() (servers []string, fellBackToPublic bool) {
 	// Host resolv.conf already usable → trust the runtime default.
 	if ns := nonLoopbackNameservers("/etc/resolv.conf"); len(ns) > 0 {
-		return nil
+		return nil, false
 	}
 	// /etc/resolv.conf is a loopback-only stub. Pull the real upstreams
 	// systemd-resolved forwards to (the "uplink" resolv.conf it maintains).
+	// NOTE: only systemd-resolved's path is consulted; other stub resolvers
+	// (dnsmasq, NetworkManager) won't be discovered and will hit the fallback.
 	if ns := nonLoopbackNameservers("/run/systemd/resolve/resolv.conf"); len(ns) > 0 {
-		return ns
+		return ns, false
 	}
-	// Last resort so image pulls still work on an otherwise stub-only host.
-	return []string{"1.1.1.1", "8.8.8.8"}
+	return publicFallbackResolvers, true
 }
 
 // nonLoopbackNameservers parses a resolv.conf and returns its non-loopback
@@ -127,10 +135,18 @@ func nonLoopbackNameservers(path string) []string {
 	return out
 }
 
-// dnsArgs renders hostResolvers() as `--dns <ip>` runtime flags.
-func dnsArgs() []string {
+// dnsArgs renders hostResolvers() as `--dns <ip>` runtime flags, warning to
+// out when it had to fall back to public resolvers (no host-configured
+// upstream found) — surprising on an air-gapped or split-horizon host.
+func dnsArgs(out io.Writer) []string {
+	servers, fellBack := hostResolvers()
+	if fellBack && out != nil {
+		fmt.Fprintf(out, "WARN: no non-loopback resolver found in /etc/resolv.conf or systemd-resolved; "+
+			"pinning public DNS %v on the k3s nodes. Configure a real upstream if this host is "+
+			"air-gapped or uses split-horizon DNS.\n", servers)
+	}
 	var args []string
-	for _, ns := range hostResolvers() {
+	for _, ns := range servers {
 		args = append(args, "--dns", ns)
 	}
 	return args
@@ -252,7 +268,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 	// Pin real upstream resolvers on the nodes when the host only offers a
 	// loopback stub resolver, so containerd image pulls and CoreDNS don't
 	// depend on the runtime's flaky embedded-DNS proxy. See hostResolvers.
-	dns := dnsArgs()
+	dns := dnsArgs(k.Out)
 
 	server := k.serverName(name)
 	serverArgs := []string{

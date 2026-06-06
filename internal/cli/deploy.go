@@ -497,8 +497,13 @@ func newDeployShrinkCmd() *cobra.Command {
 	f := &deployShrinkFlags{}
 	cmd := &cobra.Command{
 		Use:   "shrink",
-		Short: "Install a Kyverno policy that caps F5 pod resource requests (DESTRUCTIVE, optional)",
-		Long: `Optional phase: shrink the cluster's resource footprint.
+		Short: "Install a Kyverno policy that caps F5 pod resource requests (DESTRUCTIVE; auto-run by e2e on tight hosts)",
+		Long: `Shrink the cluster's resource footprint so it fits a tight host.
+
+Run standalone, or automatically: ` + "`e2e`" + ` inserts this as a phase
+between deploy-flo and deploy-cne whenever the host is below the documented
+core floor (and skips it on roomier hosts). On a host at/above the floor you
+never need it.
 
 The FLO operator owns every BNK workload spec via server-side-apply and
 reasserts it on a tight reconcile loop, so resource requests cannot be
@@ -508,16 +513,17 @@ which runs AFTER FLO's apply. This step:
 
   1. Installs Kyverno (admission controller only, pinned).
   2. Applies a mutating ClusterPolicy that caps CPU/memory *requests*
-     (never limits) on every F5 pod and on kube-system (calico/multus),
-     EXCEPT f5-tmm.
-  3. Recycles the affected pods so the cap takes effect now.
+     (never limits) on every F5 pod EXCEPT f5-tmm.
+  3. Caps the kube-system calico/multus DaemonSets directly (Kyverno
+     excludes system namespaces) via a resource patch.
+  4. Recycles the affected F5 pods so the cap takes effect now.
 
 f5-tmm is excluded on purpose: its bespoke f5-tmm-pod-manager controller
 deletes any TMM pod whose live spec differs from what FLO rendered, so a
 mutated TMM pod loops forever. Shrink TMM's main container via
 CNEInstance.spec.advanced.tmm.resources instead (that path goes through
 FLO). Measured effect on the 2-node demo shape: server requests drop from
-~89% CPU / 85% mem to ~11% / 20%; agent (TMM) from ~77% / 92% to ~47% / 68%.
+~89% CPU / 85% mem to ~9% / 21%; agent (TMM) from ~77% / 92% to ~45% / 58%.
 
 Required gates:
   --yolo                  acknowledge cluster writes
