@@ -24,6 +24,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.AddCommand(newDeployPrereqsCmd())
 	cmd.AddCommand(newDeployFLOCmd())
 	cmd.AddCommand(newDeployCNECmd())
+	cmd.AddCommand(newDeployShrinkCmd())
 	return cmd
 }
 
@@ -478,6 +479,184 @@ spec:
 		j.Close()
 	}
 	fmt.Fprintln(out, "\nDONE.")
+	return nil
+}
+
+// ---------- shrink (optional) ----------
+
+type deployShrinkFlags struct {
+	pocDir        string
+	yolo          bool
+	confirmDeploy string
+	cpu           string
+	memory        string
+	noRecycle     bool
+}
+
+func newDeployShrinkCmd() *cobra.Command {
+	f := &deployShrinkFlags{}
+	cmd := &cobra.Command{
+		Use:   "shrink",
+		Short: "Install a Kyverno policy that caps F5 pod resource requests (DESTRUCTIVE, optional)",
+		Long: `Optional phase: shrink the cluster's resource footprint.
+
+The FLO operator owns every BNK workload spec via server-side-apply and
+reasserts it on a tight reconcile loop, so resource requests cannot be
+lowered by patching a Deployment or an intermediate F5* CR — FLO reverts it
+within milliseconds. The only layer it can't reach is Kubernetes admission,
+which runs AFTER FLO's apply. This step:
+
+  1. Installs Kyverno (admission controller only, pinned).
+  2. Applies a mutating ClusterPolicy that caps CPU/memory *requests*
+     (never limits) on every F5 pod and on kube-system (calico/multus),
+     EXCEPT f5-tmm.
+  3. Recycles the affected pods so the cap takes effect now.
+
+f5-tmm is excluded on purpose: its bespoke f5-tmm-pod-manager controller
+deletes any TMM pod whose live spec differs from what FLO rendered, so a
+mutated TMM pod loops forever. Shrink TMM's main container via
+CNEInstance.spec.advanced.tmm.resources instead (that path goes through
+FLO). Measured effect on the 2-node demo shape: server requests drop from
+~89% CPU / 85% mem to ~11% / 20%; agent (TMM) from ~77% / 92% to ~47% / 68%.
+
+Required gates:
+  --yolo                  acknowledge cluster writes
+  --confirm-deploy NAME   must equal poc.yaml.metadata.name`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDeployShrink(cmd.Context(), cmd.OutOrStdout(), f)
+		},
+	}
+	cmd.Flags().StringVar(&f.pocDir, "poc", "", "PoC repo path (default: current directory)")
+	cmd.Flags().BoolVar(&f.yolo, "yolo", false, "Acknowledge cluster writes")
+	cmd.Flags().StringVar(&f.confirmDeploy, "confirm-deploy", "", "Must equal poc.yaml.metadata.name (typo guard)")
+	cmd.Flags().StringVar(&f.cpu, "cpu", deploy.DefaultShrinkCPURequest, "Per-container CPU request ceiling")
+	cmd.Flags().StringVar(&f.memory, "memory", deploy.DefaultShrinkMemoryRequest, "Per-container memory request ceiling")
+	cmd.Flags().BoolVar(&f.noRecycle, "no-recycle", false, "Apply the policy but don't recycle pods (takes effect on next restart)")
+	return cmd
+}
+
+func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) error {
+	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
+	if err != nil {
+		return err
+	}
+	if err := requireTwoGates(f.yolo, "--confirm-deploy", f.confirmDeploy,
+		p.Metadata.Name, "deploy shrink"); err != nil {
+		return err
+	}
+
+	r := &deploy.Runner{
+		KubeconfigPath: kubeconfig,
+		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
+		Out:            prefixWriter{w: out, prefix: "      | "},
+	}
+
+	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, kubeconfig)
+
+	// 1. Kyverno (admission controller only).
+	fmt.Fprintf(out, "[1/4] Installing Kyverno %s (admission controller only) ...\n", version.KyvernoVersion)
+	if err := deploy.InstallKyverno(ctx, r); err != nil {
+		return fmt.Errorf("install kyverno: %w", err)
+	}
+
+	// 2. Render + apply the mutating ClusterPolicy.
+	fmt.Fprintf(out, "[2/4] Applying %s ClusterPolicy (cpu=%s mem=%s per container, f5-tmm excluded) ...\n",
+		deploy.ShrinkPolicyName, f.cpu, f.memory)
+	policy, err := deploy.RenderShrinkPolicy(deploy.ShrinkInputs{
+		CPURequest:    f.cpu,
+		MemoryRequest: f.memory,
+	})
+	if err != nil {
+		return err
+	}
+	rendered := filepath.Join(repo, "artifacts", "kyverno-shrink-requests-rendered.yaml")
+	if err := os.WriteFile(rendered, []byte(policy), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "      rendered → %s\n", rendered)
+	if err := r.Apply(ctx, policy); err != nil {
+		return fmt.Errorf("apply shrink policy: %w", err)
+	}
+
+	// 3. Cap kube-system (calico/multus) via a direct DaemonSet patch —
+	//    Kyverno deliberately excludes system namespaces, and these have no
+	//    operator to revert it. The ~0.35c freed on the TMM node is what
+	//    lets the small-host (4-core) profile fit. Patching the DS template
+	//    rolls those pods automatically.
+	fmt.Fprintln(out, "[3/4] Capping kube-system DaemonSets (calico-node, kube-multus) ...")
+	shrinkKubeSystem(ctx, r, f.cpu, f.memory, out)
+
+	// 4. Recycle the F5 pods so the cap takes effect now (the policy only
+	//    mutates pods at admission, i.e. on creation). f5-tmm is left alone.
+	if f.noRecycle {
+		fmt.Fprintln(out, "[4/4] Skipping F5 pod recycle (--no-recycle); cap applies as pods restart.")
+	} else {
+		fmt.Fprintln(out, "[4/4] Recycling F5 pods (f5-tmm excluded) so the cap takes effect ...")
+		if err := recycleF5Pods(ctx, r, out); err != nil {
+			return fmt.Errorf("recycle F5 pods: %w", err)
+		}
+	}
+
+	if j, jerr := appendJournal(repo, "deploy", "deploy shrink — APPLIED"); jerr == nil {
+		fmt.Fprintf(j, "- Kyverno shrink policy applied (cpu=%s mem=%s) at %s\n",
+			f.cpu, f.memory, time.Now().UTC().Format(time.RFC3339))
+		j.Close()
+	}
+	fmt.Fprintln(out, "\nDONE.  Verify per-node requests with:")
+	fmt.Fprintln(out, "  kubectl describe node <node> | grep -A6 'Allocated resources:'")
+	return nil
+}
+
+// kubeSystemShrinkTargets are the kube-system DaemonSets capped by the
+// shrink step via a direct patch (daemonset, container). Kyverno won't
+// touch system namespaces, and these are plain manifest-installed
+// DaemonSets with no operator to revert the change.
+var kubeSystemShrinkTargets = []struct{ ds, container string }{
+	{"calico-node", "calico-node"},
+	{"kube-multus-ds", "kube-multus"},
+}
+
+// shrinkKubeSystem caps the calico/multus DaemonSet resource *requests*
+// (never limits) via `kubectl set resources`. Best-effort: a missing
+// target (e.g. a host running a different CNI) is logged and skipped, not
+// fatal. Patching the DS template rolls its pods automatically.
+func shrinkKubeSystem(ctx context.Context, r *deploy.Runner, cpu, memory string, out io.Writer) {
+	for _, t := range kubeSystemShrinkTargets {
+		if err := r.Kubectl(ctx, "-n", "kube-system", "set", "resources",
+			"daemonset/"+t.ds, "--containers="+t.container,
+			"--requests=cpu="+cpu+",memory="+memory); err != nil {
+			fmt.Fprintf(out, "      WARN: cap %s/%s: %v (skipping)\n", t.ds, t.container, err)
+		}
+	}
+}
+
+// recycleF5Pods deletes the F5 pods so they re-admit through the shrink
+// policy. f5-tmm is excluded (its pod-manager fights mutation); kube-system
+// is handled separately by shrinkKubeSystem (a DS patch that self-rolls).
+// Best-effort per namespace — a failure to delete one batch doesn't abort
+// the rest.
+func recycleF5Pods(ctx context.Context, r *deploy.Runner, out io.Writer) error {
+	// Whole-namespace recycles: f5-operators / f5-cne-core hold only F5 workloads.
+	for _, ns := range []string{"f5-operators", deploy.SharedComponentNamespace} {
+		if err := r.Kubectl(ctx, "-n", ns, "delete", "pods", "--all", "--wait=false"); err != nil {
+			fmt.Fprintf(out, "      WARN: delete pods -n %s: %v\n", ns, err)
+		}
+	}
+	// default namespace: only f5-* pods, and NOT f5-tmm.
+	names, err := r.KubectlCapture(ctx, "-n", "default", "get", "pods",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	if err != nil {
+		return err
+	}
+	for _, name := range strings.Split(strings.TrimSpace(names), "\n") {
+		name = strings.TrimSpace(name)
+		if !strings.HasPrefix(name, "f5-") || strings.HasPrefix(name, "f5-tmm-") {
+			continue
+		}
+		if err := r.Kubectl(ctx, "-n", "default", "delete", "pod", name, "--wait=false"); err != nil {
+			fmt.Fprintf(out, "      WARN: delete pod default/%s: %v\n", name, err)
+		}
+	}
 	return nil
 }
 

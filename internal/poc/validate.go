@@ -95,6 +95,15 @@ func (p *PoC) Validate() ValidationResult {
 	if !p.BNK.DemoMode {
 		r.Warnings = append(r.Warnings, "bnk.demo_mode is false: TMM will require SR-IOV / DPU-backed interfaces, which the k3s demo shape cannot provide. Set it true for this deployment.")
 	}
+	switch p.BNK.HostProfile {
+	case "", HostProfileStandard, HostProfileSmall:
+		// ok
+	default:
+		r.Errors = append(r.Errors, fmt.Sprintf("bnk.host_profile %q: must be %q or %q", p.BNK.HostProfile, HostProfileStandard, HostProfileSmall))
+	}
+	if p.BNK.IsSmallHost() {
+		r.Warnings = append(r.Warnings, "bnk.host_profile=small: TMM metrics subsystem (observer sidecar) is disabled so TMM fits a 4-core node; run `ocibnkctl deploy shrink` to cap the remaining pods.")
+	}
 
 	if p.BNKForge.Enabled {
 		if p.BNKForge.URL != "" && !strings.HasPrefix(p.BNKForge.URL, "http") {

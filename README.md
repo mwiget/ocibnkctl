@@ -145,6 +145,93 @@ the cluster lives inside ~7 GB of real memory and half a core, but won't
 *get there* without first satisfying the scheduler's ~28 Gi / 16.9-core
 reservation spread across the two nodes.
 
+### Shrinking the footprint — `ocibnkctl deploy shrink` (optional)
+
+The reservation gap can be closed, but not by editing the workloads. FLO is
+the operator that renders them, and it **owns every `resources` field via
+server-side-apply**, recomputing them from `CNEInstance.spec.deploymentSize`
+(a profile baked into the FLO binary — there's no ConfigMap to retune) and
+re-asserting them on a tight reconcile loop. Patch a Deployment, a
+StatefulSet, or an intermediate `F5*` CR (`F5Tmm`, `downloaders`, `dssms`, …)
+and FLO reverts it within milliseconds. `deploymentSize` is already at its
+smallest preset (`Small`). The CRD does expose `spec.advanced.tmm.resources`,
+but on BNK 2.3 it is effectively dead (see TMM caveat below).
+
+The one layer FLO can't reach is **Kubernetes admission**, which runs *after*
+its apply. `deploy shrink` installs Kyverno (admission controller only,
+pinned) plus a mutating `ClusterPolicy` (`f5-bnk-shrink-requests`) that caps
+CPU/memory **requests** — never limits — on every F5 pod *at admission*. FLO
+keeps rendering 4 Gi into the Deployment it owns; the Pod that gets created is
+rewritten to the cap; FLO sees no diff in its own objects and never fights
+back. It then caps the two big `kube-system` DaemonSets (`calico-node`,
+`kube-multus`) with a direct patch — Kyverno deliberately excludes system
+namespaces, and these have no operator to revert it. Requests are scheduling
+reservations, not usage caps, and real usage is a small fraction of the cap,
+so the cluster keeps running while the scheduler stops reserving ~28 Gi it
+never uses.
+
+```bash
+ocibnkctl deploy shrink --yolo --confirm-deploy <poc-name>
+# tune the per-container ceilings (defaults 25m / 128Mi):
+ocibnkctl deploy shrink --cpu 50m --memory 256Mi --yolo --confirm-deploy <poc>
+```
+
+Measured on the 2-node demo shape (base BNK, before scenarios):
+
+| Node   | CPU requests | Mem requests |
+|---|---|---|
+| server | 89% → **9%**  | 85% → **21%** |
+| agent  | 77% → **45%** | 92% → **58%** |
+
+**`f5-tmm` is the exception, and it is immovable on 2.3.** TMM's raw Pod is
+owned not by a Deployment but by a bespoke `f5-tmm-pod-manager` controller (a
+container inside `f5-cne-controller`) that holds a **compiled-in expected
+resource set** and **recreates any TMM pod whose container resource *values*
+differ from it** — verified by binary analysis plus live tests. It deletes the
+pod in a loop (`"Deleting pod"` every ~15 s) regardless of *how* the values
+were lowered: a Kyverno pod mutation, a direct CR/Deployment patch, **or the
+documented `spec.advanced.tmm.resources` override** (FLO writes it, the
+pod-manager rejects the pod anyway). It tolerates *metadata* mutations and
+preserves QoS, so the trigger is specifically the resource values. There is no
+disable switch. That's why the agent node only drops to ~45 %: TMM keeps its
+full **4.1-core / 9 Gi** reservation — see the small-host profile for the one
+lever that actually moves it.
+
+### Small-host (4-core Raspberry Pi) profile — `host_profile: small`
+
+A 4-core / 16 GB host (e.g. a Raspberry Pi 4/5 — and the F5 images are
+`linux/arm64`, so they run natively, no emulation) can't host stock TMM:
+**4.1 cores already exceeds a single 4-core node's allocatable**, and the
+pod-manager forbids lowering the values. The pod-manager *is*, however,
+**sidecar-set-aware** — it accepts a TMM pod with *fewer containers* as long
+as the removal came from a supported feature flag. So the one lever that works
+is to disable a sidecar:
+
+> `bnk.host_profile: small` in `poc.yaml` renders the CNEInstance with
+> `telemetry.metricSubsystem: false`, which removes TMM's `observer`/tmStats
+> sidecar (and the cluster metrics pipeline). The pod-manager accepts the
+> 5-container pod, dropping TMM from **4.1c → 3.4c** — enough to fit a 4-core
+> node. (Tradeoff: no TMM metrics / observability.)
+
+The full 4-core recipe is `host_profile: small` **plus** `deploy shrink`:
+
+```yaml
+# poc.yaml
+bnk:
+  host_profile: small        # CNEInstance: metricSubsystem off → TMM 3.4c
+```
+```bash
+ocibnkctl doctor --profile small     # 4-core floor instead of 10
+ocibnkctl e2e --yolo --confirm-cluster <poc> --confirm-deploy <poc>
+ocibnkctl deploy shrink  --yolo --confirm-deploy <poc>   # caps everything else
+```
+
+Measured fit on 4 cores (base shape): the **agent** node lands at
+TMM 3.4c + capped calico/multus ≈ **3.5c of 4.0c (~88 %)**; the **server**
+node, every non-TMM pod capped to 25m, sits near **0.9c**. Memory (TMM's
+blobd 4 Gi + main 2 Gi dominate) fits 16 GB with headroom. It's tight on CPU —
+adding scenarios pushes the agent toward 95 % — but it schedules and runs.
+
 ### Symptom when the floor is too low
 
 `ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Pods sit `Pending`
@@ -169,9 +256,10 @@ the worker) + ~0.5 GB (cert-manager, alpine/k8s tooling, manifests) +
 ~5 GB headroom for k3s cluster state and logs.
 
 `ocibnkctl doctor` reports the host's actual CPU count and fails
-when it falls below `MinBaseline`. Override the constants in
-`internal/version/version.go` if you've tuned chart values to reduce
-requests.
+when it falls below `MinBaseline` (10 cores). Use `doctor --profile small`
+for the 4-core small-host floor (`MinBaselineSmallHost`). Override the
+constants in `internal/version/version.go` if you've tuned chart values
+further.
 
 ## bnk-forge integration
 
@@ -287,6 +375,7 @@ ocibnkctl cluster up      --yolo --confirm-cluster demo
 ocibnkctl deploy prereqs  --yolo --confirm-deploy  demo
 ocibnkctl deploy flo      --yolo --confirm-deploy  demo
 ocibnkctl deploy cne      --yolo --confirm-deploy  demo
+ocibnkctl deploy shrink   --yolo --confirm-deploy  demo  # optional — see "Shrinking the footprint"
 ```
 
 Every phase is idempotent and gated by `--yolo` plus a typo-guard.

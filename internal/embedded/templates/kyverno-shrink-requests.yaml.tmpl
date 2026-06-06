@@ -1,0 +1,74 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: f5-bnk-shrink-requests
+  annotations:
+    # CRITICAL: do NOT autogen rules for the pod controllers. FLO owns the
+    # Deployment / StatefulSet / DaemonSet specs via server-side-apply and
+    # reasserts them on a tight reconcile loop, so anything written into a
+    # workload (or an intermediate F5* CR) is reverted within milliseconds.
+    # We therefore mutate ONLY the Pod, at admission — which runs AFTER
+    # FLO's apply. FLO never sees a diff in the objects it owns, so it never
+    # fights back.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/description: >-
+      Caps CPU/memory requests (never limits) on the F5 BNK pods so the demo
+      cluster schedules inside a small host. Requests are scheduling
+      reservations, not usage caps — real BNK usage is a small fraction of
+      what the chart reserves. The f5-tmm pod is EXCLUDED on purpose: its
+      bespoke f5-tmm-pod-manager controller (a container inside
+      f5-cne-controller) directly owns the raw TMM Pod and deletes any TMM
+      pod whose live spec differs from what FLO rendered, so a mutated TMM
+      pod loops forever. Shrink TMM's main container via
+      CNEInstance.spec.advanced.tmm.resources instead — that path goes
+      through FLO, so the pod-manager agrees.
+spec:
+  background: false
+  rules:
+  - name: shrink-f5-requests
+    match:
+      any:
+      # Both of these namespaces hold only F5 BNK workloads.
+      - resources:
+          kinds: [Pod]
+          namespaces: [{{.SharedComponentNamespace}}, {{.OperatorNamespace}}]
+      # The shared `default` namespace also holds scenario workloads, which
+      # live in scn-* namespaces — so only the f5-* pods here are F5's.
+      - resources:
+          kinds: [Pod]
+          namespaces: [default]
+          names: ["f5-*"]
+      # NOTE: kube-system is intentionally NOT matched here. Kyverno
+      # excludes system namespaces from admission by default (both its
+      # resourceFilters and the webhook namespaceSelector skip kube-system),
+      # and relaxing that would weaken a cluster-wide safety guard. calico /
+      # multus are plain DaemonSets with no operator, so `deploy shrink`
+      # caps them with a direct DaemonSet patch instead (see shrinkKubeSystem).
+    exclude:
+      any:
+      # f5-tmm-pod-manager fights any mutation of the TMM pod (see above).
+      - resources:
+          kinds: [Pod]
+          selector:
+            matchLabels:
+              app: f5-tmm
+    mutate:
+      foreach:
+      - list: "request.object.spec.containers"
+        patchStrategicMerge:
+          spec:
+            containers:
+            - name: "{{`{{ element.name }}`}}"
+              resources:
+                requests:
+                  cpu: "{{.CPURequest}}"
+                  memory: "{{.MemoryRequest}}"
+      - list: "request.object.spec.initContainers || `[]`"
+        patchStrategicMerge:
+          spec:
+            initContainers:
+            - name: "{{`{{ element.name }}`}}"
+              resources:
+                requests:
+                  cpu: "{{.CPURequest}}"
+                  memory: "{{.MemoryRequest}}"
