@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -26,8 +27,18 @@ type e2ePhase struct {
 	subcmd      []string
 	destructive bool
 	confirmFlag string // e.g. --confirm-cluster | --confirm-deploy
+	// auto marks a phase that runs unprompted only when the host is below
+	// the documented standard core floor (version.MinBaseline.Cores). On
+	// roomier hosts it is skipped during a full (unfiltered) run; naming it
+	// explicitly via --phase always runs it. deploy-shrink is the only one.
+	auto bool
 }
 
+// deploy-shrink sits between flo and cne on purpose: by the time it runs the
+// FLO/operator pods exist (so the request cap + recycle frees the server),
+// and the Kyverno admission policy it installs caps the TMM/DSSM pods that
+// deploy-cne is about to create — so they admit pre-capped and schedule on a
+// tight host instead of wedging deploy-cne's readiness wait on Insufficient CPU.
 var canonicalPhases = []e2ePhase{
 	{name: "validate", subcmd: []string{"validate"}},
 	{name: "cluster-up", subcmd: []string{"cluster", "up"},
@@ -36,8 +47,25 @@ var canonicalPhases = []e2ePhase{
 		destructive: true, confirmFlag: "--confirm-deploy"},
 	{name: "deploy-flo", subcmd: []string{"deploy", "flo"},
 		destructive: true, confirmFlag: "--confirm-deploy"},
+	{name: "deploy-shrink", subcmd: []string{"deploy", "shrink"},
+		destructive: true, confirmFlag: "--confirm-deploy", auto: true},
 	{name: "deploy-cne", subcmd: []string{"deploy", "cne"},
 		destructive: true, confirmFlag: "--confirm-deploy"},
+}
+
+// autoShrinkDecision reports the host core count and whether it is below the
+// documented standard floor, in which case the auto deploy-shrink phase
+// engages so BNK's footprint fits.
+func autoShrinkDecision() (cores int, tight bool) {
+	cores = runtime.NumCPU()
+	return cores, coresBelowFloor(cores)
+}
+
+// coresBelowFloor reports whether a host with the given core count falls
+// below the documented standard floor (version.MinBaseline.Cores) and thus
+// needs the auto deploy-shrink phase. Pure for testability.
+func coresBelowFloor(cores int) bool {
+	return cores < version.MinBaseline.Cores
 }
 
 type e2eFlags struct {
@@ -68,7 +96,17 @@ Phases:
   cluster-up         ocibnkctl cluster up --yolo --confirm-cluster <name>
   deploy-prereqs     ocibnkctl deploy prereqs --yolo --confirm-deploy <name>
   deploy-flo         ocibnkctl deploy flo --yolo --confirm-deploy <name>
+  deploy-shrink      ocibnkctl deploy shrink --yolo --confirm-deploy <name>
+                       (auto: runs only when the host has fewer cores than
+                        the documented standard floor — see below)
   deploy-cne         ocibnkctl deploy cne --yolo --confirm-deploy <name>
+
+deploy-shrink is conditional. On a full run it engages automatically only
+when the host has fewer than the standard core floor (currently 10); on a
+roomier host it is skipped. Naming it explicitly via --phase deploy-shrink
+always runs it. It caps F5 + kube-system pod requests so the footprint fits
+a tight host (e.g. a 4-core Raspberry Pi); pair with bnk.host_profile=small
+in poc.yaml on the very smallest hosts so TMM itself also fits.
 
 Invocation:
 
@@ -222,9 +260,33 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 			}
 		}
 
+		// Conditional auto phase (deploy-shrink): engaged unprompted only on
+		// a host below the documented core floor. An explicit --phase
+		// selection (filter != "") bypasses the gate and always runs it.
+		var autoNote string
+		if ph.auto && f.phaseFilter == "" {
+			cores, tight := autoShrinkDecision()
+			switch {
+			case !tight && !f.dryRun:
+				reason := fmt.Sprintf("host has %d cores ≥ %d-core floor — shrink not needed",
+					cores, version.MinBaseline.Cores)
+				fmt.Fprintf(out, "[%d/%d] %-18s  SKIPPED — %s\n", idx, len(selected), ph.name, reason)
+				report.Phases = append(report.Phases, phaseReport{
+					Phase: ph.name, Status: "skipped", Summary: reason, Index: idx,
+				})
+				continue
+			case !tight:
+				autoNote = fmt.Sprintf("  (auto: would skip — host has %d cores ≥ %d-core floor)",
+					cores, version.MinBaseline.Cores)
+			default:
+				autoNote = fmt.Sprintf("  (auto: host has %d cores < %d-core floor — engaging shrink)",
+					cores, version.MinBaseline.Cores)
+			}
+		}
+
 		args := buildArgs(p, repo, ph, f.confirmCluster)
 		shown := binary + " " + strings.Join(args, " ")
-		fmt.Fprintf(out, "[%d/%d] %s\n      %s\n", idx, len(selected), ph.name, shown)
+		fmt.Fprintf(out, "[%d/%d] %s%s\n      %s\n", idx, len(selected), ph.name, autoNote, shown)
 
 		if f.dryRun {
 			report.Phases = append(report.Phases, phaseReport{
@@ -412,7 +474,18 @@ func printPlan(out io.Writer, p *poc.PoC, repo, binary string, selected []e2ePha
 	fmt.Fprintf(out, "Phases (%d) — would run, in order:\n\n", len(selected))
 	for i, ph := range selected {
 		args := buildArgs(p, repo, ph, p.Metadata.Name)
-		fmt.Fprintf(out, "  %d. %-15s %s %s\n", i+1, ph.name, binary, strings.Join(args, " "))
+		note := ""
+		if ph.auto {
+			cores, tight := autoShrinkDecision()
+			if tight {
+				note = fmt.Sprintf("   [auto: host has %d cores < %d-core floor → runs]",
+					cores, version.MinBaseline.Cores)
+			} else {
+				note = fmt.Sprintf("   [auto: host has %d cores ≥ %d-core floor → skipped]",
+					cores, version.MinBaseline.Cores)
+			}
+		}
+		fmt.Fprintf(out, "  %d. %-15s %s %s%s\n", i+1, ph.name, binary, strings.Join(args, " "), note)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Nothing has been changed. To proceed:")

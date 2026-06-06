@@ -90,9 +90,9 @@ smoke: test build
 	echo "[5] touch fake keys + validate clean"; \
 	  touch $(SMOKE_DIR)/keys/f5-far-auth-key.tgz $(SMOKE_DIR)/keys/.jwt; \
 	  ./bin/ocibnkctl validate --poc $(SMOKE_DIR) | grep -q "OK"; \
-	echo "[6] e2e --dry-run lists 5 phases with auto-filled gates"; \
+	echo "[6] e2e --dry-run lists all phases (incl. conditional deploy-shrink) with auto-filled gates"; \
 	  ./bin/ocibnkctl e2e --poc $(SMOKE_DIR) --dry-run > /tmp/smoke-e2e.log 2>&1; \
-	  for ph in validate cluster-up deploy-prereqs deploy-flo deploy-cne; do \
+	  for ph in validate cluster-up deploy-prereqs deploy-flo deploy-shrink deploy-cne; do \
 	    grep -q "$$ph" /tmp/smoke-e2e.log || { echo "phase $$ph missing"; exit 1; }; \
 	  done; \
 	  grep -q -- "--confirm-cluster smoke" /tmp/smoke-e2e.log || { echo "confirm-cluster not auto-filled"; exit 1; }; \
