@@ -34,10 +34,11 @@ targets, not a roomy reference machine.
 
 `ocibnkctl e2e --poc <poc> --yolo --confirm-cluster <poc> --no-resume --with-scenarios`
 
-- **Build:** ocibnkctl `5f6827d` · BNK 2.3.0 · CNE manifest 2.3.0-3.2598.3-0.0.170
-- **Wall clock:** **20m59s** (from empty host to deployed + 12 scenarios)
-- **Result:** deploy **6/6 ok** · scenarios **11/12 ok** (the one miss is a
-  known tight-host timing flake — see notes)
+- **Build:** ocibnkctl `08ae9e6` · BNK 2.3.0 · CNE manifest 2.3.0-3.2598.3-0.0.170
+- **Result:** deploy **6/6 ok** · scenarios **12/12 green, 0 failed**
+- **Timing:** deploy from an empty host in **8m41s** (cold, fresh `destroy`
+  first); the all-green scenario sweep in **7m54s** (`scenario run --all` on
+  the now-warm cluster — the figures below).
 
 ### Deploy phases — 8m41s
 
@@ -53,35 +54,37 @@ targets, not a roomy reference machine.
 `deploy-cne` dominates: it waits for the TMM pod, the license to go Active,
 and the GatewayClass to reconcile — all on a CPU-saturated 4-core host.
 
-### Scenarios — 12m8s
+### Scenarios — 12/12 green, 7m54s
+
+`ocibnkctl scenario run --all` (dependency-ordered) against the deployed cluster:
 
 | Scenario | Status | Time |
 |---|---|---|
-| bgp-peer-frr | ok | 3m53s |
-| ai-semantic-cache | ok | 31s |
-| ai-token-counting | ok | 21s |
+| bgp-peer-frr | ok | 3m6s |
+| ai-semantic-cache | ok | 9s |
+| ai-token-counting | ok | 9s |
 | cluster-wide-watch | ok | 6s |
-| core-file-collection | ok | 3m2s |
-| cwc-admin-access | flaked¹ | 10s |
-| external-resource-pool | ok | 45s |
-| grpc-loadbalance | ok | 33s |
-| http-routing-e2e | ok | 47s |
-| proxy-protocol-l4 | ok | 22s |
-| tcp-l4-loadbalance | ok | 34s |
-| udp-l4-loadbalance | ok | 1m4s |
+| core-file-collection | ok | 2m52s |
+| cwc-admin-access | ok | 5s |
+| external-resource-pool | ok | 11s |
+| grpc-loadbalance | ok | 12s |
+| http-routing-e2e | ok | 10s |
+| proxy-protocol-l4 | ok | 10s |
+| tcp-l4-loadbalance | ok | 15s |
+| udp-l4-loadbalance | ok | 23s |
 
 `bgp-peer-frr` and `core-file-collection` are the long poles — both restart
 the TMM pod (Multus NAD attach / coreCollection toggle) and wait for the
-rollout, which is slow on a 4-core node.
+rollout, which is slow on a 4-core node. The rest land in seconds once the
+backends and Gateways reconcile.
 
 ## Notes
 
-1. **cwc-admin-access** failed once here (10s) on `Authenticated GET /status
-   returns HTTP 200 with license JSON`, then **passed on an idle retry**. It
-   ran immediately after `core-file-collection` restarted TMM, so the CWC
-   admin API momentarily served a not-yet-`Active` license under concurrent
-   4-core load. It is timing-sensitive on a tight host, not a functional gap —
-   all three of its assertions pass when the cluster is settled.
+1. **cwc-admin-access** is timing-sensitive on a tight host: when it runs
+   right after another scenario restarts TMM, the CWC admin API can briefly
+   serve a not-yet-`Active` license. Its authenticated `/status` check now
+   retries (up to 90s) until the populated 200 lands, so it passes reliably
+   rather than racing the rollout. The reject checks stay single-shot.
 
 2. This shape exercises the Pi-specific fixes end-to-end: the node-container
    **DNS pin** (real upstream resolvers via `--dns`, so image pulls and
