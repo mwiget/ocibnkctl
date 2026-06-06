@@ -28,7 +28,7 @@
     {
       "description": "grpcurl list via Gateway (informational, RST_STREAM expected)",
       "ok": true,
-      "got": " err=kubectl -n scn-bgp exec scn-frr-776cc4644d-dfjk8 -c frr -- /tmp/grpcurl -plaintext -max-time 10 203.0.113.108:50051 list: exit status 1 (stderr: Failed to list services: rpc error: code = Internal des…"
+      "got": " err=kubectl -n scn-bgp exec scn-frr-776cc4644d-9t2d6 -c frr -- /tmp/grpcurl -plaintext -max-time 10 203.0.113.108:50051 list: exit status 1 (stderr: Failed to list services: rpc error: code = Internal des…"
     },
     {
       "description": "grpcurl list direct to backend Service returns grpcbin.GRPCBin (proves backend healthy)",
@@ -60,8 +60,8 @@
       "got": "{ \"description\": \"gRPC testing server\", \"endpoints\": [ { \"path\": \"Index\" }, { \"path\": \"Empty\" }, { \"path\": \"DummyUnary\" }, { \"path\": \"SpecificError\" }, { \"path\": \"RandomError\" }, { \"path\": \"HeadersUna…"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/05-grpcroute.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/06-l4-backend-svc.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/07-l4-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/grpc-loadbalance/08-l4route.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/02-bnkgateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/03-backend.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/04-gateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/05-grpcroute.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/06-l4-backend-svc.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/07-l4-gateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/grpc-loadbalance/08-l4route.yaml",
   "scenario": "grpc-loadbalance",
-  "started_at": "2026-06-04T16:57:45.735838312Z",
-  "duration": "28s"
+  "started_at": "2026-06-06T12:52:27.867248Z",
+  "duration": "35s"
 }

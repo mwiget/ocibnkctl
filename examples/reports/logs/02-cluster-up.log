@@ -1,15 +1,15 @@
-PoC:        lab  (BNK 2.3.0)
+PoC:        air  (BNK 2.3.0)
 
 [1/6] Container-runtime preflight ...
       using docker
       backend k3s
 [2/6] Rendering k3s.yaml + ensuring cluster exists ...
-      rendered → /tmp/ocibnk-lab/artifacts/k3s.yaml
-      | 1a1a7ab94402dd39cbbb472d3ed3de300e437de0d534d812fa7a9bf4a613b591
-      | 93c5e65154e75a69491babc9bd53af71492d28229a295d747c1736eabf0df17e
-      | 75670985df4f23226dfae0f0f35c7d1f158cf074e983af0b95d5a6cc4e9826c4
+      rendered → /Users/mwiget/git/ocibnkctl/labs/air/artifacts/k3s.yaml
+      | 4b6ccbf1a50e2ad2936d4d2ae5e0faec7bdb48edd159ed1a1b484cab3c0a5958
+      | 723d8eddc67ac95e97ce9c4a7b67d22520ddb04961e6b2f06132337c99a93726
+      | b6241cbfc47a136096abd39dc5a874d97262b225621452e4682fb7ba0173ad32
 [3/6] Fetching kubeconfig ...
-      /tmp/ocibnk-lab/artifacts/kubeconfig
+      /Users/mwiget/git/ocibnkctl/labs/air/artifacts/kubeconfig
 [4/6] Applying Calico CNI + NetworkAttachmentDefinition CRD ...
       | poddisruptionbudget.policy/calico-kube-controllers created
       | serviceaccount/calico-kube-controllers created
@@ -46,10 +46,15 @@ PoC:        lab  (BNK 2.3.0)
       | storageclass.storage.k8s.io/standard created
       | deployment.apps/calico-kube-controllers condition met
 [5/6] Labelling worker node for TMM ...
-      | node/k3s-lab-agent-0 labeled
+      | node/k3s-air-agent-0 labeled
 [6/6] bnk-forge registration ...
-  bnk-forge not responding at https://localhost: Get "https://localhost/api/system/health": dial tcp 127.0.0.1:443: connect: connection refused
-      bnk-forge configured but not running — skipping. (bnk-forge is not running at https://localhost — start it manually (e.g. `cd /home/mwiget/git/bnk-forge && make deploy`) and retry)
+  bnk-forge is up at https://localhost.
+      created bnk-forge project "air" (id=2)
+      rewrote apiserver to https://172.20.0.2:6443 (reachable from bnk-forge containers on darwin)
+      registered cluster "air" (id=3). open https://localhost
       poc.yaml updated
+Installing ~/.kube/config ...
+      backed up existing config → /Users/mwiget/.kube/config.ocibnkctl-bak
+      wrote /Users/mwiget/.kube/config — kubectl / k9s now talk to this cluster directly
 
 DONE.  Next: `ocibnkctl deploy prereqs && deploy flo && deploy cne` (or run e2e).

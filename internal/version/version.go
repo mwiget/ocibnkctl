@@ -89,34 +89,38 @@ type ResourceSpec struct {
 // MinBaseline + MinWithBNKForge are the floor the docker daemon (or
 // Docker Desktop VM) must report so the BNK 2.3.0 chart actually
 // schedules in the two-node demo shape. Kubernetes admits pods
-// against `requests`, not RSS — and the F5 chart reserves heavily on
-// the worker node where every F5 pod lands (the control-plane node
-// holds the standard NoSchedule taint and the charts don't tolerate
-// it). Each k3s node container reports the underlying daemon's
-// memory and CPU as its allocatable; k3s does not partition.
+// against `requests`, not RSS, and the F5 chart reserves heavily —
+// but unlike kind, **k3s leaves the server node schedulable** (no
+// control-plane NoSchedule taint), so the non-TMM pods spread across
+// BOTH node containers rather than piling onto one worker. Each k3s
+// node container reports the underlying daemon's full memory and CPU
+// as its allocatable; k3s does not partition, so the scheduler packs
+// each node up to the whole VM independently.
 //
-// Sum of `requests` on demo-worker for BNK 2.3.0 (measured 2026-05-21
-// on macOS Docker Desktop, stock CNE manifest 2.3.0-3.2598.3-0.0.170):
+// Measured per-node `requests` on the fully loaded cluster — base BNK
+// 2.3.0 + all 12 green how-to scenarios, 50 pods (measured 2026-06-06
+// on a MacBook M4, Docker Desktop = 10 CPUs / ~15.6 Gi, stock CNE
+// manifest 2.3.0-3.2598.3-0.0.170):
 //
-//   memory  ~20 Gi  (TMM 9204 Mi, cne-controller 1600 Mi,
-//                    downloader/spk-csrc/crdconversion 1 Gi each,
-//                    dssm-db/dssm-sentinel 1152 Mi each,
-//                    observers/cwc/afm/ipam/rabbit/otel/flo ~3 Gi)
-//   cpu     ~12 c   (TMM 4.1c, cne-controller 1.08c, then ~6c spread
-//                    across the rest)
+//   server (control-plane, schedulable)  9.41 cores · 13.3 Gi  → ~94% CPU
+//   agent  (TMM, app=f5-tmm)             7.46 cores · 14.6 Gi  → ~94% mem
+//   cluster total                        16.9 cores · 28.0 Gi  (split across 2 nodes)
 //
-// Floor below adds ~4 Gi / ~0c headroom for the control-plane pods
-// (kube-apiserver + etcd + controllers) sharing the same Docker VM,
-// kernel overhead in both node containers, and bursty docker pulls.
-// Actual steady-state RSS is far smaller (~6 Gi total) — the floor
-// is dictated by scheduling reservation, not by real usage.
+// The binding constraint differs per node — the server peaks on CPU
+// (9.4 of 10 cores), the agent on memory (TMM alone requests 9204 Mi) —
+// and both land near 94% of a 10-core / 16 GB VM. That is exactly why
+// the validated floor is 10 cores / 16 GB (the MacBook Air/Pro M4/M5
+// shape) and why 9 cores would not schedule. Actual steady-state RSS is
+// far smaller (~6.7 Gi / ~0.5 core total, even with every scenario up) —
+// the floor is dictated by scheduling reservation, not by real usage.
 //
-// MinWithBNKForge adds the in-cluster bnk-forge agent plus the
-// host-side bnk-forge stack. Host-side numbers still TBD; the extra
-// is conservative until measured.
+// doctor enforces only Cores (runtime.NumCPU vs MinBaseline.Cores);
+// MemoryGB here is documentation. MinWithBNKForge: bnk-forge runs as
+// host-side containers OUTSIDE the Docker Desktop VM, so it needs no
+// extra VM cores — just a little more host RAM.
 var (
-	MinBaseline     = ResourceSpec{Cores: 12, MemoryGB: 24}
-	MinWithBNKForge = ResourceSpec{Cores: 14, MemoryGB: 26}
+	MinBaseline     = ResourceSpec{Cores: 10, MemoryGB: 16}
+	MinWithBNKForge = ResourceSpec{Cores: 10, MemoryGB: 18}
 )
 
 // Measured indicates whether the floor numbers above are real measured

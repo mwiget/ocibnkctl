@@ -62,32 +62,55 @@ k3s node containers → remove the cluster's docker network.
 
 ## Minimum host resources
 
+Validated on a **MacBook Air / Pro (Apple M4/M5), 10 CPU cores**, with
+Docker Desktop given **10 CPUs and 16 GB**. The full two-node BNK 2.3.0
+stack — *plus* all 12 green how-to scenarios (50 pods) — schedules and
+runs in that envelope. (The earlier 12-core floor needlessly excluded
+exactly these machines.)
+
 |                          | Cluster floor       | With bnk-forge      | Free disk |
 |--------------------------|---------------------|---------------------|-----------|
-| Linux (host docker)      | **12 cores · 24 GB**| **14 cores · 26 GB**| **~10 GB**|
-| macOS / Windows Docker Desktop | **12 CPUs · 24 GB allocated to the VM** | **14 CPUs · 26 GB** | **~10 GB** |
+| Linux (host docker)      | **10 cores · 16 GB**| **10 cores · 18 GB**| **~10 GB**|
+| macOS / Windows Docker Desktop | **10 CPUs · 16 GB allocated to the VM** | **10 CPUs · 18 GB** | **~10 GB** |
 
 (Configured in Docker Desktop → Settings → Resources. Rancher Desktop /
-Colima use the same numbers — same underlying Linux VM model.)
+Colima use the same numbers — same underlying Linux VM model. `bnk-forge`
+runs as host-side containers *outside* the VM, so it costs no extra VM
+cores, just a little more host RAM.)
 
-### Why so much for a "demo"
+`ocibnkctl doctor` enforces the **core** floor (`runtime.NumCPU()` vs
+`MinBaseline.Cores`); memory is not auto-checked — size the VM per the
+table above.
+
+### Why 10 cores is the floor (and why it's tight)
 
 TMM is pinned to the agent node via `nodeSelector: app=f5-tmm`. Unlike
 kind, **k3s leaves the server node schedulable** (no control-plane
-`NoSchedule` taint), so the remaining BNK pods spread across both nodes
-rather than all piling onto one worker. The Kubernetes scheduler admits
-pods against their `requests`, not their actual RSS, and the chart
-reserves heavily:
+`NoSchedule` taint), so the remaining BNK pods spread across *both* node
+containers rather than piling onto one worker. Each k3s node container
+reports the docker daemon's full CPU/memory as its allocatable (no
+partitioning), so the scheduler packs each node up to the whole VM
+independently. Kubernetes admits pods against their `requests`, not RSS,
+and the chart reserves heavily.
 
-> The per-pod values below are the BNK chart's request reservations
-> (backend-independent), tabulated as a single-worker total. On the kind
-> predecessor the tainted control-plane forced the whole stack onto one
-> worker. On k3s the server node is schedulable, so the non-TMM load
-> spreads across both nodes — measured ~13 pods on the server / ~7 on the
-> agent in the validated run — easing per-node pressure. The host floor
-> still applies, since one docker daemon backs both node containers.
+Measured per-node `requests`, fully loaded (base BNK + all 12 green
+scenarios = 50 pods, on the 10-CPU / ~15.6 Gi VM):
 
-| Pod (on the worker)                 | Memory request | CPU request |
+| Node                                 | CPU requests | Mem requests | Binding constraint |
+|---|---|---|---|
+| **server** (control-plane, schedulable) | 9.41 cores | 13.3 Gi | **CPU — ~94% of 10** |
+| **agent** (TMM, `app=f5-tmm`)        | 7.46 cores | 14.6 Gi | **mem — ~94% of 15.6 Gi** |
+| **cluster total**                    | **16.9 cores** | **28.0 Gi** | (never on one node — split) |
+
+The cluster-wide total (16.9 cores / 28 Gi) far exceeds a single 10-core
+VM, yet it fits because *both* nodes are schedulable: the **server** peaks
+on **CPU** (9.4 of 10 cores), the **agent** on **memory** (TMM alone
+requests 9204 Mi). Both land near **94%** — which is precisely why 10
+cores works and 9 would not.
+
+Per-pod request reservations (the BNK chart's defaults, backend-independent):
+
+| Pod                                 | Memory request | CPU request |
 |---|---|---|
 | f5-tmm                              | 9204 Mi        | 4100m       |
 | f5-cne-controller (4 containers)    | 1600 Mi        | 1080m       |
@@ -101,49 +124,43 @@ reserves heavily:
 | f5-afm                              | 512 Mi         | 500m        |
 | f5-ipam-ctlr / f5-rabbit            | 512 Mi each    | 100m / 300m |
 | otel-collector / flo                | 256 Mi each    | 500m / 250m |
-| **Sum on the worker**               | **~20 Gi**     | **~12 cores**|
-
-Each k3s node container reports the docker daemon's full memory and
-CPU as its allocatable — there is no partitioning. So the cluster won't
-schedule the full stack until the daemon (or Docker Desktop VM) is
-sized above the request total, plus headroom for the control-plane pods
-and kernel overhead in both node containers.
 
 ### What the cluster actually uses
 
-Steady-state, after `CNEInstance.Available=True`, the cluster's real
-RSS is much smaller than the reservation:
+Steady-state, after `CNEInstance.Available=True` **and all 12 scenarios
+deployed** (50 pods), real usage is a fraction of the reservation
+(`docker stats` on the node containers; metrics-server is disabled):
 
-| Component                        | Working set    | CPU       |
+| Node                          | Actual CPU | Actual memory |
 |---|---|---|
-| TMM pod (worker)                 | ~1.2 GB        | ~100m     |
-| kube-apiserver                   | ~900 MB        | ~150m     |
-| All other F5 pods (~20)          | ~1.0 GB        | ~470m     |
-| Calico + coredns + etcd + kube-* | ~700 MB        | ~150m     |
-| Kernel / runtime per node        | ~500 MB × 2    | —         |
-| **Total cluster RSS**            | **~4.5 GB pod + ~1 GB overhead** | **~900m steady, ~1.2c during TMM init** |
+| server                        | ~0.37 core | ~3.95 GiB     |
+| agent (TMM)                   | ~0.12 core | ~2.77 GiB     |
+| **cluster total**             | **~0.5 core** | **~6.7 GiB** |
+| **vs. requests reserved**     | **~3% of 16.9c** | **~24% of 28 Gi** |
 
-So the cluster lives inside ~6 GB of real memory once it's up — it
-just won't *get there* without first satisfying the K8s scheduler's
-~20 Gi worker reservation.
+Top real consumers: `f5-tmm` **~1.0 GiB** (vs 9.2 GiB reserved — 11%),
+`f5-observer-receiver` ~220 Mi, `calico-node` ~165 Mi/node, `rabbitmq`
+~126 Mi. The chart over-reserves roughly **4× on memory and ~30× on CPU**:
+the cluster lives inside ~7 GB of real memory and half a core, but won't
+*get there* without first satisfying the scheduler's ~28 Gi / 16.9-core
+reservation spread across the two nodes.
 
 ### Symptom when the floor is too low
 
-`ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Six pods
-(`f5-dssm-db-0`, `f5-dssm-sentinel-0`, `f5-spk-cwc-*`,
-`f5-observer-{0,receiver-0,operator-*}`) sit `Pending` with
-`FailedScheduling: Insufficient memory`, and
-`CNEInstance.Available` never goes true. Quick check (nodes are
-`k3s-<poc>-server-0` / `k3s-<poc>-agent-0`):
+`ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Pods sit `Pending`
+with `FailedScheduling: Insufficient cpu` (server node) or
+`Insufficient memory` (agent/TMM node — usually the first to bite, since
+TMM's 9204 Mi dominates), and `CNEInstance.Available` never goes true.
+Quick check (nodes are `k3s-<poc>-server-0` / `k3s-<poc>-agent-0`):
 
 ```bash
 kubectl --kubeconfig <poc>/artifacts/kubeconfig describe node k3s-<poc>-agent-0 \
   | grep -E "Allocatable:|Allocated resources:" -A6
 ```
 
-If `memory Requests` is ≥99% of `Allocatable`, raise the docker
-daemon allocation and re-run from the failed phase (`ocibnkctl
-deploy cne …`) — it's idempotent.
+If `cpu` or `memory Requests` is ≥99% of `Allocatable`, raise the docker
+daemon / Docker Desktop allocation and re-run from the failed phase
+(`ocibnkctl deploy cne …`) — it's idempotent.
 
 ### Disk
 
@@ -652,13 +669,17 @@ state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
 > **Validated on native k3s.** A clean run — fresh cluster → `e2e`
 > deploy → `scenario run --all` — passes **12/12 green, 0 failed** on the
-> k3s backend (measured 2026-06-04, full parity with the kind
-> predecessor). The ratings below hold as measured; the wall times are
-> indicative — the authoritative current timings are in the checked-in
-> [reference report](#reference-run-report). Getting there took four
+> k3s backend (measured 2026-06-06 on a 10-core MacBook M4 / Docker
+> Desktop, 8m47s; full parity with the kind predecessor). The ratings
+> below hold as measured; the wall times are indicative — the
+> authoritative current timings are in the checked-in
+> [reference report](#reference-run-report). Getting there took five
 > k3s-specific fixes (a `standard` StorageClass, a `/var/run`→`/run`
-> symlink for Multus netns, host-side `docker cp` of the bridge CNI, and
-> arch-aware plugin selection) — all in `cluster up` / the scenarios now.
+> symlink for Multus netns, host-side `docker cp` of the bridge CNI,
+> arch-aware plugin selection, and `bridge-nf-call-iptables=0` so the
+> bnk-bgp NAD bridge bypasses Calico's `natOutgoing` SNAT — without it
+> every through-TMM data-plane curl times out while the control plane
+> stays green) — all in `cluster up` / the scenarios now.
 
 ```bash
 ocibnkctl scenario list                            # all known scenarios + rating
@@ -840,14 +861,15 @@ k3s worker container's filesystem to confirm capture.
 
 A complete `e2e --with-scenarios` report from a clean cluster
 is checked in at
-[`examples/reports/run-lab-2026-06-04T16-45-09Z.md`](examples/reports/run-lab-2026-06-04T16-45-09Z.md)
+[`examples/reports/run-air-2026-06-06T12-39-52Z.md`](examples/reports/run-air-2026-06-06T12-39-52Z.md)
 so a reader can see the full report shape (versions, host
 resources, cluster topology, F5 control-plane pods, every deploy
 phase, and every scenario row) without running anything locally.
 
 > This is a **native-k3s** run (`e2e --with-scenarios --no-resume` from a
-> fresh cluster on 2026-06-04): **17 ok, 0 failed** — deploy 5/5 +
-> scenarios 12/12 green.
+> fresh cluster on 2026-06-06, on a **10-core MacBook M4 / Docker
+> Desktop**): **17 ok, 0 failed** — deploy 5/5 + scenarios 12/12 green,
+> including the data-plane scenarios fixed by `bridge-nf-call-iptables=0`.
 
 Reproduce on your own host with:
 
@@ -862,9 +884,9 @@ ocibnkctl e2e \
 Output lands at `<pocdir>/reports/<stamp>/run-<pocname>-<stamp>.md`
 (plus the JSON twin, per-phase logs under `logs/`, and
 per-scenario JSONs under `scenarios/`).
-The checked-in report ran 15m4s end-to-end: ~5m deploy
-(validate → cluster-up → deploy-prereqs/flo/cne) plus 9m47s
-running 12 green scenarios topo-sorted by dependency order
+The checked-in report ran 14m58s end-to-end: ~5m deploy
+(validate → cluster-up → deploy-prereqs/flo/cne) plus the
+12 green scenarios topo-sorted by dependency order
 (the one amber scenario — `fic-dynamic-ip` — is skipped by
 `--all` and must be run explicitly).
 

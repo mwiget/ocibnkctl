@@ -36,8 +36,8 @@
       "got": "5/5 curls saw marker + non-empty proxy_addr — last body: ocibnkctl-scenario-proxy-protocol-OK proxy_addr=192.168.99.20"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/01-namespace.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/02-bnkgateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/03-backend.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/04-gateway.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/05-irule.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/06-l4route.yaml,/tmp/ocibnk-lab/artifacts/scenarios/proxy-protocol-l4/07-bnknetpolicy.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/01-namespace.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/02-bnkgateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/03-backend.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/04-gateway.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/05-irule.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/06-l4route.yaml,/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/proxy-protocol-l4/07-bnknetpolicy.yaml",
   "scenario": "proxy-protocol-l4",
-  "started_at": "2026-06-04T16:58:41.708707757Z",
-  "duration": "28s"
+  "started_at": "2026-06-06T12:53:24.688935Z",
+  "duration": "23s"
 }

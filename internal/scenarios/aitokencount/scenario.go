@@ -250,9 +250,17 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		"--field-selector=status.phase=Running",
 		"-o", "jsonpath={.items[0].metadata.name}")
 	tmm = strings.TrimSpace(tmm)
+	// Per-request evidence (rule name + TOKEN(...) + cumulative) fires on
+	// every request, so it's always within the recent window. The
+	// "TOKEN COUNTING IRULE INIT" marker, by contrast, is logged once when
+	// TMM compiles the iRule — on a re-run the Gateway is unchanged so TMM
+	// doesn't recompile and that lone line ages out of --since; check it
+	// against the full log so the assertion stays idempotent across re-runs.
 	tmmLogs, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm,
 		"-c", "f5-tmm", "--since=60s")
-	hasToken := strings.Contains(tmmLogs, "TOKEN COUNTING IRULE INIT") &&
+	tmmLogsAll, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm,
+		"-c", "f5-tmm")
+	hasToken := strings.Contains(tmmLogsAll, "TOKEN COUNTING IRULE INIT") &&
 		strings.Contains(tmmLogs, "scn-tokencount-gateway-scn-tokencount-token-counting") &&
 		strings.Contains(tmmLogs, "TOKEN(") &&
 		strings.Contains(tmmLogs, "cumulative")

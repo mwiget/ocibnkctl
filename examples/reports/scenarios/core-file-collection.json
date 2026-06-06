@@ -23,8 +23,8 @@
       "got": "value=True"
     }
   ],
-  "manifest_path": "/tmp/ocibnk-lab/artifacts/scenarios/core-file-collection/01-cneinstance-patch.yaml",
+  "manifest_path": "/Users/mwiget/git/ocibnkctl/labs/air/artifacts/scenarios/core-file-collection/01-cneinstance-patch.yaml",
   "scenario": "core-file-collection",
-  "started_at": "2026-06-04T16:54:32.612796344Z",
-  "duration": "2m49s"
+  "started_at": "2026-06-06T12:49:03.851422Z",
+  "duration": "3m0s"
 }

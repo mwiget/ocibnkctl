@@ -79,3 +79,34 @@ clusters:
 		})
 	}
 }
+
+func TestRewriteServerURL(t *testing.T) {
+	body := `apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: LS0tLS1CRUdJTg==
+    server: https://127.0.0.1:43601
+  name: k3s-air
+kind: Config
+`
+	const newURL = "https://172.20.0.2:6443"
+	got, err := RewriteServerURL([]byte(body), newURL)
+	if err != nil {
+		t.Fatalf("RewriteServerURL: %v", err)
+	}
+	server, err := KubeconfigAPIServer(got)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if server != newURL {
+		t.Errorf("rewritten server = %q, want %q", server, newURL)
+	}
+	if string(got) == body {
+		t.Errorf("body unchanged after rewrite")
+	}
+
+	// No clusters entry → error.
+	if _, err := RewriteServerURL([]byte("kind: Config\n"), newURL); err == nil {
+		t.Errorf("expected error rewriting kubeconfig with no clusters")
+	}
+}
