@@ -145,7 +145,7 @@ the cluster lives inside ~7 GB of real memory and half a core, but won't
 *get there* without first satisfying the scheduler's ~28 Gi / 16.9-core
 reservation spread across the two nodes.
 
-### Shrinking the footprint — `ocibnkctl deploy shrink` (optional)
+### Shrinking the footprint — `ocibnkctl deploy shrink` (auto on tight hosts)
 
 The reservation gap can be closed, but not by editing the workloads. FLO is
 the operator that renders them, and it **owns every `resources` field via
@@ -213,7 +213,12 @@ is to disable a sidecar:
 > 5-container pod, dropping TMM from **4.1c → 3.4c** — enough to fit a 4-core
 > node. (Tradeoff: no TMM metrics / observability.)
 
-The full 4-core recipe is `host_profile: small` **plus** `deploy shrink`:
+The full 4-core recipe is `host_profile: small` (so TMM itself fits) **plus**
+`deploy shrink` (so every *other* pod fits). The shrink step is now
+**automatic**: `e2e` inserts a conditional `deploy-shrink` phase between
+`deploy-flo` and `deploy-cne` that engages whenever the host has fewer cores
+than the standard floor (`runtime.NumCPU() < MinBaseline.Cores`, i.e. < 10)
+and is skipped on roomier hosts. So on a Pi the recipe is just:
 
 ```yaml
 # poc.yaml
@@ -221,10 +226,16 @@ bnk:
   host_profile: small        # CNEInstance: metricSubsystem off → TMM 3.4c
 ```
 ```bash
-ocibnkctl doctor --profile small     # 4-core floor instead of 10
-ocibnkctl e2e --yolo --confirm-cluster <poc> --confirm-deploy <poc>
-ocibnkctl deploy shrink  --yolo --confirm-deploy <poc>   # caps everything else
+ocibnkctl doctor --profile small               # 4-core floor instead of 10
+ocibnkctl e2e --yolo --confirm-cluster <poc>   # auto-runs deploy shrink (host < 10 cores)
 ```
+
+The phase order is deliberate — `deploy-shrink` runs *before* `deploy-cne` so
+the Kyverno admission cap is in place when deploy-cne creates the TMM/DSSM
+pods: they admit pre-capped and schedule, instead of wedging deploy-cne's
+readiness wait on `Insufficient cpu`. You can still run it by hand
+(`ocibnkctl deploy shrink --yolo --confirm-deploy <poc>`), and an explicit
+`e2e --phase deploy-shrink` forces it regardless of host size.
 
 Measured fit on 4 cores (base shape): the **agent** node lands at
 TMM 3.4c + capped calico/multus ≈ **3.5c of 4.0c (~88 %)**; the **server**
@@ -234,7 +245,7 @@ adding scenarios pushes the agent toward 95 % — but it schedules and runs.
 
 ### Symptom when the floor is too low
 
-`ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Pods sit `Pending`
+`ocibnkctl e2e` reaches `[6/6] deploy-cne` and stalls. Pods sit `Pending`
 with `FailedScheduling: Insufficient cpu` (server node) or
 `Insufficient memory` (agent/TMM node — usually the first to bite, since
 TMM's 9204 Mi dominates), and `CNEInstance.Available` never goes true.
@@ -345,6 +356,20 @@ two-node, Calico-CNI, k8s-v1.30.8 shape the deploy pipeline expects.
 Podman works through the same code path — set `cluster.provider: podman`
 in `poc.yaml` (or let `doctor`/`cluster up` auto-detect the runtime).
 
+**DNS on hosts with a loopback stub resolver.** On a stock Ubuntu /
+Raspberry Pi OS host, `/etc/resolv.conf` points only at systemd-resolved's
+loopback stub (`127.0.0.53`). That address is unusable inside a container
+netns, so the runtime falls back to *proxying* DNS queries to the host stub
+— a path that is unreliable on some hosts (notably the Pi) and fails
+intermittently with `EAI_AGAIN` (`lookup … : Try again`), stalling
+containerd image pulls and in-cluster CoreDNS. To avoid it, `cluster up`
+detects this case and pins the host's **real** upstream resolvers (read from
+systemd-resolved's own `/run/systemd/resolve/resolv.conf`, falling back to
+public resolvers) on both node containers via `--dns`, bypassing the proxy.
+The flags land in the container's `HostConfig.Dns`, so they survive restart
+and reboot. When the host already exposes real (non-loopback) resolvers,
+nothing is overridden.
+
 ## Quick start
 
 ```bash
@@ -374,9 +399,13 @@ If you'd rather drive the phases one at a time for diagnostics:
 ocibnkctl cluster up      --yolo --confirm-cluster demo
 ocibnkctl deploy prereqs  --yolo --confirm-deploy  demo
 ocibnkctl deploy flo      --yolo --confirm-deploy  demo
+ocibnkctl deploy shrink   --yolo --confirm-deploy  demo  # tight hosts only — e2e runs this automatically when cores < 10
 ocibnkctl deploy cne      --yolo --confirm-deploy  demo
-ocibnkctl deploy shrink   --yolo --confirm-deploy  demo  # optional — see "Shrinking the footprint"
 ```
+
+Run `deploy shrink` *before* `deploy cne` (as `e2e` does) so the request cap
+is in place when the TMM/DSSM pods are created — see "Shrinking the
+footprint". On a host at/above the 10-core floor, skip it entirely.
 
 Every phase is idempotent and gated by `--yolo` plus a typo-guard.
 
