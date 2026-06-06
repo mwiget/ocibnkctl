@@ -243,6 +243,10 @@ node, every non-TMM pod capped to 25m, sits near **0.9c**. Memory (TMM's
 blobd 4 Gi + main 2 Gi dominate) fits 16 GB with headroom. It's tight on CPU —
 adding scenarios pushes the agent toward 95 % — but it schedules and runs.
 
+A full measured run (Raspberry Pi 5, deploy + all 12 green scenarios in
+~21 min) with per-phase and per-scenario timings is in
+[docs/rpi-e2e-performance.md](docs/rpi-e2e-performance.md).
+
 ### Symptom when the floor is too low
 
 `ocibnkctl e2e` reaches `[6/6] deploy-cne` and stalls. Pods sit `Pending`
