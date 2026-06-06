@@ -669,13 +669,17 @@ state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
 > **Validated on native k3s.** A clean run — fresh cluster → `e2e`
 > deploy → `scenario run --all` — passes **12/12 green, 0 failed** on the
-> k3s backend (measured 2026-06-04, full parity with the kind
-> predecessor). The ratings below hold as measured; the wall times are
-> indicative — the authoritative current timings are in the checked-in
-> [reference report](#reference-run-report). Getting there took four
+> k3s backend (measured 2026-06-06 on a 10-core MacBook M4 / Docker
+> Desktop, 8m47s; full parity with the kind predecessor). The ratings
+> below hold as measured; the wall times are indicative — the
+> authoritative current timings are in the checked-in
+> [reference report](#reference-run-report). Getting there took five
 > k3s-specific fixes (a `standard` StorageClass, a `/var/run`→`/run`
-> symlink for Multus netns, host-side `docker cp` of the bridge CNI, and
-> arch-aware plugin selection) — all in `cluster up` / the scenarios now.
+> symlink for Multus netns, host-side `docker cp` of the bridge CNI,
+> arch-aware plugin selection, and `bridge-nf-call-iptables=0` so the
+> bnk-bgp NAD bridge bypasses Calico's `natOutgoing` SNAT — without it
+> every through-TMM data-plane curl times out while the control plane
+> stays green) — all in `cluster up` / the scenarios now.
 
 ```bash
 ocibnkctl scenario list                            # all known scenarios + rating
