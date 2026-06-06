@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,34 @@ func TestRenderConfigK3s(t *testing.T) {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("k3s config missing %q:\n%s", want, cfg)
 		}
+	}
+}
+
+func TestNonLoopbackNameservers(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := dir + "/" + name
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// Loopback stub (systemd-resolved) → no usable upstreams.
+	stub := write("stub", "nameserver 127.0.0.53\noptions edns0\n")
+	if got := nonLoopbackNameservers(stub); got != nil {
+		t.Errorf("loopback stub: got %v, want nil", got)
+	}
+
+	// Real upstreams, in file order, loopback filtered out.
+	real := write("real", "nameserver 127.0.0.1\nnameserver 213.144.129.20\nnameserver 77.109.128.2\n")
+	got := nonLoopbackNameservers(real)
+	if strings.Join(got, ",") != "213.144.129.20,77.109.128.2" {
+		t.Errorf("real upstreams: got %v", got)
+	}
+
+	// Missing file → nil, no error.
+	if got := nonLoopbackNameservers(dir + "/does-not-exist"); got != nil {
+		t.Errorf("missing file: got %v, want nil", got)
 	}
 }

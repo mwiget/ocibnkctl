@@ -14,10 +14,10 @@
 //   - Two GET requests from inside the FRR pod (already on the cluster
 //     and Calico-routed):
 //     1. With CA + client cert/key + Authorization Bearer header
-//        → expect HTTP 200 and a body containing "LicenseStatus" /
-//        "DigitalAssetID" (one of the documented response fields).
+//     → expect HTTP 200 and a body containing "LicenseStatus" /
+//     "DigitalAssetID" (one of the documented response fields).
 //     2. With CA + client cert/key but NO Authorization header
-//        → expect non-2xx (the "restrict" part: token gate works).
+//     → expect non-2xx (the "restrict" part: token gate works).
 //   - No new BNK CRs are applied; this is a runtime-access
 //     verification, not a configuration change.
 //
@@ -181,23 +181,28 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		return finalize(res)
 	}
 
-	// 2. Authenticated request returns 200 with expected fields.
-	bodyAuth, errAuth := r.KubectlCapture(ctx.Ctx, "-n", "scn-cwcadmin", "exec",
-		probe, "--",
-		"sh", "-c", fmt.Sprintf(
-			`curl -sS --max-time 8 -w '\n__HTTP_CODE__=%%{http_code}' `+
-				`--cacert /certs/ca-root-cert `+
-				`--cert /certs/client-cert `+
-				`--key /certs/client-key `+
-				`-H "Authorization: Bearer $(cat /token/token)" `+
-				`https://%s:%s/status`, cwcFQDN, cwcPort))
-	authOK := errAuth == nil &&
-		strings.Contains(bodyAuth, "__HTTP_CODE__=200") &&
-		strings.Contains(bodyAuth, "LicenseStatus") &&
-		strings.Contains(bodyAuth, "DigitalAssetID")
+	// 2. Authenticated request returns 200 with expected fields. The CWC
+	//    license status can briefly lag a TMM restart — under load it
+	//    serves a not-yet-Active license (or 503s) for a few seconds — so
+	//    retry until the populated 200 lands rather than flaking on a tight
+	//    host. The reject checks below need no retry (the token gate is
+	//    enforced from the start).
+	authScript := fmt.Sprintf(
+		`curl -sS --max-time 8 -w '\n__HTTP_CODE__=%%{http_code}' `+
+			`--cacert /certs/ca-root-cert `+
+			`--cert /certs/client-cert `+
+			`--key /certs/client-key `+
+			`-H "Authorization: Bearer $(cat /token/token)" `+
+			`https://%s:%s/status`, cwcFQDN, cwcPort)
+	authPass := func(body string) bool {
+		return strings.Contains(body, "__HTTP_CODE__=200") &&
+			strings.Contains(body, "LicenseStatus") &&
+			strings.Contains(body, "DigitalAssetID")
+	}
+	bodyAuth := curlRetry(ctx, probe, authScript, authPass, 90*time.Second)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "Authenticated GET /status returns HTTP 200 with license JSON",
-		OK:          authOK,
+		OK:          authPass(bodyAuth),
 		Got:         oneLine(bodyAuth, 250),
 	})
 
@@ -279,6 +284,28 @@ func replicateSecret(ctx *scenarios.Context, name, sourceNS, targetNS string) er
 		fmt.Fprintf(&b, "  %s: %s\n", parts[0], parts[1])
 	}
 	return r.Apply(ctx.Ctx, b.String())
+}
+
+// curlRetry runs a curl command in the probe pod, retrying (up to the
+// deadline, 5s interval) until pass(body) is true — absorbing the brief
+// window where the CWC license status lags a TMM restart. Returns the last
+// response body so the caller can record what it saw on timeout.
+func curlRetry(ctx *scenarios.Context, pod, script string, pass func(string) bool, within time.Duration) string {
+	r := ctx.Runner
+	deadline := time.Now().Add(within)
+	var body string
+	for {
+		body, _ = r.KubectlCapture(ctx.Ctx, "-n", "scn-cwcadmin", "exec",
+			pod, "--", "sh", "-c", script)
+		if pass(body) || time.Now().After(deadline) {
+			return body
+		}
+		select {
+		case <-ctx.Ctx.Done():
+			return body
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 func finalize(res scenarios.Result) scenarios.Result {

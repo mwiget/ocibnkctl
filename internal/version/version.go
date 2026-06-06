@@ -37,6 +37,17 @@ const (
 	CertManagerRepo    = "https://charts.jetstack.io"
 	CertManagerVersion = "v1.16.2"
 
+	// Kyverno backs the optional `deploy shrink` step: a mutating
+	// admission policy that caps CPU/memory *requests* on the F5 BNK
+	// pods so the deployment schedules inside a much smaller host. The
+	// FLO operator owns every workload spec via server-side-apply and
+	// reasserts it on a tight reconcile loop, so the only layer that can
+	// lower requests durably is admission — which runs AFTER FLO's apply.
+	// Pinned; installed trimmed to the admission controller only.
+	KyvernoChart   = "kyverno"
+	KyvernoRepo    = "https://kyverno.github.io/kyverno/"
+	KyvernoVersion = "3.8.1"
+
 	// Release manifest — the F5 bill-of-materials chart that pins the
 	// FLO + CIS + cert-gen + image versions for this BNK release. Pull
 	// at deploy time; do NOT hardcode FLO chart version here.
@@ -121,7 +132,30 @@ type ResourceSpec struct {
 var (
 	MinBaseline     = ResourceSpec{Cores: 10, MemoryGB: 16}
 	MinWithBNKForge = ResourceSpec{Cores: 10, MemoryGB: 18}
+
+	// MinBaselineSmallHost is the floor for the small-host profile
+	// (bnk.host_profile=small) — a Raspberry-Pi-class 4-core / 16 GB box.
+	// It assumes BOTH the shrink policy (`deploy shrink`, which now also
+	// caps kube-system) AND telemetry.metricSubsystem=false are in effect.
+	// With metrics off, TMM drops to 3.4 cores (5 containers); the agent
+	// node then carries TMM 3.4c + calico/multus (capped) ≈ 3.5c of 4.0c,
+	// and the server node — every non-TMM pod capped to 25m — sits far
+	// below. 4 cores is the floor because TMM alone is 3.4c and the
+	// f5-tmm-pod-manager refuses to let it go lower (it enforces TMM's
+	// per-container resource values; only removing the observer sidecar via
+	// metricSubsystem=false is honored). Memory is dominated by TMM's blobd
+	// (4 Gi) + main (2 Gi); ~16 GB leaves comfortable headroom.
+	MinBaselineSmallHost = ResourceSpec{Cores: 4, MemoryGB: 16}
 )
+
+// BaselineFor returns the core/memory floor for a host profile. Unknown or
+// empty profiles get the standard (10-core) floor.
+func BaselineFor(profile string) ResourceSpec {
+	if profile == "small" {
+		return MinBaselineSmallHost
+	}
+	return MinBaseline
+}
 
 // Measured indicates whether the floor numbers above are real measured
 // values or still placeholders.

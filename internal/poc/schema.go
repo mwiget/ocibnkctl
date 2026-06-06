@@ -82,7 +82,35 @@ type BNK struct {
 	// can do so without recompiling.
 	TMMNodeLabelKey   string `yaml:"tmm_node_label_key,omitempty"`
 	TMMNodeLabelValue string `yaml:"tmm_node_label_value,omitempty"`
+	// HostProfile selects a resource profile for the deployment.
+	//
+	//   "" / "standard" — the full BNK 2.3 footprint (10-core / 16 GB floor).
+	//   "small"         — a Raspberry-Pi-class 4-core / 16 GB host. Disables
+	//                     CNEInstance.telemetry.metricSubsystem, which drops
+	//                     TMM's observer/tmStats sidecar (-700m) so the TMM
+	//                     pod (4.1c stock) falls to ~3.4c and fits a single
+	//                     4-core node — the f5-tmm-pod-manager enforces TMM's
+	//                     per-container resource VALUES (no override survives)
+	//                     but honors a smaller container SET via this flag.
+	//                     Also lowers the `doctor` core floor. Pair with
+	//                     `ocibnkctl deploy shrink` to cap every other pod.
+	HostProfile string `yaml:"host_profile,omitempty"`
 }
+
+// Host profile values for BNK.HostProfile.
+const (
+	HostProfileStandard = "standard"
+	HostProfileSmall    = "small"
+)
+
+// IsSmallHost reports whether the PoC targets a small (4-core/16GB) host.
+func (b BNK) IsSmallHost() bool { return b.HostProfile == HostProfileSmall }
+
+// MetricSubsystemEnabled is the value for
+// CNEInstance.spec.telemetry.metricSubsystem.enabled. The small-host
+// profile disables it to shed TMM's observer sidecar; everything else
+// keeps the metrics pipeline on.
+func (b BNK) MetricSubsystemEnabled() bool { return !b.IsSmallHost() }
 
 // BNKForge mirrors dpubnkctl's bnk_forge block. Auto-populated by
 // `ocibnkctl init` when $OCIBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge

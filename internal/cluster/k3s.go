@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -76,6 +77,79 @@ func (k *K3s) rt() string {
 		return string(RuntimeDocker)
 	}
 	return string(k.Runtime)
+}
+
+// hostResolvers returns the DNS server IPs to pin on the k3s node
+// containers via `--dns`, or nil to leave the runtime's default behaviour
+// (copy the host /etc/resolv.conf) untouched.
+//
+// The runtime copies the host's /etc/resolv.conf into each container, but
+// when that file lists only a loopback stub resolver — systemd-resolved's
+// 127.0.0.53, as on a stock Ubuntu/Raspberry-Pi host — the address is
+// unusable inside the container netns. docker then proxies queries to the
+// host stub instead, a path that is unreliable on some hosts (notably the
+// Pi) and fails intermittently with EAI_AGAIN ("Try again"), stalling
+// image pulls and in-cluster CoreDNS. In that case we dig the real upstream
+// resolvers out of systemd-resolved's own resolv.conf and pin them on the
+// containers directly, bypassing the broken proxy. When the host already
+// exposes real (non-loopback) resolvers we return nil and don't override.
+// publicFallbackResolvers are pinned only as a last resort — when neither
+// /etc/resolv.conf nor systemd-resolved's uplink file exposes a usable
+// (non-loopback) resolver — so image pulls still work on an otherwise
+// stub-only host. On an air-gapped or split-horizon network this is the
+// wrong answer, so dnsArgs warns when it fires.
+var publicFallbackResolvers = []string{"1.1.1.1", "8.8.8.8"}
+
+func hostResolvers() (servers []string, fellBackToPublic bool) {
+	// Host resolv.conf already usable → trust the runtime default.
+	if ns := nonLoopbackNameservers("/etc/resolv.conf"); len(ns) > 0 {
+		return nil, false
+	}
+	// /etc/resolv.conf is a loopback-only stub. Pull the real upstreams
+	// systemd-resolved forwards to (the "uplink" resolv.conf it maintains).
+	// NOTE: only systemd-resolved's path is consulted; other stub resolvers
+	// (dnsmasq, NetworkManager) won't be discovered and will hit the fallback.
+	if ns := nonLoopbackNameservers("/run/systemd/resolve/resolv.conf"); len(ns) > 0 {
+		return ns, false
+	}
+	return publicFallbackResolvers, true
+}
+
+// nonLoopbackNameservers parses a resolv.conf and returns its non-loopback
+// nameserver IPs in file order. A missing/unreadable file yields nil.
+func nonLoopbackNameservers(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+		if ip := net.ParseIP(fields[1]); ip != nil && !ip.IsLoopback() {
+			out = append(out, fields[1])
+		}
+	}
+	return out
+}
+
+// dnsArgs renders hostResolvers() as `--dns <ip>` runtime flags, warning to
+// out when it had to fall back to public resolvers (no host-configured
+// upstream found) — surprising on an air-gapped or split-horizon host.
+func dnsArgs(out io.Writer) []string {
+	servers, fellBack := hostResolvers()
+	if fellBack && out != nil {
+		fmt.Fprintf(out, "WARN: no non-loopback resolver found in /etc/resolv.conf or systemd-resolved; "+
+			"pinning public DNS %v on the k3s nodes. Configure a real upstream if this host is "+
+			"air-gapped or uses split-horizon DNS.\n", servers)
+	}
+	var args []string
+	for _, ns := range servers {
+		args = append(args, "--dns", ns)
+	}
+	return args
 }
 
 // run builds an *exec.Cmd against the container runtime CLI.
@@ -191,6 +265,11 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		return err
 	}
 
+	// Pin real upstream resolvers on the nodes when the host only offers a
+	// loopback stub resolver, so containerd image pulls and CoreDNS don't
+	// depend on the runtime's flaky embedded-DNS proxy. See hostResolvers.
+	dns := dnsArgs(k.Out)
+
 	server := k.serverName(name)
 	serverArgs := []string{
 		"run", "-d",
@@ -203,9 +282,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		"-e", "K3S_TOKEN=" + k.token(name),
 		"-e", "K3S_KUBECONFIG_MODE=644",
 		"-p", "127.0.0.1::6443",
-		nodeImage, "server",
-		"--node-name", server,
 	}
+	serverArgs = append(serverArgs, dns...)
+	serverArgs = append(serverArgs, nodeImage, "server", "--node-name", server)
 	serverArgs = append(serverArgs, k3sServerArgs...)
 	if err := k.runVisible(ctx, serverArgs...); err != nil {
 		return fmt.Errorf("start k3s server: %w", err)
@@ -236,9 +315,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		"--tmpfs", "/run",
 		"-e", "K3S_TOKEN=" + k.token(name),
 		"-e", "K3S_URL=https://" + server + ":6443",
-		nodeImage, "agent",
-		"--node-name", agent,
 	}
+	agentArgs = append(agentArgs, dns...)
+	agentArgs = append(agentArgs, nodeImage, "agent", "--node-name", agent)
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
 		return fmt.Errorf("start k3s agent: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ var manifestFS embed.FS
 
 const (
 	scnName  = "grpc-loadbalance"
-	scnTitle = "gRPC load balancing — L4Route (TCP) data plane; GRPCRoute control plane (moul/grpcbin)"
+	scnTitle = "gRPC load balancing — L4Route (TCP) data plane; GRPCRoute control plane (kong/grpcbin)"
 
 	gwAddr = "203.0.113.108"
 	gwPort = "50051"
@@ -36,12 +37,31 @@ const (
 	l4Addr = "203.0.113.109"
 	l4Port = "50052"
 
-	// grpcurl release: pinned + SHA-256 verified before extraction.
-	// The binary runs inside the FRR pod, which is privileged on the
-	// host network/bridge — SHA check is load-bearing.
-	grpcurlURL = "https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz"
-	grpcurlSHA = "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5"
+	// grpcurl release: pinned + SHA-256 verified before extraction. The
+	// binary runs inside the FRR pod (whose arch == the node/host arch), so
+	// the asset is selected per GOARCH — an x86_64 binary `exec format
+	// error`s on an arm64 Raspberry-Pi node. SHA check is load-bearing.
+	grpcurlVersion = "v1.9.3"
 )
+
+// grpcurlAsset maps GOARCH → the grpcurl release tarball + its official
+// SHA-256 (from grpcurl_1.9.3_checksums.txt). grpcurlDownload selects the
+// entry for the node's architecture.
+var grpcurlAsset = map[string]struct{ file, sha string }{
+	"amd64": {"grpcurl_1.9.3_linux_x86_64.tar.gz", "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5"},
+	"arm64": {"grpcurl_1.9.3_linux_arm64.tar.gz", "b20a00c1cb82ab81ec32696766d4076e99b4cb5ca0823a71767ba64dbea0f263"},
+}
+
+// grpcurlDownload returns the download URL and SHA-256 for the running
+// architecture, and whether that arch is supported.
+func grpcurlDownload() (url, sha string, ok bool) {
+	a, ok := grpcurlAsset[runtime.GOARCH]
+	if !ok {
+		return "", "", false
+	}
+	return "https://github.com/fullstorydev/grpcurl/releases/download/" +
+		grpcurlVersion + "/" + a.file, a.sha, true
+}
 
 func init() { scenarios.Register(&scenario{}) }
 
@@ -53,7 +73,7 @@ func (s *scenario) Rating() scenarios.Rating { return scenarios.Green }
 func (s *scenario) Dependencies() []string   { return []string{"bgp-peer-frr"} }
 func (s *scenario) Description() string {
 	return strings.TrimSpace(`
-Load-balances gRPC to a moul/grpcbin backend in the 2-node demo-TMM
+Load-balances gRPC to a kong/grpcbin backend in the 2-node demo-TMM
 shape, and exercises BNK's GRPCRoute CRD alongside it.
 
 Two data paths are deployed for the same grpcbin pods:
@@ -200,9 +220,22 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	// Install grpcurl in the FRR pod with SHA verification. We chain
 	// curl → sha256sum -c → tar in a single sh -c so a checksum
 	// mismatch aborts before the binary lands. Idempotent: skip the
-	// download if /tmp/grpcurl is already present.
+	// download if /tmp/grpcurl is already present. The asset is chosen for
+	// the node's architecture (the FRR pod runs the node/host arch).
+	grpcurlURL, grpcurlSHA, archOK := grpcurlDownload()
+	if !archOK {
+		res.Assertions = append(res.Assertions, scenarios.Assertion{
+			Description: "grpcurl available for node architecture",
+			OK:          false,
+			Got:         "unsupported GOARCH " + runtime.GOARCH,
+		})
+		return res
+	}
+	// Idempotent, but guard on the binary actually *running* — not just
+	// being present — so a /tmp/grpcurl left from an earlier run on a
+	// different arch (wrong exec format) is replaced rather than reused.
 	installScript := `set -e
-if [ -x /tmp/grpcurl ]; then echo present; exit 0; fi
+if /tmp/grpcurl --version >/dev/null 2>&1; then echo present; exit 0; fi
 command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1
 cd /tmp
 curl -fsSL -o grpcurl.tgz ` + grpcurlURL + `

@@ -19,6 +19,10 @@ type CNEInputs struct {
 	DeploymentSize  string
 	TMMNodeLabelKey string
 	TMMNodeLabelVal string
+	// MetricSubsystem is CNEInstance.spec.telemetry.metricSubsystem.enabled.
+	// The small-host profile sets it false to shed TMM's observer sidecar
+	// (see poc.BNK.MetricSubsystemEnabled).
+	MetricSubsystem bool
 }
 
 // RenderCNEInstance builds the CNEInstance YAML for a PoC. Demo
@@ -32,6 +36,7 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 		DeploymentSize:  "Small",
 		TMMNodeLabelKey: k,
 		TMMNodeLabelVal: v,
+		MetricSubsystem: p.BNK.MetricSubsystemEnabled(),
 	}
 	return renderTemplate("templates/cne-instance.yaml.tmpl", in)
 }

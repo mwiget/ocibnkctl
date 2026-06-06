@@ -145,9 +145,111 @@ the cluster lives inside ~7 GB of real memory and half a core, but won't
 *get there* without first satisfying the scheduler's ~28 Gi / 16.9-core
 reservation spread across the two nodes.
 
+### Shrinking the footprint — `ocibnkctl deploy shrink` (auto on tight hosts)
+
+The reservation gap can be closed, but not by editing the workloads. FLO is
+the operator that renders them, and it **owns every `resources` field via
+server-side-apply**, recomputing them from `CNEInstance.spec.deploymentSize`
+(a profile baked into the FLO binary — there's no ConfigMap to retune) and
+re-asserting them on a tight reconcile loop. Patch a Deployment, a
+StatefulSet, or an intermediate `F5*` CR (`F5Tmm`, `downloaders`, `dssms`, …)
+and FLO reverts it within milliseconds. `deploymentSize` is already at its
+smallest preset (`Small`). The CRD does expose `spec.advanced.tmm.resources`,
+but on BNK 2.3 it is effectively dead (see TMM caveat below).
+
+The one layer FLO can't reach is **Kubernetes admission**, which runs *after*
+its apply. `deploy shrink` installs Kyverno (admission controller only,
+pinned) plus a mutating `ClusterPolicy` (`f5-bnk-shrink-requests`) that caps
+CPU/memory **requests** — never limits — on every F5 pod *at admission*. FLO
+keeps rendering 4 Gi into the Deployment it owns; the Pod that gets created is
+rewritten to the cap; FLO sees no diff in its own objects and never fights
+back. It then caps the two big `kube-system` DaemonSets (`calico-node`,
+`kube-multus`) with a direct patch — Kyverno deliberately excludes system
+namespaces, and these have no operator to revert it. Requests are scheduling
+reservations, not usage caps, and real usage is a small fraction of the cap,
+so the cluster keeps running while the scheduler stops reserving ~28 Gi it
+never uses.
+
+```bash
+ocibnkctl deploy shrink --yolo --confirm-deploy <poc-name>
+# tune the per-container ceilings (defaults 25m / 128Mi):
+ocibnkctl deploy shrink --cpu 50m --memory 256Mi --yolo --confirm-deploy <poc>
+```
+
+Measured on the 2-node demo shape (base BNK, before scenarios):
+
+| Node   | CPU requests | Mem requests |
+|---|---|---|
+| server | 89% → **9%**  | 85% → **21%** |
+| agent  | 77% → **45%** | 92% → **58%** |
+
+**`f5-tmm` is the exception, and it is immovable on 2.3.** TMM's raw Pod is
+owned not by a Deployment but by a bespoke `f5-tmm-pod-manager` controller (a
+container inside `f5-cne-controller`) that holds a **compiled-in expected
+resource set** and **recreates any TMM pod whose container resource *values*
+differ from it** — verified by binary analysis plus live tests. It deletes the
+pod in a loop (`"Deleting pod"` every ~15 s) regardless of *how* the values
+were lowered: a Kyverno pod mutation, a direct CR/Deployment patch, **or the
+documented `spec.advanced.tmm.resources` override** (FLO writes it, the
+pod-manager rejects the pod anyway). It tolerates *metadata* mutations and
+preserves QoS, so the trigger is specifically the resource values. There is no
+disable switch. That's why the agent node only drops to ~45 %: TMM keeps its
+full **4.1-core / 9 Gi** reservation — see the small-host profile for the one
+lever that actually moves it.
+
+### Small-host (4-core Raspberry Pi) profile — `host_profile: small`
+
+A 4-core / 16 GB host (e.g. a Raspberry Pi 4/5 — and the F5 images are
+`linux/arm64`, so they run natively, no emulation) can't host stock TMM:
+**4.1 cores already exceeds a single 4-core node's allocatable**, and the
+pod-manager forbids lowering the values. The pod-manager *is*, however,
+**sidecar-set-aware** — it accepts a TMM pod with *fewer containers* as long
+as the removal came from a supported feature flag. So the one lever that works
+is to disable a sidecar:
+
+> `bnk.host_profile: small` in `poc.yaml` renders the CNEInstance with
+> `telemetry.metricSubsystem: false`, which removes TMM's `observer`/tmStats
+> sidecar (and the cluster metrics pipeline). The pod-manager accepts the
+> 5-container pod, dropping TMM from **4.1c → 3.4c** — enough to fit a 4-core
+> node. (Tradeoff: no TMM metrics / observability.)
+
+The full 4-core recipe is `host_profile: small` (so TMM itself fits) **plus**
+`deploy shrink` (so every *other* pod fits). The shrink step is now
+**automatic**: `e2e` inserts a conditional `deploy-shrink` phase between
+`deploy-flo` and `deploy-cne` that engages whenever the host has fewer cores
+than the standard floor (`runtime.NumCPU() < MinBaseline.Cores`, i.e. < 10)
+and is skipped on roomier hosts. So on a Pi the recipe is just:
+
+```yaml
+# poc.yaml
+bnk:
+  host_profile: small        # CNEInstance: metricSubsystem off → TMM 3.4c
+```
+```bash
+ocibnkctl doctor --profile small               # 4-core floor instead of 10
+ocibnkctl e2e --yolo --confirm-cluster <poc>   # auto-runs deploy shrink (host < 10 cores)
+```
+
+The phase order is deliberate — `deploy-shrink` runs *before* `deploy-cne` so
+the Kyverno admission cap is in place when deploy-cne creates the TMM/DSSM
+pods: they admit pre-capped and schedule, instead of wedging deploy-cne's
+readiness wait on `Insufficient cpu`. You can still run it by hand
+(`ocibnkctl deploy shrink --yolo --confirm-deploy <poc>`), and an explicit
+`e2e --phase deploy-shrink` forces it regardless of host size.
+
+Measured fit on 4 cores (base shape): the **agent** node lands at
+TMM 3.4c + capped calico/multus ≈ **3.5c of 4.0c (~88 %)**; the **server**
+node, every non-TMM pod capped to 25m, sits near **0.9c**. Memory (TMM's
+blobd 4 Gi + main 2 Gi dominate) fits 16 GB with headroom. It's tight on CPU —
+adding scenarios pushes the agent toward 95 % — but it schedules and runs.
+
+A full measured run (Raspberry Pi 5, deploy + all 12 green scenarios in
+~21 min) with per-phase and per-scenario timings is in
+[docs/rpi-e2e-performance.md](docs/rpi-e2e-performance.md).
+
 ### Symptom when the floor is too low
 
-`ocibnkctl e2e` reaches `[5/5] deploy-cne` and stalls. Pods sit `Pending`
+`ocibnkctl e2e` reaches `[6/6] deploy-cne` and stalls. Pods sit `Pending`
 with `FailedScheduling: Insufficient cpu` (server node) or
 `Insufficient memory` (agent/TMM node — usually the first to bite, since
 TMM's 9204 Mi dominates), and `CNEInstance.Available` never goes true.
@@ -169,9 +271,10 @@ the worker) + ~0.5 GB (cert-manager, alpine/k8s tooling, manifests) +
 ~5 GB headroom for k3s cluster state and logs.
 
 `ocibnkctl doctor` reports the host's actual CPU count and fails
-when it falls below `MinBaseline`. Override the constants in
-`internal/version/version.go` if you've tuned chart values to reduce
-requests.
+when it falls below `MinBaseline` (10 cores). Use `doctor --profile small`
+for the 4-core small-host floor (`MinBaselineSmallHost`). Override the
+constants in `internal/version/version.go` if you've tuned chart values
+further.
 
 ## bnk-forge integration
 
@@ -257,6 +360,20 @@ two-node, Calico-CNI, k8s-v1.30.8 shape the deploy pipeline expects.
 Podman works through the same code path — set `cluster.provider: podman`
 in `poc.yaml` (or let `doctor`/`cluster up` auto-detect the runtime).
 
+**DNS on hosts with a loopback stub resolver.** On a stock Ubuntu /
+Raspberry Pi OS host, `/etc/resolv.conf` points only at systemd-resolved's
+loopback stub (`127.0.0.53`). That address is unusable inside a container
+netns, so the runtime falls back to *proxying* DNS queries to the host stub
+— a path that is unreliable on some hosts (notably the Pi) and fails
+intermittently with `EAI_AGAIN` (`lookup … : Try again`), stalling
+containerd image pulls and in-cluster CoreDNS. To avoid it, `cluster up`
+detects this case and pins the host's **real** upstream resolvers (read from
+systemd-resolved's own `/run/systemd/resolve/resolv.conf`, falling back to
+public resolvers) on both node containers via `--dns`, bypassing the proxy.
+The flags land in the container's `HostConfig.Dns`, so they survive restart
+and reboot. When the host already exposes real (non-loopback) resolvers,
+nothing is overridden.
+
 ## Quick start
 
 ```bash
@@ -286,8 +403,13 @@ If you'd rather drive the phases one at a time for diagnostics:
 ocibnkctl cluster up      --yolo --confirm-cluster demo
 ocibnkctl deploy prereqs  --yolo --confirm-deploy  demo
 ocibnkctl deploy flo      --yolo --confirm-deploy  demo
+ocibnkctl deploy shrink   --yolo --confirm-deploy  demo  # tight hosts only — e2e runs this automatically when cores < 10
 ocibnkctl deploy cne      --yolo --confirm-deploy  demo
 ```
+
+Run `deploy shrink` *before* `deploy cne` (as `e2e` does) so the request cap
+is in place when the TMM/DSSM pods are created — see "Shrinking the
+footprint". On a host at/above the 10-core floor, skip it entirely.
 
 Every phase is idempotent and gated by `--yolo` plus a typo-guard.
 

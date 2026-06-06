@@ -16,14 +16,16 @@ import (
 
 func newDoctorCmd() *cobra.Command {
 	var strict bool
+	var profile string
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Verify host tooling (docker/podman, kubectl, helm) and report resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(cmd.Context(), cmd.OutOrStdout(), strict)
+			return runDoctor(cmd.Context(), cmd.OutOrStdout(), strict, profile)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings (e.g. min-resources not measured)")
+	cmd.Flags().StringVar(&profile, "profile", "standard", "Resource profile: standard (10-core floor) | small (4-core/16GB Raspberry-Pi floor; needs deploy shrink + host_profile=small)")
 	return cmd
 }
 
@@ -33,7 +35,7 @@ type checkResult struct {
 	detail string
 }
 
-func runDoctor(ctx context.Context, out io.Writer, strict bool) error {
+func runDoctor(ctx context.Context, out io.Writer, strict bool, profile string) error {
 	var results []checkResult
 
 	results = append(results, checkRuntime(ctx))
@@ -41,7 +43,7 @@ func runDoctor(ctx context.Context, out io.Writer, strict bool) error {
 	// runs nodes directly on the container runtime verified above.
 	results = append(results, checkBinary(ctx, "kubectl", []string{"version", "--client=true", "--output=yaml"}))
 	results = append(results, checkBinary(ctx, "helm", []string{"version", "--short"}))
-	results = append(results, checkResources())
+	results = append(results, checkResources(profile))
 
 	fails, warns := 0, 0
 	for _, r := range results {
@@ -142,20 +144,25 @@ func checkBinary(ctx context.Context, name string, args []string) checkResult {
 	return checkResult{name, "ok", first}
 }
 
-func checkResources() checkResult {
+func checkResources(profile string) checkResult {
 	cores := runtime.NumCPU()
+	baseline := version.BaselineFor(profile)
+	label := "min baseline"
+	if profile == "small" {
+		label = "small-host floor"
+	}
 	if !version.Measured() {
 		return checkResult{
 			"resources", "warn",
-			fmt.Sprintf("host: %d cores | min baseline: not yet measured (TBD)", cores),
+			fmt.Sprintf("host: %d cores | %s: not yet measured (TBD)", cores, label),
 		}
 	}
-	if cores < version.MinBaseline.Cores {
+	if cores < baseline.Cores {
 		return checkResult{"resources", "fail",
-			fmt.Sprintf("host: %d cores  <  min baseline %d cores",
-				cores, version.MinBaseline.Cores)}
+			fmt.Sprintf("host: %d cores  <  %s %d cores",
+				cores, label, baseline.Cores)}
 	}
 	return checkResult{"resources", "ok",
-		fmt.Sprintf("host: %d cores  ≥  min baseline %d cores",
-			cores, version.MinBaseline.Cores)}
+		fmt.Sprintf("host: %d cores  ≥  %s %d cores",
+			cores, label, baseline.Cores)}
 }

@@ -2,3 +2,6 @@ bin/
 *.test
 *.out
 .DS_Store
+
+# Local PoC working dirs created by `ocibnkctl init` (each is its own repo).
+labs/

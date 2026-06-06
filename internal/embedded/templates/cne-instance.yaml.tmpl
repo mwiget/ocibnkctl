@@ -30,8 +30,14 @@ spec:
   telemetry:
     loggingSubsystem:
       enabled: false
+    # metricSubsystem drives TMM's observer/tmStats sidecar (~700m/1Gi) and
+    # the cluster metrics pipeline (observer / observer-receiver / otel).
+    # The small-host (4-core) profile disables it: the f5-tmm-pod-manager
+    # enforces TMM's per-container resource VALUES (no override survives),
+    # but it honors a smaller container SET — dropping this sidecar takes
+    # the TMM pod from 4.1c to ~3.4c so it fits a single 4-core node.
     metricSubsystem:
-      enabled: true
+      enabled: {{.MetricSubsystem}}
   certificate:
     clusterIssuer: bnk-ca-cluster-issuer
   deploymentSize: "{{.DeploymentSize}}"
