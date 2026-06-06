@@ -738,8 +738,21 @@ func ensureBridgeCNI(ctx *scenarios.Context) error {
 
 // disableBridgeNetfilter sets net.bridge.bridge-nf-call-iptables=0 on every
 // k3s node so packets crossing the bnk-bgp Multus bridge bypass the node's
-// iptables. The rancher/k3s node image leaves this at 1; the kind predecessor
-// did not subject the NAD bridge to it. With it on, FRR↔TMM data-plane traffic
+// iptables. Whether this matters depends on the host, not the OS: it's gated
+// entirely on whether br_netfilter is loaded.
+//
+//   - Docker Desktop (linuxkit VM): br_netfilter is loaded and the sysctl
+//     defaults to 1, so the NAD bridge IS subject to iptables — this is the
+//     shape the fix targets.
+//   - Native-Linux docker: the k3s node container can't load the host kernel's
+//     br_netfilter (no /lib/modules/$(uname -r) inside the image), so the
+//     sysctl never appears and the NAD bridge is never handed to iptables in
+//     the first place — nothing to disable, so we skip cleanly. Writing
+//     unconditionally there errors ("nonexistent directory") and would abort
+//     the whole scenario.
+//
+// (The kind predecessor did not subject the NAD bridge to it.) With it on,
+// FRR↔TMM data-plane traffic
 // is run through Calico's `natOutgoing` MASQUERADE: FRR's net1 source
 // (192.168.99.x, inside Calico's default 192.168.0.0/16 pool) gets SNAT'd to
 // the node address on the way to a Gateway VIP (203.0.113.x, OUTSIDE the pool),
@@ -757,19 +770,28 @@ func disableBridgeNetfilter(ctx *scenarios.Context) error {
 	if len(nodes) == 0 {
 		return fmt.Errorf("no cluster nodes found")
 	}
+	const sysctl = "/proc/sys/net/bridge/bridge-nf-call-iptables"
 	for _, n := range nodes {
 		fmt.Fprintf(ctx.Out, "      | bridge-nf-call-iptables=0 on %s ... ", n)
-		// br_netfilter is loaded by Calico/kube before this runs, so the
-		// sysctl exists; load it best-effort first in case it isn't.
+		// Load br_netfilter best-effort (it's already up on Docker Desktop;
+		// the modprobe is a no-op there and fails harmlessly on native Linux
+		// where the host module isn't reachable from the container). Then
+		// set 0 only if the sysctl actually exists — if it doesn't, the NAD
+		// bridge isn't subject to iptables at all, so there's nothing to do.
 		_ = exec.CommandContext(ctx.Ctx, "docker", "exec", n,
 			"modprobe", "br_netfilter").Run()
-		if o, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
-			"sh", "-c", "echo 0 > /proc/sys/net/bridge/bridge-nf-call-iptables").CombinedOutput(); err != nil {
+		o, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
+			"sh", "-c", "if [ -e "+sysctl+" ]; then echo 0 > "+sysctl+" && echo set; else echo absent; fi").CombinedOutput()
+		if err != nil {
 			fmt.Fprintln(ctx.Out, "ERROR")
 			return fmt.Errorf("set bridge-nf-call-iptables=0 on %s: %w (output: %s)",
 				n, err, strings.TrimSpace(string(o)))
 		}
-		fmt.Fprintln(ctx.Out, "set")
+		if strings.TrimSpace(string(o)) == "absent" {
+			fmt.Fprintln(ctx.Out, "absent — br_netfilter not loaded, NAD bridge bypasses iptables")
+		} else {
+			fmt.Fprintln(ctx.Out, "set")
+		}
 	}
 	return nil
 }
