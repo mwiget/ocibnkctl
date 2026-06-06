@@ -51,6 +51,10 @@ type Provisioner interface {
 	// WorkerNodeName is the k8s node name of the non-control-plane node
 	// (where TMM is pinned via the app=f5-tmm label).
 	WorkerNodeName(name string) string
+	// ServerNodeName is the container/node name of the control-plane
+	// (server) node — also the docker container hosting the apiserver,
+	// used to look up its network IP for bnk-forge registration.
+	ServerNodeName(name string) string
 	// NodeContainerLabel is the `docker ps --filter label=…` selector
 	// that matches this cluster's node containers.
 	NodeContainerLabel(name string) string

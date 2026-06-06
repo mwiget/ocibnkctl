@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/mwiget/ocibnkctl/internal/bnkforge"
+	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
@@ -39,10 +39,17 @@ func newBNKForgeLaunchCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "PoC: %s\n\n", p.Metadata.Name)
-			if err := registerWithBNKForge(cmd.Context(), out, repo, p); err != nil {
-				if errors.Is(err, bnkforge.ErrNotRunning) {
-					return err
-				}
+			ctx := cmd.Context()
+			rt, err := cluster.Detect(ctx, cluster.Runtime(p.Cluster.Provider))
+			if err != nil {
+				return err
+			}
+			prov, err := newProvisioner(rt, prefixWriter{w: out, prefix: "      | "})
+			if err != nil {
+				return err
+			}
+			dc := &cluster.DockerCLI{Runtime: rt, Out: prefixWriter{w: out, prefix: "      | "}}
+			if err := registerWithBNKForge(ctx, out, repo, p, dc, prov.ServerNodeName(p.Cluster.Name)); err != nil {
 				return err
 			}
 			return nil

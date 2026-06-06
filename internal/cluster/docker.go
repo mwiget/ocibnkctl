@@ -150,3 +150,25 @@ func (d *DockerCLI) NodeContainers(ctx context.Context, labelFilter string) ([]s
 	}
 	return names, nil
 }
+
+// ContainerIP returns the container's IPv4 address on its (single) docker
+// network — the address peers on other docker networks can reach on
+// Docker Desktop. Used to give bnk-forge an apiserver URL it can actually
+// reach (the host-published 127.0.0.1 port is unreachable from inside
+// bnk-forge's own containers).
+func (d *DockerCLI) ContainerIP(ctx context.Context, container string) (string, error) {
+	c := d.cmd(ctx, "inspect", "-f",
+		"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container)
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	if err := c.Run(); err != nil {
+		return "", fmt.Errorf("inspect %s: %w (%s)", container, err,
+			strings.TrimSpace(stderr.String()))
+	}
+	ip := strings.TrimSpace(stdout.String())
+	if ip == "" {
+		return "", fmt.Errorf("inspect %s: no network IP found", container)
+	}
+	return ip, nil
+}

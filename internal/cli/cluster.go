@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -216,7 +217,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if f.skipBNKForge || !p.BNKForge.Enabled {
 		fmt.Fprintln(out, "      skipped (disabled or --skip-bnk-forge)")
 	} else {
-		if err := registerWithBNKForge(ctx, out, repo, p); err != nil {
+		if err := registerWithBNKForge(ctx, out, repo, p, dc, prov.ServerNodeName(p.Cluster.Name)); err != nil {
 			if errors.Is(err, bnkforge.ErrNotRunning) {
 				fmt.Fprintf(out, "      bnk-forge configured but not running — skipping. (%v)\n", err)
 			} else {
@@ -252,7 +253,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 // registerWithBNKForge runs the same flow dpubnkctl's bnk-forge launcher
 // uses: ensure running → login → ensure project → register cluster
 // with the localized kubeconfig.
-func registerWithBNKForge(ctx context.Context, out io.Writer, repo string, p *poc.PoC) error {
+func registerWithBNKForge(ctx context.Context, out io.Writer, repo string, p *poc.PoC, dc *cluster.DockerCLI, serverContainer string) error {
 	cfg := bnkforge.Config{
 		RepoPath:      p.BNKForge.RepoPath,
 		URL:           p.BNKForge.URL,
@@ -311,6 +312,29 @@ func registerWithBNKForge(ctx context.Context, out io.Writer, repo string, p *po
 	localServer, err := bnkforge.KubeconfigAPIServer(body)
 	if err != nil {
 		return fmt.Errorf("read local kubeconfig: %w", err)
+	}
+	// On macOS/Windows the container runtime is a Linux VM (Docker Desktop /
+	// podman machine). There the host-published https://127.0.0.1:<mapped-port>
+	// in the kubeconfig is unreachable from inside bnk-forge's own containers
+	// (their loopback is themselves), while separate Docker networks route
+	// freely — so we rewrite the server to the k3s server container's network
+	// IP, which bnk-forge can reach and which the apiserver cert lists as a SAN
+	// (TLS still verifies). On native Linux the host-loopback path already
+	// works (bnk-forge has always registered fine) AND Docker's default
+	// inter-bridge isolation would BLOCK that container IP — so we leave the
+	// kubeconfig untouched there. 6443 is k3s's in-container apiserver port.
+	if runtime.GOOS != "linux" {
+		serverIP, ipErr := dc.ContainerIP(ctx, serverContainer)
+		if ipErr != nil {
+			return fmt.Errorf("look up apiserver IP for bnk-forge: %w", ipErr)
+		}
+		localServer = fmt.Sprintf("https://%s:6443", serverIP)
+		body, err = bnkforge.RewriteServerURL(body, localServer)
+		if err != nil {
+			return fmt.Errorf("rewrite kubeconfig server for bnk-forge: %w", err)
+		}
+		fmt.Fprintf(out, "      rewrote apiserver to %s (reachable from bnk-forge containers on %s)\n",
+			localServer, runtime.GOOS)
 	}
 	for _, c := range clusters {
 		if c.Name != p.Metadata.Name {

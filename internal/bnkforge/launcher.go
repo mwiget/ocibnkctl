@@ -403,6 +403,24 @@ func KubeconfigAPIServer(body []byte) (string, error) {
 	return strings.TrimSpace(kc.Clusters[0].Cluster.Server), nil
 }
 
+// RewriteServerURL returns a copy of the kubeconfig body with its apiserver
+// URL replaced by newURL. The host-local kubeconfig points at the
+// host-published https://127.0.0.1:<port>, which bnk-forge's own containers
+// cannot reach (their loopback is themselves); registration rewrites it to
+// the k3s server container's network IP, which bnk-forge can reach and which
+// the apiserver cert lists as a SAN (so TLS still verifies). Errors if the
+// kubeconfig has no cluster server to rewrite.
+func RewriteServerURL(body []byte, newURL string) ([]byte, error) {
+	old, err := KubeconfigAPIServer(body)
+	if err != nil {
+		return nil, err
+	}
+	if old == "" {
+		return nil, fmt.Errorf("kubeconfig has no cluster server to rewrite")
+	}
+	return bytes.Replace(body, []byte(old), []byte(newURL), 1), nil
+}
+
 func expandHome(p string) string {
 	if strings.HasPrefix(p, "~/") {
 		if h, err := os.UserHomeDir(); err == nil {

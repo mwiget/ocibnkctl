@@ -115,7 +115,7 @@ type ResourceSpec struct {
 // host-side bnk-forge stack. Host-side numbers still TBD; the extra
 // is conservative until measured.
 var (
-	MinBaseline     = ResourceSpec{Cores: 12, MemoryGB: 24}
+	MinBaseline     = ResourceSpec{Cores: 10, MemoryGB: 24}
 	MinWithBNKForge = ResourceSpec{Cores: 14, MemoryGB: 26}
 )
 

@@ -37,6 +37,24 @@ const (
 	// symlink (NOT `k3s kubectl`, which double-dispatches), so probes
 	// run plain kubectl with this env set explicitly.
 	k3sKubeconfigEnv = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+
+	// k3sCorePattern is the kernel.core_pattern we install on the host VM.
+	// F5's `crashagent` sidecar (in f5-crdconversion and other BNK pods)
+	// validates core_pattern at startup and accepts ONLY a pipe pattern
+	// (`|handler …`) — the systemd-coredump form every real Linux host
+	// provides, which is why BNK deploys cleanly on Linux. Docker Desktop's
+	// linuxkit VM instead ships the bare relative value `core`; crashagent
+	// rejects it ("pattern is not supported"), and an absolute *file* path
+	// is rejected the same way — it must be a pipe. On a rejected pattern
+	// crashagent aborts and its s6 supervisor tears down the whole pod
+	// (clean exit 0 → CrashLoopBackOff), which blocks CRDConversionAvailable
+	// and cascades to F5TmmAvailable, leaving the CNEInstance Available=False.
+	// We install the stock systemd-coredump pipe form: crashagent only
+	// format-checks it at startup (coreCollection is disabled in the demo
+	// shape, so no core is ever actually piped). core_pattern is a global
+	// (non-namespaced) kernel sysctl, so writing it once from a privileged
+	// node container fixes it VM-wide for every pod on both nodes.
+	k3sCorePattern = "|/usr/lib/systemd/systemd-coredump %P %u %g %s %t %c %h"
 )
 
 // k3sServerArgs disable k3s's bundled flannel + network-policy so Calico
@@ -94,6 +112,10 @@ func (k *K3s) agentName(name string) string  { return "k3s-" + name + "-agent-0"
 // WorkerNodeName is the agent's k8s node name (we pin --node-name to the
 // container name, so node name == container name).
 func (k *K3s) WorkerNodeName(name string) string { return k.agentName(name) }
+
+// ServerNodeName is the control-plane container/node name (also the
+// docker container that publishes the apiserver).
+func (k *K3s) ServerNodeName(name string) string { return k.serverName(name) }
 
 // NodeContainerLabel selects this cluster's node containers.
 func (k *K3s) NodeContainerLabel(name string) string {
@@ -194,6 +216,11 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 	if err := k.makeRshared(ctx, server); err != nil {
 		return fmt.Errorf("k3s server: %w", err)
 	}
+	// core_pattern is VM-global (non-namespaced); setting it once on the
+	// server fixes BNK's crashagent for pods on both nodes.
+	if err := k.setCorePattern(ctx, server); err != nil {
+		return fmt.Errorf("k3s server: %w", err)
+	}
 	if err := k.waitAPIReady(ctx, server, 3*time.Minute); err != nil {
 		return fmt.Errorf("k3s server API not ready: %w", err)
 	}
@@ -288,6 +315,38 @@ func (k *K3s) makeRshared(ctx context.Context, container string) error {
 		}
 	}
 	return fmt.Errorf("make rootfs rshared in %s: %w", container, lastErr)
+}
+
+// setCorePattern installs k3sCorePattern into the host kernel's global
+// core_pattern via the privileged node container. The linuxkit default
+// (`core`) makes BNK's crashagent abort and crash-loop the whole pod (see
+// the k3sCorePattern doc). Idempotent and retried briefly to absorb the gap
+// between `run -d` returning and the container being exec-ready.
+func (k *K3s) setCorePattern(ctx context.Context, container string) error {
+	// Single-quote the value: the pipe pattern contains `|`, spaces and
+	// `%` specifiers that the shell must not interpret. printf '%s' avoids
+	// echo's escaping quirks and appends no trailing newline.
+	script := fmt.Sprintf("printf '%%s' '%s' > /proc/sys/kernel/core_pattern", k3sCorePattern)
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		c := k.run(ctx, "exec", container, "sh", "-c", script)
+		var errb bytes.Buffer
+		c.Stdout = io.Discard
+		c.Stderr = &errb
+		if err := c.Run(); err == nil {
+			return nil
+		} else if s := strings.TrimSpace(errb.String()); s != "" {
+			lastErr = fmt.Errorf("%s", s)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("set core_pattern in %s: %w", container, lastErr)
 }
 
 // ensureNetwork creates the per-cluster user-defined bridge if absent.
