@@ -1,8 +1,10 @@
-# moul/grpcbin — small (~12MB) reference gRPC server with reflection
-# enabled. Listens on tcp/9000 (insecure gRPC) and tcp/9001 (TLS gRPC).
-# We use 9000 only here. Available services include grpcbin.GRPCBin
-# (Empty, Index, DummyUnary, ...) and the standard reflection API,
-# which lets grpcurl introspect without proto files.
+# kong/grpcbin — small reference gRPC server with reflection enabled, a
+# multi-arch (linux/amd64 + linux/arm64) maintained fork of moul/grpcbin
+# (whose published image is amd64-only and fails `exec format error` on an
+# arm64 Raspberry-Pi node). Listens on tcp/9000 (insecure gRPC) and tcp/9001
+# (TLS gRPC); we use 9000 only here. Available services include
+# grpcbin.GRPCBin (Empty, Index, DummyUnary, ...) and the standard
+# reflection API, which lets grpcurl introspect without proto files.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,7 +21,7 @@ spec:
     spec:
       containers:
       - name: grpcbin
-        image: moul/grpcbin:latest
+        image: kong/grpcbin:latest
         ports:
         - {name: grpc, containerPort: 9000}
         readinessProbe:
