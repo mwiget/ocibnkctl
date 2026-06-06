@@ -183,6 +183,13 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 		return fmt.Errorf("install bridge CNI plugin on cluster nodes: %w", err)
 	}
 
+	// 1b. Stop the node from running bnk-bgp bridge traffic through
+	// iptables, or Calico's natOutgoing MASQUERADE breaks the data plane
+	// (see disableBridgeNetfilter). Must precede any data-plane curl.
+	if err := disableBridgeNetfilter(ctx); err != nil {
+		return fmt.Errorf("disable bridge netfilter on cluster nodes: %w", err)
+	}
+
 	// 2. Namespace + NAD + FRR config + FRR Deployment.
 	for _, f := range []string{
 		"01-namespace.yaml",
@@ -726,6 +733,44 @@ func ensureBridgeCNI(ctx *scenarios.Context) error {
 		fmt.Fprintln(ctx.Out, "installed")
 	}
 	_ = r
+	return nil
+}
+
+// disableBridgeNetfilter sets net.bridge.bridge-nf-call-iptables=0 on every
+// k3s node so packets crossing the bnk-bgp Multus bridge bypass the node's
+// iptables. The rancher/k3s node image leaves this at 1; the kind predecessor
+// did not subject the NAD bridge to it. With it on, FRR↔TMM data-plane traffic
+// is run through Calico's `natOutgoing` MASQUERADE: FRR's net1 source
+// (192.168.99.x, inside Calico's default 192.168.0.0/16 pool) gets SNAT'd to
+// the node address on the way to a Gateway VIP (203.0.113.x, OUTSIDE the pool),
+// so TMM can't return the SYN-ACK symmetrically over net1 and every data-plane
+// curl times out. (BGP itself survives because peer↔peer is net1↔net1, both
+// inside the pool, so natOutgoing doesn't fire — which is why the control plane
+// looks healthy while the data plane is dead.) Calico uses veth, not a Linux
+// bridge, so flipping this off only affects the NAD bridge — Service /
+// NetworkPolicy enforcement via Calico's own veth iptables hooks is unaffected.
+// Idempotent; applied to both nodes since the bridge is per-node.
+func disableBridgeNetfilter(ctx *scenarios.Context) error {
+	out, _ := ctx.Runner.KubectlCapture(ctx.Ctx, "get", "nodes",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}\n{end}")
+	nodes := strings.Fields(out)
+	if len(nodes) == 0 {
+		return fmt.Errorf("no cluster nodes found")
+	}
+	for _, n := range nodes {
+		fmt.Fprintf(ctx.Out, "      | bridge-nf-call-iptables=0 on %s ... ", n)
+		// br_netfilter is loaded by Calico/kube before this runs, so the
+		// sysctl exists; load it best-effort first in case it isn't.
+		_ = exec.CommandContext(ctx.Ctx, "docker", "exec", n,
+			"modprobe", "br_netfilter").Run()
+		if o, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
+			"sh", "-c", "echo 0 > /proc/sys/net/bridge/bridge-nf-call-iptables").CombinedOutput(); err != nil {
+			fmt.Fprintln(ctx.Out, "ERROR")
+			return fmt.Errorf("set bridge-nf-call-iptables=0 on %s: %w (output: %s)",
+				n, err, strings.TrimSpace(string(o)))
+		}
+		fmt.Fprintln(ctx.Out, "set")
+	}
 	return nil
 }
 
