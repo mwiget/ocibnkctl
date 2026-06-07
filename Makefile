@@ -1,4 +1,4 @@
-.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-darwin-arm64
+.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64
 
 all: build-all
 
@@ -63,6 +63,14 @@ release-linux-amd64:
 	cd bin && sha256sum ocibnkctl-$(VERSION)-linux-amd64 \
 	    > ocibnkctl-$(VERSION)-linux-amd64.sha256
 
+release-linux-arm64:
+	@mkdir -p bin
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+	    go build -trimpath -ldflags "$(LDFLAGS)" \
+	    -o bin/ocibnkctl-$(VERSION)-linux-arm64 ./cmd/ocibnkctl
+	cd bin && sha256sum ocibnkctl-$(VERSION)-linux-arm64 \
+	    > ocibnkctl-$(VERSION)-linux-arm64.sha256
+
 release-darwin-arm64:
 	@mkdir -p bin
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
@@ -71,7 +79,7 @@ release-darwin-arm64:
 	cd bin && sha256sum ocibnkctl-$(VERSION)-darwin-arm64 \
 	    > ocibnkctl-$(VERSION)-darwin-arm64.sha256
 
-release: release-linux-amd64 release-darwin-arm64
+release: release-linux-amd64 release-linux-arm64 release-darwin-arm64
 
 install: build
 	install -m 0755 bin/ocibnkctl $(HOME)/.local/bin/ocibnkctl
