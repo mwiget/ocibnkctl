@@ -102,7 +102,7 @@ func (p *PoC) Validate() ValidationResult {
 		r.Errors = append(r.Errors, fmt.Sprintf("bnk.host_profile %q: must be %q or %q", p.BNK.HostProfile, HostProfileStandard, HostProfileSmall))
 	}
 	if p.BNK.IsSmallHost() {
-		r.Warnings = append(r.Warnings, "bnk.host_profile=small: TMM metrics subsystem (observer sidecar) is disabled so TMM fits a 4-core node; run `ocibnkctl deploy shrink` to cap the remaining pods.")
+		r.Warnings = append(r.Warnings, "bnk.host_profile=small: TMM metrics subsystem (observer sidecar) is disabled so TMM fits a 4-core node; e2e auto-runs `deploy shrink` to cap the remaining pods.")
 	}
 
 	if p.BNKForge.Enabled {

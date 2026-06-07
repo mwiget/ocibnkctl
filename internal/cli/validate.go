@@ -47,10 +47,6 @@ func newValidateCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "PoC:  %s   (BNK %s)\n", p.Metadata.Name, p.Metadata.BNKVersion)
 			fmt.Fprintf(out, "Repo: %s\n\n", repo)
-			if len(r.Errors) == 0 && len(r.Warnings) == 0 {
-				fmt.Fprintln(out, "OK — poc.yaml is valid.")
-				return nil
-			}
 			for _, w := range r.Warnings {
 				fmt.Fprintln(out, "WARN ", w)
 			}
@@ -62,6 +58,13 @@ func newValidateCmd() *cobra.Command {
 			}
 			if strict && len(r.Warnings) > 0 {
 				return fmt.Errorf("%d warning(s) with --strict", len(r.Warnings))
+			}
+			// No errors — validate passes. Still print an OK line even with
+			// warnings (e.g. host_profile=small) so a clean run is unambiguous.
+			if len(r.Warnings) > 0 {
+				fmt.Fprintf(out, "\nOK — poc.yaml is valid (%d warning(s)).\n", len(r.Warnings))
+			} else {
+				fmt.Fprintln(out, "OK — poc.yaml is valid.")
 			}
 			return nil
 		},
