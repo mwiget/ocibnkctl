@@ -30,6 +30,31 @@ build-darwin-arm64:
 
 build-all: build build-linux-arm64
 
+# --- release artifacts --------------------------------------------------
+#
+# Tagging convention. The binary is hard-pinned to BNK 2.3.0
+# (BNKVersion=2.3.0, baked into ldflags here and in .goreleaser.yaml), so
+# every release tag carries the `v2.3.0` prefix. Tool-level changes that
+# need a fresh binary — bug fixes, new scenarios, doc bumps — get an
+# incrementing suffix, NOT a new MAJOR.MINOR.PATCH:
+#
+#   v2.3.0       first cut for BNK 2.3.0
+#   v2.3.0-1     next binary, same BNK release
+#   v2.3.0-2     ...and so on
+#
+# This mirrors github.com/mwiget/dpubnkctl. Pushing any `v*` tag triggers
+# the GitHub Actions goreleaser workflow (.github/workflows/release.yml),
+# which is the canonical release path:
+#
+#   git tag v2.3.0-1 && git push origin v2.3.0-1
+#
+# The `make release` targets below are the manual fallback — they produce
+# the same versioned, sha256-checksummed binaries locally. Run from a
+# clean checkout of the tag so $(VERSION) resolves (e.g. to v2.3.0-1):
+#
+#   git checkout v2.3.0-1
+#   make release
+#   gh release upload v2.3.0-1 bin/ocibnkctl-v2.3.0-1-* --clobber
 release-linux-amd64:
 	@mkdir -p bin
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \

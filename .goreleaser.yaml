@@ -52,9 +52,13 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      # Allow an optional Conventional Commits scope, e.g. `docs(rpi):`
+      # or `fix(scenario/cwc):`, which the bare `^docs:` form would miss.
+      # This repo's history uses scopes heavily, so the bare form would
+      # leak docs/test/chore noise into the generated release notes.
+      - "^docs(\\(.+\\))?:"
+      - "^test(\\(.+\\))?:"
+      - "^chore(\\(.+\\))?:"
 
 release:
   draft: false
