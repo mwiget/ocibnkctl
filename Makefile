@@ -128,9 +128,9 @@ smoke: test build
 	  fi; \
 	  grep -q "confirm-cluster is required" /tmp/smoke-yolo.log \
 	    || { echo "missing-confirm error message missing"; exit 1; }; \
-	echo "[8] doctor reports cores ≥ min baseline"; \
-	  ./bin/ocibnkctl doctor 2>&1 | grep -q "min baseline" \
-	    || { echo "doctor min-baseline line missing"; exit 1; }; \
+	echo "[8] doctor reports a resource floor (min baseline or small-host floor)"; \
+	  ./bin/ocibnkctl doctor 2>&1 | grep -qE "min baseline|small-host floor" \
+	    || { echo "doctor resource-floor line missing"; exit 1; }; \
 	echo "PASS"
 
 clean:

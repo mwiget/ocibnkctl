@@ -25,7 +25,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings (e.g. min-resources not measured)")
-	cmd.Flags().StringVar(&profile, "profile", "standard", "Resource profile: standard (10-core floor) | small (4-core/16GB Raspberry-Pi floor; needs deploy shrink + host_profile=small)")
+	cmd.Flags().StringVar(&profile, "profile", "auto", "Resource profile: auto (small floor when host < 10 cores, else standard) | standard (10-core floor) | small (4-core/16GB Raspberry-Pi floor; needs deploy shrink + host_profile=small)")
 	return cmd
 }
 
@@ -144,8 +144,23 @@ func checkBinary(ctx context.Context, name string, args []string) checkResult {
 	return checkResult{name, "ok", first}
 }
 
+// resolveProfile maps the --profile flag to a concrete profile. "auto" (the
+// default) picks "small" when the host falls below the standard core floor
+// but the small-host path can still carry it, otherwise "standard". An
+// explicit profile is passed through untouched.
+func resolveProfile(profile string, cores int) string {
+	if profile != "auto" {
+		return profile
+	}
+	if coresBelowFloor(cores) {
+		return "small"
+	}
+	return "standard"
+}
+
 func checkResources(profile string) checkResult {
 	cores := runtime.NumCPU()
+	profile = resolveProfile(profile, cores)
 	baseline := version.BaselineFor(profile)
 	label := "min baseline"
 	if profile == "small" {
@@ -162,7 +177,15 @@ func checkResources(profile string) checkResult {
 			fmt.Sprintf("host: %d cores  <  %s %d cores",
 				cores, label, baseline.Cores)}
 	}
-	return checkResult{"resources", "ok",
-		fmt.Sprintf("host: %d cores  ≥  %s %d cores",
-			cores, label, baseline.Cores)}
+	detail := fmt.Sprintf("host: %d cores  ≥  %s %d cores",
+		cores, label, baseline.Cores)
+	if profile == "small" {
+		// On a tight host the chart only schedules once shrink + metrics-off
+		// are in effect — both now happen without manual steps: `init` pins
+		// bnk.host_profile=small in poc.yaml (TMM metrics off) and `e2e`
+		// auto-runs deploy shrink. Note that, and how to opt out.
+		detail += "\n" + strings.Repeat(" ", 20) +
+			"note: tight host — init pins bnk.host_profile=small (TMM metrics off) & e2e auto-runs deploy shrink; set host_profile=standard to opt out"
+	}
+	return checkResult{"resources", "ok", detail}
 }

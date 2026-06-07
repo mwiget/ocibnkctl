@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -357,6 +358,18 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 	}
 
 	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, kubeconfig)
+
+	// host_profile normally comes from poc.yaml — `init` pins it to small on a
+	// tight host. Safety net for a poc.yaml that predates that (or was created
+	// on a roomier host / by hand): if it's still unset and this host is below
+	// the core floor, resolve to small in-memory so TMM sheds its metrics
+	// sidecar and fits. Non-destructive — poc.yaml is left untouched; set
+	// host_profile=standard there to force the full footprint.
+	if prof, autoSmall := p.BNK.ResolveHostProfile(runtime.NumCPU(), version.MinBaseline.Cores); autoSmall {
+		p.BNK.HostProfile = prof
+		fmt.Fprintf(out, "host has %d cores < %d-core floor and poc.yaml host_profile is unset — using host_profile=small (TMM metrics subsystem off)\n\n",
+			runtime.NumCPU(), version.MinBaseline.Cores)
+	}
 
 	// 1. CNEInstance.
 	fmt.Fprintln(out, "[1/4] Rendering + applying CNEInstance (demoMode=true) ...")

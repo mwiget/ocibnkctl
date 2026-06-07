@@ -106,6 +106,28 @@ const (
 // IsSmallHost reports whether the PoC targets a small (4-core/16GB) host.
 func (b BNK) IsSmallHost() bool { return b.HostProfile == HostProfileSmall }
 
+// ResolveHostProfile resolves the configured host_profile against the host's
+// core count. An explicit "small" or "standard" is always honored. An unset
+// profile is treated as "auto": it resolves to "small" when the host has
+// fewer than stdFloor cores (so TMM sheds its metrics sidecar and fits a
+// 4-core node), otherwise "standard". The autoSmall bool reports whether the
+// small profile was applied automatically rather than configured — the caller
+// uses it to log the decision. This mirrors the auto deploy-shrink rule so a
+// tight host needs no hand-edited poc.yaml.
+func (b BNK) ResolveHostProfile(cores, stdFloor int) (profile string, autoSmall bool) {
+	switch b.HostProfile {
+	case HostProfileSmall:
+		return HostProfileSmall, false
+	case HostProfileStandard:
+		return HostProfileStandard, false
+	default: // "" — auto
+		if cores < stdFloor {
+			return HostProfileSmall, true
+		}
+		return HostProfileStandard, false
+	}
+}
+
 // MetricSubsystemEnabled is the value for
 // CNEInstance.spec.telemetry.metricSubsystem.enabled. The small-host
 // profile disables it to shed TMM's observer sidecar; everything else

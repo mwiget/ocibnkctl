@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/poc"
+	"github.com/mwiget/ocibnkctl/internal/version"
 )
 
 func newInitCmd() *cobra.Command {
@@ -89,6 +91,17 @@ blocks on bnk-forge presence.`,
 				p.BNKForge.Enabled = true
 				p.BNKForge.RepoPath = forgePath
 				fmt.Fprintf(cmd.OutOrStdout(), "detected bnk-forge at %s — bnk_forge.enabled set true\n", forgePath)
+			}
+			// On a tight host, pin host_profile=small into poc.yaml so TMM sheds
+			// its metrics sidecar (CNE telemetry.metricSubsystem=false) and fits a
+			// sub-10-core node. Persisted here — not decided at deploy time — so
+			// poc.yaml stays the single source of truth; edit it to "standard" to
+			// force the full footprint. Mirrors the auto deploy-shrink rule.
+			if _, autoSmall := p.BNK.ResolveHostProfile(runtime.NumCPU(), version.MinBaseline.Cores); autoSmall {
+				p.BNK.HostProfile = poc.HostProfileSmall
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"host has %d cores < %d-core floor — set bnk.host_profile=small in poc.yaml (TMM metrics subsystem off)\n",
+					runtime.NumCPU(), version.MinBaseline.Cores)
 			}
 			if err := p.Save(abs); err != nil {
 				return err

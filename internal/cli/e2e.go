@@ -105,8 +105,9 @@ deploy-shrink is conditional. On a full run it engages automatically only
 when the host has fewer than the standard core floor (currently 10); on a
 roomier host it is skipped. Naming it explicitly via --phase deploy-shrink
 always runs it. It caps F5 + kube-system pod requests so the footprint fits
-a tight host (e.g. a 4-core Raspberry Pi); pair with bnk.host_profile=small
-in poc.yaml on the very smallest hosts so TMM itself also fits.
+a tight host (e.g. a 4-core Raspberry Pi). On such a host init already pins
+bnk.host_profile=small in poc.yaml so TMM itself also fits (metrics sidecar
+off); set host_profile=standard to force the full footprint.
 
 Invocation:
 
