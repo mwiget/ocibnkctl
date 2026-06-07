@@ -312,9 +312,11 @@ sudo install -m 0755 /tmp/ocibnkctl /usr/local/bin/ocibnkctl
 ocibnkctl version
 ```
 
-Releases follow `v<bnk-version>-<n>` — e.g. `v2.3.0-1`, `v2.3.0-2`.
-The `2.3.0` prefix tracks the pinned BNK release; the `-n` suffix
-increments per ocibnkctl-only iteration.
+Releases follow `v<bnk-version>[-<n>]` — the first cut for a BNK
+release is plain `v2.3.0`, then `v2.3.0-1`, `v2.3.0-2`, … The `2.3.0`
+prefix tracks the pinned BNK release; the optional `-n` suffix
+increments per ocibnkctl-only iteration (bug fixes, new scenarios)
+that ships a fresh binary against the same BNK release.
 
 Or build from source — see [Repo layout](#repo-layout-the-binary-itself)
 below.
