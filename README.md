@@ -80,7 +80,9 @@ cores, just a little more host RAM.)
 
 `ocibnkctl doctor` enforces the **core** floor (`runtime.NumCPU()` vs
 `MinBaseline.Cores`); memory is not auto-checked — size the VM per the
-table above.
+table above. By default (`--profile auto`) it picks the **small-host** floor
+(4 cores) automatically when the host is below 10 cores, so a Pi passes with a
+note instead of failing; pass `--profile standard` to force the 10-core check.
 
 ### Why 10 cores is the floor (and why it's tight)
 
@@ -214,19 +216,24 @@ is to disable a sidecar:
 > node. (Tradeoff: no TMM metrics / observability.)
 
 The full 4-core recipe is `host_profile: small` (so TMM itself fits) **plus**
-`deploy shrink` (so every *other* pod fits). The shrink step is now
-**automatic**: `e2e` inserts a conditional `deploy-shrink` phase between
-`deploy-flo` and `deploy-cne` that engages whenever the host has fewer cores
-than the standard floor (`runtime.NumCPU() < MinBaseline.Cores`, i.e. < 10)
-and is skipped on roomier hosts. So on a Pi the recipe is just:
+`deploy shrink` (so every *other* pod fits). **Both are now automatic on a
+tight host** — a Pi needs no hand-edited `poc.yaml` and no extra flags:
 
-```yaml
-# poc.yaml
-bnk:
-  host_profile: small        # CNEInstance: metricSubsystem off → TMM 3.4c
-```
+- **`host_profile: small`** is set for you. `init` detects a sub-10-core host
+  (`runtime.NumCPU() < MinBaseline.Cores`) and **writes `host_profile: small`
+  into `poc.yaml`** (the source of truth — edit it to `standard` to force the
+  full footprint). As a safety net, if a `poc.yaml` reaches `deploy cne` with
+  `host_profile` still unset on a tight host (hand-written, or created on a
+  roomier machine), `deploy cne` resolves it to `small` in-memory and logs it.
+- **`deploy shrink`** runs for you. `e2e` inserts a conditional `deploy-shrink`
+  phase between `deploy-flo` and `deploy-cne` that engages below the standard
+  floor and is skipped on roomier hosts.
+
+So on a Pi the recipe is just:
+
 ```bash
-ocibnkctl doctor --profile small               # 4-core floor instead of 10
+ocibnkctl init <poc>                           # writes host_profile: small for you
+ocibnkctl doctor                               # auto-detects the 4-core floor (passes, with a note)
 ocibnkctl e2e --yolo --confirm-cluster <poc>   # auto-runs deploy shrink (host < 10 cores)
 ```
 
@@ -270,11 +277,12 @@ daemon / Docker Desktop allocation and re-run from the failed phase
 the worker) + ~0.5 GB (cert-manager, alpine/k8s tooling, manifests) +
 ~5 GB headroom for k3s cluster state and logs.
 
-`ocibnkctl doctor` reports the host's actual CPU count and fails
-when it falls below `MinBaseline` (10 cores). Use `doctor --profile small`
-for the 4-core small-host floor (`MinBaselineSmallHost`). Override the
-constants in `internal/version/version.go` if you've tuned chart values
-further.
+`ocibnkctl doctor` reports the host's actual CPU count. By default
+(`--profile auto`) it auto-selects the floor by core count: the 4-core
+small-host floor (`MinBaselineSmallHost`) below 10 cores — passing with a note
+— and `MinBaseline` (10 cores) at or above, failing below it. Force a specific
+floor with `--profile standard` or `--profile small`. Override the constants in
+`internal/version/version.go` if you've tuned chart values further.
 
 ## bnk-forge integration
 
