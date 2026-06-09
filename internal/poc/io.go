@@ -33,6 +33,7 @@ func New(name string) *PoC {
 		Cluster: Cluster{
 			Name:     name,
 			Provider: "docker",
+			TMMNodes: 1,
 		},
 		// Networks: left empty by default. Earlier versions
 		// preallocated bnk-internal / bnk-external docker bridges and

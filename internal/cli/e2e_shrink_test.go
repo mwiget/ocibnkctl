@@ -12,19 +12,29 @@ import (
 func TestCoresBelowFloor(t *testing.T) {
 	floor := version.MinBaseline.Cores
 	cases := []struct {
-		cores int
-		want  bool
+		cores   int
+		workers int
+		want    bool
 	}{
-		{1, true},
-		{4, true},          // Raspberry-Pi shape
-		{floor - 1, true},  // just under
-		{floor, false},     // exactly the floor is enough
-		{floor + 1, false}, // roomy
-		{64, false},
+		{1, 1, true},
+		{4, 1, true},          // Raspberry-Pi shape
+		{floor - 1, 1, true},  // just under
+		{floor, 1, false},     // exactly the floor is enough
+		{floor + 1, 1, false}, // roomy
+		{64, 1, false},
+		// N-aware: each extra TMM node raises the floor by
+		// PerExtraTMMNodeCores, so a host that's roomy for 1 TMM can be
+		// tight for several.
+		{floor, 2, true}, // floor for 2 = floor+8 > floor
+		{floor + version.PerExtraTMMNodeCores, 2, false},      // exactly meets the 2-node floor
+		{floor + version.PerExtraTMMNodeCores - 1, 2, true},   // just under the 2-node floor
+		{floor + 2*version.PerExtraTMMNodeCores, 3, false},    // meets the 3-node floor
+		{floor + 2*version.PerExtraTMMNodeCores - 1, 3, true}, // under the 3-node floor
 	}
 	for _, c := range cases {
-		if got := coresBelowFloor(c.cores); got != c.want {
-			t.Errorf("coresBelowFloor(%d) = %v, want %v (floor=%d)", c.cores, got, c.want, floor)
+		if got := coresBelowFloor(c.cores, c.workers); got != c.want {
+			t.Errorf("coresBelowFloor(%d, workers=%d) = %v, want %v (floor1=%d)",
+				c.cores, c.workers, got, c.want, floor)
 		}
 	}
 }

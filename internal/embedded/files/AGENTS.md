@@ -7,12 +7,23 @@
 
 ## What this PoC deploys
 
-F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a **two-node k3s cluster**:
-one combined control-plane + worker (server) and one worker (agent)
-dedicated to TMM. The k3s nodes run directly as containers on the host
-OCI runtime (docker or podman) — there is **no kind, no k3d, no
-third-party orchestrator binary**. TMM runs in **demo mode** (virtio
-inside the pod netns); no DPU, no SR-IOV, no Multus on the base cluster.
+F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a **k3s cluster**: one
+combined control-plane + worker (server) and **`cluster.tmm_nodes`**
+worker (agent) node(s) dedicated to TMM (default 1). The k3s nodes run
+directly as containers on the host OCI runtime (docker or podman) —
+there is **no kind, no k3d, no third-party orchestrator binary**. TMM
+runs in **demo mode** (virtio inside the pod netns); no DPU, no SR-IOV,
+no Multus on the base cluster.
+
+**Scaling TMM.** Set `cluster.tmm_nodes: N` before deploy, or scale a
+live cluster with `ocibnkctl scale --tmm N --yolo --confirm-cluster
+<name>` (joins/removes labelled agent nodes and adjusts
+`CNEInstance.tmmReplicas`, one TMM per node). Optionally set
+`bnk.tmm_active_active: true` so every TMM owns a self-IP and is active
+(deploy installs Multus + a bridge NAD + an F5SPKVlan with per-TMM
+self-IPs and a pod_hash DAG). NOTE: each TMM only serves the traffic
+that lands on its own node — transparently fanning one VIP's throughput
+across nodes needs DPU/SR-IOV and is not available in demo mode.
 
 ## Prerequisites (verify with `ocibnkctl doctor`)
 

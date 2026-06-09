@@ -42,14 +42,37 @@ type Versions struct {
 	CNEManifest string `yaml:"cne_manifest"`
 }
 
-// Cluster is the cluster shape. Topology is hard-coded at two
-// nodes (one combined control-plane+worker, one worker labelled for
-// TMM) — the only knobs an operator turns are the cluster name and
-// which container runtime the k3s nodes run on (docker vs podman).
+// Cluster is the cluster shape: one combined control-plane+worker
+// (server) plus TMMNodes worker (agent) nodes, each labelled app=f5-tmm.
+// The operator knobs are the cluster name, the container runtime
+// (docker vs podman), and how many TMM nodes to run.
 type Cluster struct {
 	Name     string `yaml:"name"`
 	Provider string `yaml:"provider"` // "docker" or "podman"
+	// TMMNodes is the number of worker (agent) nodes dedicated to TMM,
+	// each labelled app=f5-tmm. Defaults to 1 (use Workers()). Each TMM
+	// node hosts one active TMM pod; tmmReplicas tracks this count, so N
+	// nodes => N active TMMs (one per node). NOTE: transparent cross-node
+	// throughput fan-out of a single VIP needs DPU/SR-IOV and is NOT
+	// available in demo mode — each TMM serves the traffic that lands on
+	// its own node.
+	TMMNodes int `yaml:"tmm_nodes,omitempty"`
 }
+
+// Workers returns the configured TMM/agent node count, defaulting to 1
+// when unset (TMMNodes == 0) or invalid.
+func (c Cluster) Workers() int {
+	if c.TMMNodes < 1 {
+		return 1
+	}
+	return c.TMMNodes
+}
+
+// MaxTMMNodes caps tmm_nodes. It's a guard-rail, not a hard product
+// limit (BNK scales TMM to 32 pods); the demo shape runs every k3s node
+// as a container on one host, so this keeps an accidental large value
+// from oversubscribing the box.
+const MaxTMMNodes = 8
 
 // Networks are the two docker bridge networks attached to both k3s
 // node containers. They exist as "scenery" — a routable space where
@@ -95,6 +118,17 @@ type BNK struct {
 	//                     Also lowers the `doctor` core floor. Pair with
 	//                     `ocibnkctl deploy shrink` to cap every other pod.
 	HostProfile string `yaml:"host_profile,omitempty"`
+	// ActiveActive enables the all-active multi-TMM data plane. `deploy`
+	// then installs Multus, attaches a bridge NAD to every TMM (mapres
+	// grabs net1 as interface 1.1), and applies an F5SPKVlan with one
+	// self-IP per TMM node plus a pod_hash stateless DAG — so each TMM
+	// owns a self-IP and is active rather than standby.
+	//
+	// Each TMM still serves only the traffic that lands on its own node;
+	// transparent cross-node fan-out of one VIP's throughput needs
+	// DPU/SR-IOV and is not available in the demo shape. Mutually
+	// exclusive with the BGP scenarios, which need mapres=FALSE on net1.
+	ActiveActive bool `yaml:"tmm_active_active,omitempty"`
 }
 
 // Host profile values for BNK.HostProfile.

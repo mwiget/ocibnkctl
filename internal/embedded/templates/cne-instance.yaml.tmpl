@@ -25,7 +25,21 @@ spec:
     - All
   dpu:
     enabled: false
-  tmmReplicas: 1
+{{- if .NetworkAttachments}}
+  # Active/active data plane: FLO injects these Multus NAD(s) onto every
+  # TMM pod (net1). With TMM_MAPRES_ADDL_VETHS_ON_DP=TRUE mapres grabs
+  # net1 onto the data plane as interface "1.1", which the F5SPKVlan binds.
+  networkAttachments:
+{{- range .NetworkAttachments}}
+  - {{.}}
+{{- end}}
+{{- end}}
+  # One TMM pod per labelled node (cluster.tmm_nodes). FLO runs them as a
+  # Deployment in demo mode; the default k8s scheduler soft-spreads the
+  # replicas one-per-node across the app=f5-tmm nodes. N active TMMs each
+  # serve the traffic that lands on their own node — transparent cross-
+  # node throughput fan-out of one VIP needs DPU/SR-IOV (not demo mode).
+  tmmReplicas: {{.TMMReplicas}}
   storageClassName: standard
   telemetry:
     loggingSubsystem:

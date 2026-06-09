@@ -9,12 +9,14 @@
 [![Release](https://img.shields.io/github/v/release/mwiget/ocibnkctl?label=download)](https://github.com/mwiget/ocibnkctl/releases/latest)
 
 Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.0
-on a two-node [k3s](https://k3s.io/) cluster — one combined
-control-plane + worker (server), one worker (agent) dedicated to TMM
-running in demo mode (virtio inside the pod netns; no DPU, no SR-IOV, no
-Multus). The k3s nodes run directly as containers on the host OCI
-runtime (docker or podman) — **no kind, no k3d, no third-party
-orchestrator binary**.
+on a [k3s](https://k3s.io/) cluster — one combined control-plane + worker
+(server) plus one or more workers (agents) dedicated to TMM
+(`cluster.tmm_nodes`, default 1) running in demo mode (virtio inside the
+pod netns; no DPU, no SR-IOV, no Multus on the base cluster). The k3s
+nodes run directly as containers on the host OCI runtime (docker or
+podman) — **no kind, no k3d, no third-party orchestrator binary**.
+
+See [Scaling TMM nodes](#scaling-tmm-nodes) for running more than one TMM.
 
 Aimed at low-spec corporate laptops where dpubnkctl's bare-metal +
 DPU pipeline is overkill. Same poc.yaml-driven, resume-safe shape;
@@ -685,6 +687,44 @@ k9s                       # picks up ~/.kube/config automatically — no export
 
 In k9s: `0` shows all namespaces, `/f5-` filters to the F5 pods, `l` tails
 TMM's logs, `s` shells into a container.
+
+## Scaling TMM nodes
+
+By default the cluster runs one TMM on one labelled agent node. To run
+more, set the count up front or scale a live cluster:
+
+```bash
+# Up front: N TMM nodes from the first deploy.
+#   poc.yaml → cluster.tmm_nodes: 3
+ocibnkctl e2e --yolo
+
+# Live: grow / shrink after deploy (joins or drains+removes agent nodes
+# and adjusts CNEInstance.tmmReplicas — one TMM per node).
+ocibnkctl scale --tmm 3 --yolo --confirm-cluster <name>   # scale up
+ocibnkctl scale --tmm 1 --yolo --confirm-cluster <name>   # scale down
+```
+
+Each TMM lands on its own `app=f5-tmm` node (the scheduler soft-spreads
+the replicas). On a tight host the `e2e` auto-shrink floor scales with
+the node count (`10 + (N-1)×8` cores), so it engages `deploy shrink`
+automatically when N TMMs won't fit — every k3s node is a container on
+the **same** host, so an extra TMM node adds load, not capacity.
+
+**All-active (optional).** Set `bnk.tmm_active_active: true` and `deploy`
+installs Multus, seeds the bridge CNI plugin, attaches a bridge NAD to
+every TMM (mapres grabs `net1` as interface `1.1`), and applies an
+`F5SPKVlan` with one self-IP per TMM plus a `pod_hash` stateless DAG — so
+each TMM owns a self-IP and is **active** rather than standby.
+
+**Caveat — no transparent throughput fan-out.** Each TMM only serves the
+traffic that physically lands on its own node's bridge; the per-node
+bridges are isolated, so a single VIP's traffic is **not** spread across
+TMM nodes. That (hardware DAG / ECMP across nodes) is the DPU/SR-IOV
+value prop and is out of scope for the demo shape. Adding TMM nodes
+scales availability and per-node capacity (steer different clients at
+different nodes), not one VIP's throughput. `tmm_active_active` is also
+mutually exclusive with the BGP scenarios, which need mapres `FALSE` on
+`net1`.
 
 ## Network topology
 

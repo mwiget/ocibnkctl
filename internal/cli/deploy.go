@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -371,6 +372,24 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			runtime.NumCPU(), version.MinBaseline.Cores)
 	}
 
+	// 0. Active/active data plane (opt-in via bnk.tmm_active_active).
+	// Multus, the bridge CNI plugin, and the DAG NAD must all exist
+	// BEFORE the CNEInstance attaches the NAD to TMM — otherwise the TMM
+	// pods get stuck in sandbox creation ("failed to find plugin bridge").
+	// All three steps are idempotent.
+	if p.BNK.ActiveActive {
+		fmt.Fprintln(out, "[0/4] Active/active prep: Multus + bridge CNI + DAG NAD ...")
+		if err := deploy.EnsureMultus(ctx, r); err != nil {
+			return fmt.Errorf("active/active: ensure multus: %w", err)
+		}
+		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
+			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, strings.Fields(namesOut), out)
+		if err := r.Apply(ctx, deploy.RenderDAGNAD("default")); err != nil {
+			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
+		}
+	}
+
 	// 1. CNEInstance.
 	fmt.Fprintln(out, "[1/4] Rendering + applying CNEInstance (demoMode=true) ...")
 	cne, err := deploy.RenderCNEInstance(p)
@@ -482,6 +501,22 @@ spec:
 		fmt.Fprintln(out, "      strategy=Recreate")
 	}
 
+	// 6. Active/active VLAN: once TMM has net1 (mapres grabs it as
+	// interface "1.1"), program the F5SPKVlan with one self-IP per TMM so
+	// each leaves standby and becomes active, plus pod_hash for the
+	// stateless DAG. Done last because it needs the rolled TMM pods up.
+	if p.BNK.ActiveActive {
+		n := p.Cluster.Workers()
+		selfIPs := deploy.DAGSelfIPs(n)
+		fmt.Fprintf(out, "[6/6] Active/active: F5SPKVlan with %d self-IP(s) %v + pod_hash DAG ...\n", n, selfIPs)
+		waitTMMNet1(ctx, r, 3*time.Minute, out)
+		if err := r.Apply(ctx, deploy.RenderTMMVlan("default", selfIPs)); err != nil {
+			fmt.Fprintf(out, "      WARN: apply F5SPKVlan: %v (TMMs stay standby)\n", err)
+		} else {
+			fmt.Fprintf(out, "      %d TMM(s) active; each serves its own node's ingress\n", n)
+		}
+	}
+
 	p.Status.Deploy = "ready"
 	p.Status.LastPhaseAt = time.Now().UTC()
 	if err := savePoC(repo, p, out); err != nil {
@@ -493,6 +528,46 @@ spec:
 	}
 	fmt.Fprintln(out, "\nDONE.")
 	return nil
+}
+
+// seedBridgeCNIPlugin copies each k3s node's own bundled bridge plugin
+// (/bin/bridge, shipped by k3s) into /opt/cni/bin where Multus searches.
+// k3s leaves only host-local/loopback/multus-shim there, so a bridge NAD
+// otherwise fails sandbox creation with "failed to find plugin bridge".
+// Using the node-local binary avoids any external download. Idempotent
+// (skips nodes that already have it); best-effort per node.
+func seedBridgeCNIPlugin(ctx context.Context, tool string, nodes []string, out io.Writer) {
+	const script = `test -x /opt/cni/bin/bridge || ` +
+		`(cp -f /bin/bridge /opt/cni/bin/bridge && chmod 0755 /opt/cni/bin/bridge)`
+	for _, n := range nodes {
+		if n == "" {
+			continue
+		}
+		if err := exec.CommandContext(ctx, tool, "exec", n, "sh", "-c", script).Run(); err != nil {
+			fmt.Fprintf(out, "      WARN: seed bridge CNI plugin on %s: %v\n", n, err)
+		}
+	}
+}
+
+// waitTMMNet1 blocks until at least one TMM pod reports the DAG NAD in
+// its Multus network-status annotation (i.e. net1 attached), so the
+// F5SPKVlan that binds interface "1.1" has something to land on.
+func waitTMMNet1(ctx context.Context, r *deploy.Runner, timeout time.Duration, out io.Writer) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		st, _ := r.KubectlCapture(ctx, "-n", "default", "get", "pods", "-l", "app=f5-tmm",
+			"-o", `jsonpath={range .items[*]}{.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}{end}`)
+		if strings.Contains(st, deploy.DAGNADName) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+	fmt.Fprintf(out, "      WARN: TMM net1 (%s) not observed within %s — the VLAN may not bind until net1 is up\n",
+		deploy.DAGNADName, timeout)
 }
 
 // ---------- shrink (optional) ----------
