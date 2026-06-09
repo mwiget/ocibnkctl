@@ -476,29 +476,42 @@ spec:
 	}
 	fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
 
-	// 5. Patch f5-tmm Deployment strategy to Recreate.
-	// FLO ships the Deployment with RollingUpdate (maxSurge=25%,
-	// maxUnavailable=25%) which on a 1-replica deployment runs two
-	// pods during rollover — wasteful on the k3s worker and prone to
-	// wedging Multus when veth churn is high. We have no HA goal
-	// here, so Recreate is strictly better: terminate the old pod,
-	// then create the new one. FLO does not reconcile this back
-	// after the patch (verified via CNEInstance + F5Tmm reconcile
-	// in BNK 2.3), and the CNEInstance/F5Tmm schema doesn't expose
-	// a strategy knob at any level, so a direct Deployment patch
-	// is the only way to set it.
-	fmt.Fprintln(out, "[5/5] Patching f5-tmm Deployment strategy=Recreate ...")
+	// 5. Patch the f5-tmm Deployment rollout strategy.
+	//
+	// FLO ships the Deployment with RollingUpdate (maxSurge/maxUnavailable
+	// 25%), which on the k3s worker runs two TMM pods on one node during
+	// rollover — wasteful and prone to wedging Multus on veth churn.
+	//
+	//   - Single TMM (no HA goal): Recreate — terminate the old pod, then
+	//     create the new one. No co-location, simplest.
+	//   - Multiple TMMs: RollingUpdate, maxUnavailable=1, maxSurge=0 — roll
+	//     ONE TMM at a time so N-1 stay serving across a reconfig. maxSurge
+	//     MUST be 0: there's exactly one app=f5-tmm node per TMM, so a surge
+	//     pod would either stay Pending (no free node) or stack two TMMs on
+	//     one node fighting over net1 — the very churn Recreate avoided.
+	//     With surge 0 the freed node is reused, one pod at a time (the
+	//     scheduler's default same-ReplicaSet soft-spread keeps the new pod
+	//     on the node just vacated).
+	//
+	// FLO does not reconcile the strategy back (verified, BNK 2.3); the
+	// CNE/F5Tmm schema exposes no strategy knob, so a direct patch is the
+	// only lever. Replacing the whole /spec/strategy works from any prior
+	// state (Recreate has no rollingUpdate subfield to remove).
+	strategyDesc := "Recreate"
+	strategyPatch := `[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]`
+	if p.Cluster.Workers() > 1 {
+		strategyDesc = "RollingUpdate (maxUnavailable=1, maxSurge=0)"
+		strategyPatch = `[{"op":"replace","path":"/spec/strategy","value":` +
+			`{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":1,"maxSurge":0}}}]`
+	}
+	fmt.Fprintf(out, "[5/5] Patching f5-tmm Deployment strategy=%s ...\n", strategyDesc)
 	if err := r.Kubectl(ctx, "-n", "default", "patch", "deployment", "f5-tmm",
-		"--type=json",
-		"-p", `[{"op":"remove","path":"/spec/strategy/rollingUpdate"},`+
-			`{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]`); err != nil {
-		// Best-effort: log a warning rather than failing the phase.
-		// If the Deployment doesn't exist yet (rare race) or the
-		// strategy is already Recreate (idempotency), this just
-		// makes noise.
-		fmt.Fprintf(out, "      WARN: strategy patch failed: %v (continuing — scenarios still work, just slower TMM rollovers)\n", err)
+		"--type=json", "-p", strategyPatch); err != nil {
+		// Best-effort: a missing Deployment (rare race) or an
+		// already-set strategy (idempotency) just makes noise.
+		fmt.Fprintf(out, "      WARN: strategy patch failed: %v (continuing — scenarios still work, just blunter TMM rollovers)\n", err)
 	} else {
-		fmt.Fprintln(out, "      strategy=Recreate")
+		fmt.Fprintf(out, "      strategy=%s\n", strategyDesc)
 	}
 
 	// 6. Active/active VLAN: once TMM has net1 (mapres grabs it as
