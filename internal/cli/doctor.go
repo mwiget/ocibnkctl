@@ -152,7 +152,11 @@ func resolveProfile(profile string, cores int) string {
 	if profile != "auto" {
 		return profile
 	}
-	if coresBelowFloor(cores) {
+	// doctor is a generic host preflight that doesn't carry the deploy's
+	// tmm_nodes, so it checks the single-worker floor (the pre-multi-TMM
+	// behaviour). The actual workers-scaled floor is enforced at deploy time by
+	// autoShrinkDecision(workers).
+	if coresBelowFloor(cores, 1) {
 		return "small"
 	}
 	return "standard"
