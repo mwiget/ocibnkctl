@@ -32,25 +32,32 @@ type Provisioner interface {
 	Tool() string
 	// EnsurePresent verifies the container runtime is installed.
 	EnsurePresent() error
-	// RenderConfig produces the backend's cluster-config file body for
-	// a two-node (1 control-plane/server + 1 worker/agent) cluster with
-	// the default CNI disabled so Calico can be layered on top.
-	RenderConfig(name string) (string, error)
+	// RenderConfig produces the backend's cluster-config file body for a
+	// cluster of 1 control-plane/server + workers agent nodes, with the
+	// default CNI disabled so Calico can be layered on top.
+	RenderConfig(name string, workers int) (string, error)
 	// ConfigArtifact is the filename the rendered config is written to
 	// under artifacts/ (k3s.yaml).
 	ConfigArtifact() string
 	// ClusterExists reports whether a cluster of this name is present.
 	ClusterExists(ctx context.Context, name string) (bool, error)
-	// CreateCluster brings the cluster up from the rendered config.
-	// nodeImage overrides the per-backend default node image when set.
-	CreateCluster(ctx context.Context, name, config, nodeImage string) error
+	// CreateCluster brings the cluster up: one server plus workers agent
+	// nodes. nodeImage overrides the per-backend default node image when
+	// set.
+	CreateCluster(ctx context.Context, name, config, nodeImage string, workers int) error
 	// DeleteCluster tears the cluster down (idempotent).
 	DeleteCluster(ctx context.Context, name string) error
 	// WriteKubeconfig writes the cluster kubeconfig to path (mode 0600).
 	WriteKubeconfig(ctx context.Context, name, path string) error
-	// WorkerNodeName is the k8s node name of the non-control-plane node
-	// (where TMM is pinned via the app=f5-tmm label).
-	WorkerNodeName(name string) string
+	// AddWorker joins one additional agent node at the given index
+	// (idempotent — a no-op if that node container already exists). Used
+	// by `scale` to grow the TMM node pool after cluster up.
+	AddWorker(ctx context.Context, name string, index int, nodeImage string) error
+	// RemoveWorker removes the agent node at the given index (idempotent).
+	RemoveWorker(ctx context.Context, name string, index int) error
+	// WorkerNodeNames lists the k8s node names of the worker (agent)
+	// nodes (each labelled app=f5-tmm), one per TMM node.
+	WorkerNodeNames(name string, workers int) []string
 	// ServerNodeName is the container/node name of the control-plane
 	// (server) node — also the docker container hosting the apiserver,
 	// used to look up its network IP for bnk-forge registration.

@@ -53,19 +53,22 @@ var canonicalPhases = []e2ePhase{
 		destructive: true, confirmFlag: "--confirm-deploy"},
 }
 
-// autoShrinkDecision reports the host core count and whether it is below the
-// documented standard floor, in which case the auto deploy-shrink phase
-// engages so BNK's footprint fits.
-func autoShrinkDecision() (cores int, tight bool) {
+// autoShrinkDecision reports the host core count, the workers-scaled
+// floor, and whether the host is below it — in which case the auto
+// deploy-shrink phase engages so BNK's footprint fits. workers is
+// cluster.tmm_nodes: each extra TMM node piles another full-fat TMM onto
+// the same host, so the floor grows with it.
+func autoShrinkDecision(workers int) (cores, floor int, tight bool) {
 	cores = runtime.NumCPU()
-	return cores, coresBelowFloor(cores)
+	floor = version.FloorForWorkers(workers)
+	return cores, floor, coresBelowFloor(cores, workers)
 }
 
 // coresBelowFloor reports whether a host with the given core count falls
-// below the documented standard floor (version.MinBaseline.Cores) and thus
-// needs the auto deploy-shrink phase. Pure for testability.
-func coresBelowFloor(cores int) bool {
-	return cores < version.MinBaseline.Cores
+// below the workers-scaled floor (version.FloorForWorkers) and thus needs
+// the auto deploy-shrink phase. Pure for testability.
+func coresBelowFloor(cores, workers int) bool {
+	return cores < version.FloorForWorkers(workers)
 }
 
 type e2eFlags struct {
@@ -266,11 +269,11 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 		// selection (filter != "") bypasses the gate and always runs it.
 		var autoNote string
 		if ph.auto && f.phaseFilter == "" {
-			cores, tight := autoShrinkDecision()
+			cores, floor, tight := autoShrinkDecision(p.Cluster.Workers())
 			switch {
 			case !tight && !f.dryRun:
-				reason := fmt.Sprintf("host has %d cores ≥ %d-core floor — shrink not needed",
-					cores, version.MinBaseline.Cores)
+				reason := fmt.Sprintf("host has %d cores ≥ %d-core floor (%d TMM node(s)) — shrink not needed",
+					cores, floor, p.Cluster.Workers())
 				fmt.Fprintf(out, "[%d/%d] %-18s  SKIPPED — %s\n", idx, len(selected), ph.name, reason)
 				report.Phases = append(report.Phases, phaseReport{
 					Phase: ph.name, Status: "skipped", Summary: reason, Index: idx,
@@ -278,10 +281,10 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 				continue
 			case !tight:
 				autoNote = fmt.Sprintf("  (auto: would skip — host has %d cores ≥ %d-core floor)",
-					cores, version.MinBaseline.Cores)
+					cores, floor)
 			default:
-				autoNote = fmt.Sprintf("  (auto: host has %d cores < %d-core floor — engaging shrink)",
-					cores, version.MinBaseline.Cores)
+				autoNote = fmt.Sprintf("  (auto: host has %d cores < %d-core floor (%d TMM node(s)) — engaging shrink)",
+					cores, floor, p.Cluster.Workers())
 			}
 		}
 
@@ -477,13 +480,13 @@ func printPlan(out io.Writer, p *poc.PoC, repo, binary string, selected []e2ePha
 		args := buildArgs(p, repo, ph, p.Metadata.Name)
 		note := ""
 		if ph.auto {
-			cores, tight := autoShrinkDecision()
+			cores, floor, tight := autoShrinkDecision(p.Cluster.Workers())
 			if tight {
 				note = fmt.Sprintf("   [auto: host has %d cores < %d-core floor → runs]",
-					cores, version.MinBaseline.Cores)
+					cores, floor)
 			} else {
 				note = fmt.Sprintf("   [auto: host has %d cores ≥ %d-core floor → skipped]",
-					cores, version.MinBaseline.Cores)
+					cores, floor)
 			}
 		}
 		fmt.Fprintf(out, "  %d. %-15s %s %s%s\n", i+1, ph.name, binary, strings.Join(args, " "), note)

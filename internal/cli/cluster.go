@@ -112,7 +112,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	// 2. Render the backend config + create cluster (idempotent).
 	cfgName := prov.ConfigArtifact()
 	fmt.Fprintf(out, "[2/6] Rendering %s + ensuring cluster exists ...\n", cfgName)
-	clusterCfg, err := prov.RenderConfig(p.Cluster.Name)
+	clusterCfg, err := prov.RenderConfig(p.Cluster.Name, p.Cluster.Workers())
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		if nodeImage == "" {
 			nodeImage = prov.DefaultNodeImage()
 		}
-		if err := prov.CreateCluster(ctx, p.Cluster.Name, clusterCfg, nodeImage); err != nil {
+		if err := prov.CreateCluster(ctx, p.Cluster.Name, clusterCfg, nodeImage, p.Cluster.Workers()); err != nil {
 			return err
 		}
 	}
@@ -204,12 +204,14 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if len(nodes) == 0 {
 		return fmt.Errorf("no %s node containers found for cluster %q — does `%s` list it?", prov.Backend(), p.Cluster.Name, prov.Tool())
 	}
-	fmt.Fprintln(out, "[5/6] Labelling worker node for TMM ...")
-	workerNode := prov.WorkerNodeName(p.Cluster.Name)
+	workerNodes := prov.WorkerNodeNames(p.Cluster.Name, p.Cluster.Workers())
+	fmt.Fprintf(out, "[5/6] Labelling %d worker node(s) for TMM ...\n", len(workerNodes))
 	labelKey, labelVal := p.BNK.TMMLabel()
-	if err := r.Kubectl(ctx, "label", "node", workerNode,
-		fmt.Sprintf("%s=%s", labelKey, labelVal), "--overwrite"); err != nil {
-		return fmt.Errorf("label %s %s=%s: %w", workerNode, labelKey, labelVal, err)
+	for _, workerNode := range workerNodes {
+		if err := r.Kubectl(ctx, "label", "node", workerNode,
+			fmt.Sprintf("%s=%s", labelKey, labelVal), "--overwrite"); err != nil {
+			return fmt.Errorf("label %s %s=%s: %w", workerNode, labelKey, labelVal, err)
+		}
 	}
 
 	// 6. bnk-forge auto-registration (best-effort).

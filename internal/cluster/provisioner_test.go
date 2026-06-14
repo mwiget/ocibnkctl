@@ -14,8 +14,14 @@ func TestNewProvisionerK3s(t *testing.T) {
 	if p.Backend() != BackendK3s || p.Tool() != "docker" {
 		t.Fatalf("got backend %q tool %q", p.Backend(), p.Tool())
 	}
-	if got := p.WorkerNodeName("demo"); got != "k3s-demo-agent-0" {
-		t.Errorf("k3s worker node = %q, want k3s-demo-agent-0", got)
+	if got := p.WorkerNodeNames("demo", 1); len(got) != 1 || got[0] != "k3s-demo-agent-0" {
+		t.Errorf("k3s worker nodes (1) = %q, want [k3s-demo-agent-0]", got)
+	}
+	if got := p.WorkerNodeNames("demo", 3); len(got) != 3 || got[2] != "k3s-demo-agent-2" {
+		t.Errorf("k3s worker nodes (3) = %q, want agent-0..2", got)
+	}
+	if got := p.WorkerNodeNames("demo", 0); len(got) != 1 {
+		t.Errorf("k3s worker nodes (0) = %q, want defaulted to 1", got)
 	}
 	if got := p.NodeContainerLabel("demo"); got != "ocibnk.cluster=demo" {
 		t.Errorf("k3s node label = %q", got)
@@ -49,13 +55,23 @@ func TestRenderConfigK3s(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := p.RenderConfig("demo")
+	cfg, err := p.RenderConfig("demo", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"name: demo", "flannel-backend=none", "servers: 1", "agents: 1", "k3s-demo-server-0", "k3s-demo-agent-0"} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("k3s config missing %q:\n%s", want, cfg)
+		}
+	}
+
+	multi, err := p.RenderConfig("demo", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"agents: 3", "k3s-demo-agent-0", "k3s-demo-agent-1", "k3s-demo-agent-2"} {
+		if !strings.Contains(multi, want) {
+			t.Errorf("k3s multi-worker config missing %q:\n%s", want, multi)
 		}
 	}
 }

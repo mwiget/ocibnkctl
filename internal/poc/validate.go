@@ -51,6 +51,9 @@ func (p *PoC) Validate() ValidationResult {
 	default:
 		r.Errors = append(r.Errors, fmt.Sprintf("cluster.provider %q: must be docker or podman", p.Cluster.Provider))
 	}
+	if p.Cluster.TMMNodes < 0 || p.Cluster.TMMNodes > MaxTMMNodes {
+		r.Errors = append(r.Errors, fmt.Sprintf("cluster.tmm_nodes %d: must be 0 (=1) to %d", p.Cluster.TMMNodes, MaxTMMNodes))
+	}
 
 	if p.Versions.K8s == "" {
 		r.Errors = append(r.Errors, "versions.k8s: required")

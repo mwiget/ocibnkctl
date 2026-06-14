@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -371,6 +372,24 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			runtime.NumCPU(), version.MinBaseline.Cores)
 	}
 
+	// 0. Active/active data plane (opt-in via bnk.tmm_active_active).
+	// Multus, the bridge CNI plugin, and the DAG NAD must all exist
+	// BEFORE the CNEInstance attaches the NAD to TMM — otherwise the TMM
+	// pods get stuck in sandbox creation ("failed to find plugin bridge").
+	// All three steps are idempotent.
+	if p.BNK.ActiveActive {
+		fmt.Fprintln(out, "[0/4] Active/active prep: Multus + bridge CNI + DAG NAD ...")
+		if err := deploy.EnsureMultus(ctx, r); err != nil {
+			return fmt.Errorf("active/active: ensure multus: %w", err)
+		}
+		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
+			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, strings.Fields(namesOut), out)
+		if err := r.Apply(ctx, deploy.RenderDAGNAD("default")); err != nil {
+			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
+		}
+	}
+
 	// 1. CNEInstance.
 	fmt.Fprintln(out, "[1/4] Rendering + applying CNEInstance (demoMode=true) ...")
 	cne, err := deploy.RenderCNEInstance(p)
@@ -457,29 +476,58 @@ spec:
 	}
 	fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
 
-	// 5. Patch f5-tmm Deployment strategy to Recreate.
-	// FLO ships the Deployment with RollingUpdate (maxSurge=25%,
-	// maxUnavailable=25%) which on a 1-replica deployment runs two
-	// pods during rollover — wasteful on the k3s worker and prone to
-	// wedging Multus when veth churn is high. We have no HA goal
-	// here, so Recreate is strictly better: terminate the old pod,
-	// then create the new one. FLO does not reconcile this back
-	// after the patch (verified via CNEInstance + F5Tmm reconcile
-	// in BNK 2.3), and the CNEInstance/F5Tmm schema doesn't expose
-	// a strategy knob at any level, so a direct Deployment patch
-	// is the only way to set it.
-	fmt.Fprintln(out, "[5/5] Patching f5-tmm Deployment strategy=Recreate ...")
+	// 5. Patch the f5-tmm Deployment rollout strategy.
+	//
+	// FLO ships the Deployment with RollingUpdate (maxSurge/maxUnavailable
+	// 25%), which on the k3s worker runs two TMM pods on one node during
+	// rollover — wasteful and prone to wedging Multus on veth churn.
+	//
+	//   - Single TMM (no HA goal): Recreate — terminate the old pod, then
+	//     create the new one. No co-location, simplest.
+	//   - Multiple TMMs: RollingUpdate, maxUnavailable=1, maxSurge=0 — roll
+	//     ONE TMM at a time so N-1 stay serving across a reconfig. maxSurge
+	//     MUST be 0: there's exactly one app=f5-tmm node per TMM, so a surge
+	//     pod would either stay Pending (no free node) or stack two TMMs on
+	//     one node fighting over net1 — the very churn Recreate avoided.
+	//     With surge 0 the freed node is reused, one pod at a time (the
+	//     scheduler's default same-ReplicaSet soft-spread keeps the new pod
+	//     on the node just vacated).
+	//
+	// FLO does not reconcile the strategy back (verified, BNK 2.3); the
+	// CNE/F5Tmm schema exposes no strategy knob, so a direct patch is the
+	// only lever. Replacing the whole /spec/strategy works from any prior
+	// state (Recreate has no rollingUpdate subfield to remove).
+	strategyDesc := "Recreate"
+	strategyPatch := `[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]`
+	if p.Cluster.Workers() > 1 {
+		strategyDesc = "RollingUpdate (maxUnavailable=1, maxSurge=0)"
+		strategyPatch = `[{"op":"replace","path":"/spec/strategy","value":` +
+			`{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":1,"maxSurge":0}}}]`
+	}
+	fmt.Fprintf(out, "[5/5] Patching f5-tmm Deployment strategy=%s ...\n", strategyDesc)
 	if err := r.Kubectl(ctx, "-n", "default", "patch", "deployment", "f5-tmm",
-		"--type=json",
-		"-p", `[{"op":"remove","path":"/spec/strategy/rollingUpdate"},`+
-			`{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]`); err != nil {
-		// Best-effort: log a warning rather than failing the phase.
-		// If the Deployment doesn't exist yet (rare race) or the
-		// strategy is already Recreate (idempotency), this just
-		// makes noise.
-		fmt.Fprintf(out, "      WARN: strategy patch failed: %v (continuing — scenarios still work, just slower TMM rollovers)\n", err)
+		"--type=json", "-p", strategyPatch); err != nil {
+		// Best-effort: a missing Deployment (rare race) or an
+		// already-set strategy (idempotency) just makes noise.
+		fmt.Fprintf(out, "      WARN: strategy patch failed: %v (continuing — scenarios still work, just blunter TMM rollovers)\n", err)
 	} else {
-		fmt.Fprintln(out, "      strategy=Recreate")
+		fmt.Fprintf(out, "      strategy=%s\n", strategyDesc)
+	}
+
+	// 6. Active/active VLAN: once TMM has net1 (mapres grabs it as
+	// interface "1.1"), program the F5SPKVlan with one self-IP per TMM so
+	// each leaves standby and becomes active, plus pod_hash for the
+	// stateless DAG. Done last because it needs the rolled TMM pods up.
+	if p.BNK.ActiveActive {
+		n := p.Cluster.Workers()
+		selfIPs := deploy.DAGSelfIPs(n)
+		fmt.Fprintf(out, "[6/6] Active/active: F5SPKVlan with %d self-IP(s) %v + pod_hash DAG ...\n", n, selfIPs)
+		waitTMMNet1(ctx, r, 3*time.Minute, out)
+		if err := r.Apply(ctx, deploy.RenderTMMVlan("default", selfIPs)); err != nil {
+			fmt.Fprintf(out, "      WARN: apply F5SPKVlan: %v (TMMs stay standby)\n", err)
+		} else {
+			fmt.Fprintf(out, "      %d TMM(s) active; each serves its own node's ingress\n", n)
+		}
 	}
 
 	p.Status.Deploy = "ready"
@@ -493,6 +541,46 @@ spec:
 	}
 	fmt.Fprintln(out, "\nDONE.")
 	return nil
+}
+
+// seedBridgeCNIPlugin copies each k3s node's own bundled bridge plugin
+// (/bin/bridge, shipped by k3s) into /opt/cni/bin where Multus searches.
+// k3s leaves only host-local/loopback/multus-shim there, so a bridge NAD
+// otherwise fails sandbox creation with "failed to find plugin bridge".
+// Using the node-local binary avoids any external download. Idempotent
+// (skips nodes that already have it); best-effort per node.
+func seedBridgeCNIPlugin(ctx context.Context, tool string, nodes []string, out io.Writer) {
+	const script = `test -x /opt/cni/bin/bridge || ` +
+		`(cp -f /bin/bridge /opt/cni/bin/bridge && chmod 0755 /opt/cni/bin/bridge)`
+	for _, n := range nodes {
+		if n == "" {
+			continue
+		}
+		if err := exec.CommandContext(ctx, tool, "exec", n, "sh", "-c", script).Run(); err != nil {
+			fmt.Fprintf(out, "      WARN: seed bridge CNI plugin on %s: %v\n", n, err)
+		}
+	}
+}
+
+// waitTMMNet1 blocks until at least one TMM pod reports the DAG NAD in
+// its Multus network-status annotation (i.e. net1 attached), so the
+// F5SPKVlan that binds interface "1.1" has something to land on.
+func waitTMMNet1(ctx context.Context, r *deploy.Runner, timeout time.Duration, out io.Writer) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		st, _ := r.KubectlCapture(ctx, "-n", "default", "get", "pods", "-l", "app=f5-tmm",
+			"-o", `jsonpath={range .items[*]}{.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}{end}`)
+		if strings.Contains(st, deploy.DAGNADName) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+	fmt.Fprintf(out, "      WARN: TMM net1 (%s) not observed within %s — the VLAN may not bind until net1 is up\n",
+		deploy.DAGNADName, timeout)
 }
 
 // ---------- shrink (optional) ----------

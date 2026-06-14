@@ -181,11 +181,26 @@ func (k *K3s) DefaultNodeImage() string { return version.K3sNodeImage }
 
 func (k *K3s) network(name string) string    { return "k3s-" + name }
 func (k *K3s) serverName(name string) string { return "k3s-" + name + "-server-0" }
-func (k *K3s) agentName(name string) string  { return "k3s-" + name + "-agent-0" }
 
-// WorkerNodeName is the agent's k8s node name (we pin --node-name to the
-// container name, so node name == container name).
-func (k *K3s) WorkerNodeName(name string) string { return k.agentName(name) }
+// agentName is the container/k8s-node name of the index-th agent node.
+// We pin --node-name to the container name, so node name == container
+// name. Index 0 keeps the historical "agent-0" name for compatibility.
+func (k *K3s) agentName(name string, index int) string {
+	return fmt.Sprintf("k3s-%s-agent-%d", name, index)
+}
+
+// WorkerNodeNames lists the agent k8s node names for a workers-node
+// cluster (agent-0 .. agent-(workers-1)).
+func (k *K3s) WorkerNodeNames(name string, workers int) []string {
+	if workers < 1 {
+		workers = 1
+	}
+	names := make([]string, workers)
+	for i := 0; i < workers; i++ {
+		names[i] = k.agentName(name, i)
+	}
+	return names
+}
 
 // ServerNodeName is the control-plane container/node name (also the
 // docker container that publishes the apiserver).
@@ -206,7 +221,10 @@ func (k *K3s) token(name string) string { return "ocibnk-" + name }
 // directly via `<runtime> run` rather than parsing this file, so it is
 // purely informational — rendered from the same k3sServerArgs source so
 // it never drifts from what is actually applied.
-func (k *K3s) RenderConfig(name string) (string, error) {
+func (k *K3s) RenderConfig(name string, workers int) (string, error) {
+	if workers < 1 {
+		workers = 1
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# ocibnkctl k3s backend — rendered plan (documentary; the cluster\n")
 	fmt.Fprintf(&b, "# is built directly via `%s run`, not parsed from this file).\n", k.rt())
@@ -215,10 +233,12 @@ func (k *K3s) RenderConfig(name string) (string, error) {
 	fmt.Fprintf(&b, "image: %s\n", k.DefaultNodeImage())
 	fmt.Fprintf(&b, "network: %s\n", k.network(name))
 	fmt.Fprintf(&b, "servers: 1\n")
-	fmt.Fprintf(&b, "agents: 1\n")
+	fmt.Fprintf(&b, "agents: %d\n", workers)
 	fmt.Fprintf(&b, "nodes:\n")
 	fmt.Fprintf(&b, "  - name: %s   # control-plane + worker\n", k.serverName(name))
-	fmt.Fprintf(&b, "  - name: %s    # TMM worker (app=f5-tmm)\n", k.agentName(name))
+	for i := 0; i < workers; i++ {
+		fmt.Fprintf(&b, "  - name: %s    # TMM worker (app=f5-tmm)\n", k.agentName(name, i))
+	}
 	fmt.Fprintf(&b, "serverArgs:\n")
 	for _, a := range k3sServerArgs {
 		fmt.Fprintf(&b, "  - %s\n", a)
@@ -256,7 +276,7 @@ func (k *K3s) psQuiet(ctx context.Context, labels ...string) (string, error) {
 // the agent and waits for it to register. The config arg is ignored
 // (the cluster is built from k3sServerArgs); callers gate on
 // ClusterExists for idempotency.
-func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) error {
+func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, workers int) error {
 	if nodeImage == "" {
 		nodeImage = k.DefaultNodeImage()
 	}
@@ -304,12 +324,36 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 		return fmt.Errorf("k3s server API not ready: %w", err)
 	}
 
-	agent := k.agentName(name)
+	if workers < 1 {
+		workers = 1
+	}
+	for i := 0; i < workers; i++ {
+		if err := k.startAgent(ctx, name, i, nodeImage, dns); err != nil {
+			return err
+		}
+	}
+	// server (1) + workers agents must register.
+	if err := k.waitNodeCount(ctx, server, 1+workers, 3*time.Minute); err != nil {
+		return fmt.Errorf("agent node(s) did not register: %w", err)
+	}
+	return nil
+}
+
+// startAgent runs the index-th agent container and performs the two
+// post-start fixups every node needs (the /var/run symlink for Multus
+// and the rshared remount for Calico's mount-bpffs). It does NOT wait
+// for node registration — callers decide how many nodes to wait for.
+func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage string, dns []string) error {
+	if nodeImage == "" {
+		nodeImage = k.DefaultNodeImage()
+	}
+	server := k.serverName(name)
+	agent := k.agentName(name, index)
 	agentArgs := []string{
 		"run", "-d",
 		"--name", agent, "--hostname", agent,
 		"--privileged", "--restart=unless-stopped",
-		"--network", net,
+		"--network", k.network(name),
 		"--label", k3sClusterLabel + "=" + name,
 		"--label", k3sRoleLabel + "=agent",
 		"--tmpfs", "/run",
@@ -319,16 +363,47 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string) erro
 	agentArgs = append(agentArgs, dns...)
 	agentArgs = append(agentArgs, nodeImage, "agent", "--node-name", agent)
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
-		return fmt.Errorf("start k3s agent: %w", err)
+		return fmt.Errorf("start k3s agent %s: %w", agent, err)
 	}
 	if err := k.linkVarRun(ctx, agent); err != nil {
-		return fmt.Errorf("k3s agent: %w", err)
+		return fmt.Errorf("k3s agent %s: %w", agent, err)
 	}
 	if err := k.makeRshared(ctx, agent); err != nil {
-		return fmt.Errorf("k3s agent: %w", err)
+		return fmt.Errorf("k3s agent %s: %w", agent, err)
 	}
-	if err := k.waitNodeCount(ctx, server, 2, 2*time.Minute); err != nil {
-		return fmt.Errorf("agent node did not register: %w", err)
+	return nil
+}
+
+// AddWorker joins one additional agent node (idempotent — skips if the
+// container already exists), then waits for it to register with the
+// server. Used by `scale` to grow the TMM node pool.
+func (k *K3s) AddWorker(ctx context.Context, name string, index int, nodeImage string) error {
+	agent := k.agentName(name, index)
+	if exists, err := k.containerExists(ctx, agent); err != nil {
+		return err
+	} else if exists {
+		fmt.Fprintf(k.Out, "agent node %q already present — leaving in place\n", agent)
+		return nil
+	}
+	if err := k.startAgent(ctx, name, index, nodeImage, dnsArgs(k.Out)); err != nil {
+		return err
+	}
+	return k.waitNodeReady(ctx, k.serverName(name), agent, 3*time.Minute)
+}
+
+// RemoveWorker removes the index-th agent node container (idempotent).
+// The caller is responsible for draining TMM off it first (lowering
+// tmmReplicas) so no active TMM pod is killed mid-flight.
+func (k *K3s) RemoveWorker(ctx context.Context, name string, index int) error {
+	agent := k.agentName(name, index)
+	if exists, err := k.containerExists(ctx, agent); err != nil {
+		return err
+	} else if !exists {
+		fmt.Fprintf(k.Out, "agent node %q not present — nothing to remove\n", agent)
+		return nil
+	}
+	if err := k.runVisible(ctx, "rm", "-f", agent); err != nil {
+		return fmt.Errorf("remove k3s agent %s: %w", agent, err)
 	}
 	return nil
 }
@@ -491,6 +566,43 @@ func (k *K3s) waitNodeCount(ctx context.Context, server string, want int, timeou
 		case <-time.After(3 * time.Second):
 		}
 	}
+}
+
+// waitNodeReady blocks until the named node reports Ready=True (used
+// after AddWorker so the caller can label/schedule onto it safely).
+func (k *K3s) waitNodeReady(ctx context.Context, server, node string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		c := k.run(ctx, "exec", "-e", k3sKubeconfigEnv, server, "kubectl", "get", "node", node,
+			"-o", `jsonpath={range .status.conditions[?(@.type=="Ready")]}{.status}{end}`)
+		var out bytes.Buffer
+		c.Stdout = &out
+		c.Stderr = io.Discard
+		if err := c.Run(); err == nil && strings.TrimSpace(out.String()) == "True" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout after %s waiting for node %s Ready", timeout, node)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// containerExists reports whether a node container of the given name is
+// present (running or stopped). `<runtime> inspect` exits non-zero when
+// the object does not exist, which we treat as "absent".
+func (k *K3s) containerExists(ctx context.Context, name string) (bool, error) {
+	c := k.run(ctx, "inspect", name)
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+	if err := c.Run(); err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 // DeleteCluster removes the cluster's node containers and its network.

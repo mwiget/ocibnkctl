@@ -162,3 +162,21 @@ func BaselineFor(profile string) ResourceSpec {
 func Measured() bool {
 	return MinBaseline.Cores > 0 && MinBaseline.MemoryGB > 0
 }
+
+// PerExtraTMMNodeCores is the additional host CPU each TMM node beyond
+// the first adds. Every k3s node runs as a container on the SAME host,
+// so an extra TMM node does NOT add real capacity — it stacks another
+// full-fat TMM (~7.46 cores measured for the agent node) onto the box.
+// Rounded up to 8 so the floor errs on the side of engaging shrink.
+const PerExtraTMMNodeCores = 8
+
+// FloorForWorkers scales the standard core floor by the number of TMM
+// nodes: one TMM fits MinBaseline; each extra TMM node piles another
+// ~PerExtraTMMNodeCores onto the same host. Used by `e2e` to decide
+// whether to auto-engage `deploy shrink` when scaling out on a tight box.
+func FloorForWorkers(workers int) int {
+	if workers < 1 {
+		workers = 1
+	}
+	return MinBaseline.Cores + (workers-1)*PerExtraTMMNodeCores
+}

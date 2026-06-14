@@ -7,6 +7,46 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
+func TestRenderCNEInstance_TMMReplicasTracksNodes(t *testing.T) {
+	cases := []struct {
+		nodes int
+		want  string
+	}{
+		{0, "tmmReplicas: 1"}, // unset → defaults to 1
+		{1, "tmmReplicas: 1"},
+		{3, "tmmReplicas: 3"},
+	}
+	for _, c := range cases {
+		p := &poc.PoC{Cluster: poc.Cluster{TMMNodes: c.nodes}}
+		got, err := RenderCNEInstance(p)
+		if err != nil {
+			t.Fatalf("nodes %d: %v", c.nodes, err)
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("nodes %d: want %q in render", c.nodes, c.want)
+		}
+	}
+}
+
+func TestRenderCNEInstance_ActiveActiveNetworkAttachments(t *testing.T) {
+	// Default (active/active off): no networkAttachments block at all.
+	off, err := RenderCNEInstance(&poc.PoC{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "networkAttachments") {
+		t.Errorf("default render should not contain networkAttachments:\n%s", off)
+	}
+	// On: the DAG NAD is injected.
+	on, err := RenderCNEInstance(&poc.PoC{BNK: poc.BNK{ActiveActive: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(on, "networkAttachments:") || !strings.Contains(on, "- "+DAGNADName) {
+		t.Errorf("active/active render should attach %q:\n%s", DAGNADName, on)
+	}
+}
+
 func TestRenderCNEInstance_MetricSubsystemByProfile(t *testing.T) {
 	cases := []struct {
 		profile string
