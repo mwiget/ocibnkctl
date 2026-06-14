@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"text/template"
+	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/version"
@@ -69,12 +70,22 @@ func RenderShrinkPolicy(in ShrinkInputs) (string, error) {
 // own footprint to a single small pod. Idempotent via `helm upgrade
 // --install`.
 func InstallKyverno(ctx context.Context, r *Runner) error {
-	return r.HelmUpgrade(ctx,
+	if err := r.HelmUpgrade(ctx,
 		"kyverno", version.KyvernoChart, version.KyvernoRepo,
 		"kyverno", version.KyvernoVersion, "",
 		"--set", "backgroundController.enabled=false",
 		"--set", "cleanupController.enabled=false",
 		"--set", "reportsController.enabled=false",
 		"--set", "admissionController.replicas=1",
-	)
+	); err != nil {
+		return err
+	}
+	// HelmUpgrade no longer passes --wait (it wedges on docker-proxy k3s); gate
+	// Kyverno's admission controller readiness with kubectl wait instead, so
+	// mutate-on-admission is live before the next phase applies resources.
+	if err := r.Wait(ctx, "kyverno", "Available",
+		"deployment/kyverno-admission-controller", 5*time.Minute); err != nil {
+		fmt.Fprintf(r.Out, "      | warn: kyverno admission controller not Available yet: %v\n", err)
+	}
+	return nil
 }

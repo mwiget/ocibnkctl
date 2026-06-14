@@ -162,6 +162,13 @@ func (r *Runner) HelmRegistryLogin(ctx context.Context, auth OCIAuth) error {
 // HelmUpgrade installs or upgrades a release. Pass repoURL non-empty for
 // HTTP charts (uses --repo); leave empty for OCI charts (chart name is
 // the full oci:// URL). valuesYAML is optional.
+//
+// It deliberately does NOT pass helm's --wait: on a freshly-recreated k3s the
+// helm post-install --wait loop can wedge indefinitely against the docker-proxy
+// API endpoint even though every resource is healthy (kubectl get/wait against
+// the same endpoint work). Callers gate readiness explicitly with r.Wait
+// (kubectl wait) — cert-manager waits on its webhook Deployment, Kyverno on its
+// admission controller.
 func (r *Runner) HelmUpgrade(ctx context.Context, release, chart, repoURL, namespace, chartVersion, valuesYAML string, extraArgs ...string) error {
 	var valuesPath string
 	if valuesYAML != "" {
@@ -181,7 +188,6 @@ func (r *Runner) HelmUpgrade(ctx context.Context, release, chart, repoURL, names
 	args := []string{
 		"upgrade", "--install", release, chart,
 		"--namespace", namespace, "--create-namespace",
-		"--wait", "--timeout=10m",
 	}
 	if repoURL != "" {
 		args = append(args, "--repo", repoURL)
