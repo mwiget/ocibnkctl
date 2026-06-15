@@ -18,12 +18,23 @@ no Multus on the base cluster.
 **Scaling TMM.** Set `cluster.tmm_nodes: N` before deploy, or scale a
 live cluster with `ocibnkctl scale --tmm N --yolo --confirm-cluster
 <name>` (joins/removes labelled agent nodes and adjusts
-`CNEInstance.tmmReplicas`, one TMM per node). Optionally set
-`bnk.tmm_active_active: true` so every TMM owns a self-IP and is active
-(deploy installs Multus + a bridge NAD + an F5SPKVlan with per-TMM
-self-IPs and a pod_hash DAG). NOTE: each TMM only serves the traffic
-that lands on its own node — transparently fanning one VIP's throughput
-across nodes needs DPU/SR-IOV and is not available in demo mode.
+`CNEInstance.tmmReplicas`, one TMM per node). Optionally pick an
+all-active data plane with `bnk.tmm_dataplane_mode`:
+
+- `selfip-dag` — every TMM owns a self-IP and is active (deploy installs
+  Multus + a bridge NAD + an F5SPKVlan with per-TMM self-IPs and a
+  pod_hash DAG). No upstream router needed. `bnk.tmm_active_active: true`
+  is the legacy alias for this.
+- `anycast-bgp` — every TMM runs mapres `FALSE` and advertises the same
+  VIP `/32` over its own ZeBOS/BGP session to a co-located FRR peer
+  (deploy installs Multus + the `bnk-bgp` NAD + an FRR DaemonSet on the
+  TMM nodes). Models anycast/ECMP.
+
+NOTE: on a single host the per-node bridges are isolated, so neither mode
+fans one VIP's throughput across nodes — each TMM serves the traffic that
+lands on its own node (selfip-dag), and each FRR sees only its node-local
+TMM (anycast-bgp). Real cross-node fan-out needs DPU/SR-IOV or a
+shared-L2 underlay + upstream ToR, out of scope for demo mode.
 
 ## Prerequisites (verify with `ocibnkctl doctor`)
 

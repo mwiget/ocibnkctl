@@ -108,6 +108,41 @@ func (p *PoC) Validate() ValidationResult {
 		r.Warnings = append(r.Warnings, "bnk.host_profile=small: TMM metrics subsystem (observer sidecar) is disabled so TMM fits a 4-core node; e2e auto-runs `deploy shrink` to cap the remaining pods.")
 	}
 
+	// TMM data-plane mode: validate the enum value and reconcile it with
+	// the legacy tmm_active_active bool. The two all-active modes are
+	// mutually exclusive on net1 (selfip-dag needs mapres TRUE, anycast-bgp
+	// needs FALSE), so we reject any poc.yaml that asks for both at once.
+	switch p.BNK.TMMDataplaneMode {
+	case "", DataplaneStandby, DataplaneSelfIPDAG, DataplaneAnycastBGP:
+		// ok
+	default:
+		r.Errors = append(r.Errors, fmt.Sprintf(
+			"bnk.tmm_dataplane_mode %q: must be %q, %q, or %q",
+			p.BNK.TMMDataplaneMode, DataplaneStandby, DataplaneSelfIPDAG, DataplaneAnycastBGP))
+	}
+	// Legacy bool vs new field: if both are set they must agree. The only
+	// meaning of `tmm_active_active: true` is selfip-dag, so it conflicts
+	// with any explicit mode that isn't selfip-dag.
+	if p.BNK.ActiveActive && p.BNK.TMMDataplaneMode != "" &&
+		p.BNK.TMMDataplaneMode != DataplaneSelfIPDAG {
+		r.Errors = append(r.Errors, fmt.Sprintf(
+			"bnk.tmm_active_active: true conflicts with bnk.tmm_dataplane_mode: %q — "+
+				"the legacy bool means %q; drop tmm_active_active and use tmm_dataplane_mode alone",
+			p.BNK.TMMDataplaneMode, DataplaneSelfIPDAG))
+	}
+	if p.BNK.ActiveActive && p.BNK.TMMDataplaneMode == "" {
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"bnk.tmm_active_active is deprecated: it aliases to tmm_dataplane_mode: %q — "+
+				"prefer setting tmm_dataplane_mode explicitly.", DataplaneSelfIPDAG))
+	}
+	if p.BNK.IsAnycastBGP() {
+		r.Warnings = append(r.Warnings,
+			"bnk.tmm_dataplane_mode=anycast-bgp: real cross-node ECMP fan-out needs a "+
+				"shared-L2 underlay + an upstream ToR receiving all TMM sessions — on a single host "+
+				"the per-node bnk-bgp bridges are isolated, so the demo validates the anycast MODEL "+
+				"(each TMM advertises its VIP /32 to a co-located peer), not multi-node fan-out.")
+	}
+
 	if p.BNKForge.Enabled {
 		if p.BNKForge.URL != "" && !strings.HasPrefix(p.BNKForge.URL, "http") {
 			r.Errors = append(r.Errors, fmt.Sprintf("bnk_forge.url %q: must start with http or https", p.BNKForge.URL))

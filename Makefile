@@ -139,6 +139,13 @@ smoke: test build
 	echo "[8] doctor reports a resource floor (min baseline or small-host floor)"; \
 	  ./bin/ocibnkctl doctor 2>&1 | grep -qE "min baseline|small-host floor" \
 	    || { echo "doctor resource-floor line missing"; exit 1; }; \
+	echo "[9] tmm_dataplane_mode=anycast-bgp validates with single-host caveat"; \
+	  cp $(SMOKE_DIR)/poc.yaml $(SMOKE_DIR)/poc.yaml.bak; \
+	  sed -i.tmp 's/^    demo_mode: true/    demo_mode: true\n    tmm_dataplane_mode: anycast-bgp/' $(SMOKE_DIR)/poc.yaml; \
+	  ./bin/ocibnkctl validate --poc $(SMOKE_DIR) > /tmp/smoke-aa.log 2>&1; \
+	  grep -q "anycast-bgp" /tmp/smoke-aa.log || { echo "anycast-bgp caveat warning missing"; exit 1; }; \
+	  grep -q "OK" /tmp/smoke-aa.log || { echo "anycast-bgp should validate clean"; exit 1; }; \
+	  mv $(SMOKE_DIR)/poc.yaml.bak $(SMOKE_DIR)/poc.yaml; rm -f $(SMOKE_DIR)/poc.yaml.tmp; \
 	echo "PASS"
 
 clean:
