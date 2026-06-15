@@ -710,21 +710,40 @@ the node count (`10 + (N-1)×8` cores), so it engages `deploy shrink`
 automatically when N TMMs won't fit — every k3s node is a container on
 the **same** host, so an extra TMM node adds load, not capacity.
 
-**All-active (optional).** Set `bnk.tmm_active_active: true` and `deploy`
-installs Multus, seeds the bridge CNI plugin, attaches a bridge NAD to
-every TMM (mapres grabs `net1` as interface `1.1`), and applies an
-`F5SPKVlan` with one self-IP per TMM plus a `pod_hash` stateless DAG — so
-each TMM owns a self-IP and is **active** rather than standby.
+**All-active data plane (optional).** `bnk.tmm_dataplane_mode` selects how
+multi-node TMM presents its data plane — the two all-active modes are
+mutually exclusive on `net1` (one needs mapres `TRUE`, the other `FALSE`),
+so it's a three-value enum rather than a bool:
 
-**Caveat — no transparent throughput fan-out.** Each TMM only serves the
-traffic that physically lands on its own node's bridge; the per-node
-bridges are isolated, so a single VIP's traffic is **not** spread across
-TMM nodes. That (hardware DAG / ECMP across nodes) is the DPU/SR-IOV
-value prop and is out of scope for the demo shape. Adding TMM nodes
-scales availability and per-node capacity (steer different clients at
-different nodes), not one VIP's throughput. `tmm_active_active` is also
-mutually exclusive with the BGP scenarios, which need mapres `FALSE` on
-`net1`.
+| `tmm_dataplane_mode` | `net1` / mapres | What `deploy` does |
+|---|---|---|
+| `standby` (default) | none / `TRUE` | BNK's stock HA shape — one TMM active, the rest standby. |
+| `selfip-dag` | bridge NAD / `TRUE` | Multus + bridge CNI + a bridge NAD on every TMM (mapres grabs `net1` as interface `1.1`), then an `F5SPKVlan` with one self-IP per TMM plus a `pod_hash` stateless DAG — each TMM owns a self-IP and is **active**. The only mode that needs no upstream router. |
+| `anycast-bgp` | `bnk-bgp` NAD / `FALSE` | Every per-node TMM runs mapres `FALSE` (keeps `net1`'s kernel IP) and advertises the **same VIP `/32`** over its own ZeBOS/BGP session to a co-located FRR peer, so an upstream router ECMP-load-balances across the TMM pods (anycast). Builds on the `bgp-peer-frr` scenario. |
+
+The legacy `bnk.tmm_active_active: true` is a back-compat alias for
+`tmm_dataplane_mode: selfip-dag` (a `validate` warning nudges you to the
+new field; setting both to disagreeing values is a hard error).
+
+**Caveat — `selfip-dag`: no transparent throughput fan-out.** Each TMM
+only serves the traffic that physically lands on its own node's bridge;
+the per-node bridges are isolated, so a single VIP's traffic is **not**
+spread across TMM nodes. That (hardware DAG / ECMP across nodes) is the
+DPU/SR-IOV value prop and is out of scope for the demo shape. Adding TMM
+nodes scales availability and per-node capacity (steer different clients
+at different nodes), not one VIP's throughput.
+
+**Caveat — `anycast-bgp`: anycast model, validated single-peer.** On a
+**single host** the per-node `bnk-bgp` bridges are isolated L2 segments
+(host-local IPAM even hands out the same `192.168.99.x` range per node),
+so the deploy path runs one FRR peer **per** `app=f5-tmm` node (pinned to
+a static `192.168.99.2`) and each TMM advertises its VIP `/32` to its
+node-local peer — demonstrating **the model** (each TMM forms a session
+and advertises the same `/32`), but **not** real cross-node ECMP fan-out:
+each FRR sees only the one TMM on its node. Real fan-out needs a
+shared-L2 underlay (real NIC / macvlan / routed) plus an upstream ToR
+that receives all N sessions and ECMP-programs N next-hops — a
+multi-host deployment, out of scope for the single-host demo.
 
 ## Network topology
 

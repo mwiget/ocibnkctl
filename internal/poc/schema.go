@@ -118,17 +118,44 @@ type BNK struct {
 	//                     Also lowers the `doctor` core floor. Pair with
 	//                     `ocibnkctl deploy shrink` to cap every other pod.
 	HostProfile string `yaml:"host_profile,omitempty"`
-	// ActiveActive enables the all-active multi-TMM data plane. `deploy`
-	// then installs Multus, attaches a bridge NAD to every TMM (mapres
-	// grabs net1 as interface 1.1), and applies an F5SPKVlan with one
-	// self-IP per TMM node plus a pod_hash stateless DAG — so each TMM
-	// owns a self-IP and is active rather than standby.
+	// ActiveActive is the legacy bool for the all-active multi-TMM data
+	// plane. DEPRECATED in favour of TMMDataplaneMode — kept as a
+	// back-compat alias: `tmm_active_active: true` is equivalent to
+	// `tmm_dataplane_mode: selfip-dag`. Use DataplaneMode() rather than
+	// reading this field directly; it folds the legacy bool into the
+	// three-value enum and is the single source of truth for the deploy
+	// path.
+	//
+	// When set, `deploy` installs Multus, attaches a bridge NAD to every
+	// TMM (mapres grabs net1 as interface 1.1), and applies an F5SPKVlan
+	// with one self-IP per TMM node plus a pod_hash stateless DAG — so
+	// each TMM owns a self-IP and is active rather than standby.
 	//
 	// Each TMM still serves only the traffic that lands on its own node;
 	// transparent cross-node fan-out of one VIP's throughput needs
-	// DPU/SR-IOV and is not available in the demo shape. Mutually
-	// exclusive with the BGP scenarios, which need mapres=FALSE on net1.
+	// DPU/SR-IOV and is not available in the demo shape.
 	ActiveActive bool `yaml:"tmm_active_active,omitempty"`
+	// TMMDataplaneMode selects how multi-node TMM presents its data
+	// plane. The two all-active modes are mutually exclusive on net1
+	// (one needs mapres TRUE, the other FALSE), so a single bool can't
+	// express all three states — hence a string enum:
+	//
+	//   "" / "standby"  — default. No NAD on net1; mapres TRUE. One TMM
+	//                     active, the rest standby (BNK's stock HA shape).
+	//   "selfip-dag"    — today's all-active path: bridge NAD on net1,
+	//                     mapres TRUE (interface 1.1), F5SPKVlan with one
+	//                     self-IP per TMM + pod_hash DAG. The ONLY mode
+	//                     that needs no upstream router. Legacy
+	//                     `tmm_active_active: true` aliases to this.
+	//   "anycast-bgp"   — new: every per-node TMM runs mapres FALSE and
+	//                     advertises the same VIP /32 over its own
+	//                     ZeBOS/BGP session, so an upstream router (ToR/
+	//                     FRR) ECMP-load-balances across the TMM pods
+	//                     (anycast). Builds on the bgp-peer-frr scenario.
+	//
+	// Use DataplaneMode()/IsSelfIPDAG()/IsAnycastBGP() rather than this
+	// field directly — they fold in the legacy ActiveActive bool.
+	TMMDataplaneMode string `yaml:"tmm_dataplane_mode,omitempty"`
 }
 
 // Host profile values for BNK.HostProfile.
@@ -136,6 +163,41 @@ const (
 	HostProfileStandard = "standard"
 	HostProfileSmall    = "small"
 )
+
+// TMM data-plane mode values for BNK.TMMDataplaneMode.
+const (
+	DataplaneStandby    = "standby"
+	DataplaneSelfIPDAG  = "selfip-dag"
+	DataplaneAnycastBGP = "anycast-bgp"
+)
+
+// DataplaneMode returns the effective TMM data-plane mode, folding the
+// legacy ActiveActive bool into the three-value enum. Precedence: an
+// explicit TMMDataplaneMode wins; otherwise `tmm_active_active: true`
+// maps to selfip-dag; otherwise standby. Validation (see Validate)
+// rejects a poc.yaml that sets both fields to disagreeing values, so by
+// the time the deploy path calls this the two are consistent.
+func (b BNK) DataplaneMode() string {
+	if b.TMMDataplaneMode != "" {
+		return b.TMMDataplaneMode
+	}
+	if b.ActiveActive {
+		return DataplaneSelfIPDAG
+	}
+	return DataplaneStandby
+}
+
+// IsSelfIPDAG reports whether the effective data-plane mode is the
+// self-IP + DAG all-active path (the original ActiveActive shape).
+func (b BNK) IsSelfIPDAG() bool { return b.DataplaneMode() == DataplaneSelfIPDAG }
+
+// IsAnycastBGP reports whether the effective data-plane mode is the
+// BGP-anycast all-active path (mapres FALSE, VIP /32 over ZeBOS/BGP).
+func (b BNK) IsAnycastBGP() bool { return b.DataplaneMode() == DataplaneAnycastBGP }
+
+// IsAllActive reports whether either all-active data-plane mode is in
+// effect (selfip-dag or anycast-bgp) — i.e. not plain standby.
+func (b BNK) IsAllActive() bool { return b.DataplaneMode() != DataplaneStandby }
 
 // IsSmallHost reports whether the PoC targets a small (4-core/16GB) host.
 func (b BNK) IsSmallHost() bool { return b.HostProfile == HostProfileSmall }

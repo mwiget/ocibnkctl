@@ -142,6 +142,15 @@ delete the scn-bgp namespace + default-namespace NAD. Multus
 stays installed (it's cluster-wide; reverting it would impact
 other workloads). TMM env vars revert via the original
 http-routing CNEInstance template if you re-run e2e.
+
+Relationship to bnk.tmm_dataplane_mode=anycast-bgp: this scenario is
+the single-TMM, runtime-patch sibling of that persistent deploy mode.
+The deploy mode bakes the same plumbing (bnk-bgp NAD on net1, mapres
+FALSE, the cluster-wide ZeBOS template) into the CNEInstance for ALL
+TMM pods and runs its own FRR peer as a DaemonSet on the TMM nodes,
+so every TMM advertises its VIP /32 (anycast). Run this scenario
+against a standby deploy, not an anycast-bgp one — on the latter both
+would fight over the f5-tmm-dynamic-routing-template ConfigMap.
 `)
 }
 

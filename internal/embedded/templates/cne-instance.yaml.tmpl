@@ -27,8 +27,10 @@ spec:
     enabled: false
 {{- if .NetworkAttachments}}
   # Active/active data plane: FLO injects these Multus NAD(s) onto every
-  # TMM pod (net1). With TMM_MAPRES_ADDL_VETHS_ON_DP=TRUE mapres grabs
-  # net1 onto the data plane as interface "1.1", which the F5SPKVlan binds.
+  # TMM pod (net1). selfip-dag keeps mapres TRUE so mapres grabs net1
+  # onto the data plane as interface "1.1" for the F5SPKVlan to bind;
+  # anycast-bgp sets mapres FALSE so net1 keeps its kernel IP for ZeBOS
+  # to source BGP from (see TMM_MAPRES_ADDL_VETHS_ON_DP below).
   networkAttachments:
 {{- range .NetworkAttachments}}
   - {{.}}
@@ -106,7 +108,12 @@ spec:
         value: "default"
       - name: "TMM_DEFAULT_MTU"
         value: "1500"
+      # mapres governs whether TMM's userspace data plane grabs net1.
+      #   TRUE  (standby / selfip-dag) — mapres claims net1 as interface
+      #         "1.1" and flushes its kernel IP; the F5SPKVlan binds 1.1.
+      #   FALSE (anycast-bgp) — net1 keeps its kernel IP so ZeBOS can
+      #         `update-source net1` for its BGP session.
       - name: "TMM_MAPRES_ADDL_VETHS_ON_DP"
-        value: "TRUE"
+        value: "{{.MapresOnDP}}"
       - name: "ZEBOS_STATE"
         value: legacy

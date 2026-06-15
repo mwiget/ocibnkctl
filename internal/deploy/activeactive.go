@@ -41,6 +41,36 @@ const (
 	MultusManifestSHA = "33fef64fbb67ef5d68183bad5b2aec4163dad0ebb0b63abe25343155d0d8b4be"
 )
 
+// BGP-anycast multi-TMM data-plane constants (tmm_dataplane_mode:
+// anycast-bgp). Every per-node TMM runs with mapres FALSE and peers
+// with an FRR router over a bridge-CNI Multus NAD on net1, advertising
+// its VIP /32 over BGP. Mirrors the bgp-peer-frr scenario's NAD so the
+// deploy path and the scenario share one L2 shape — name/bridge/subnet
+// match `internal/scenarios/bgppeer/manifests/02-nad.yaml`.
+//
+// On a single host the per-node bnk-bgp bridges are isolated L2
+// segments, so real ECMP fan-out across nodes cannot be demonstrated;
+// this validates the anycast MODEL (each TMM advertises its VIP /32 to
+// a co-located peer), not multi-host fan-out. See README "Network
+// topology" and the validate warning.
+const (
+	BGPNADName   = "bnk-bgp"
+	BGPBridge    = "br-bnk-bgp"
+	BGPSubnet    = "192.168.99.0/24"
+	BGPIPAMStart = "192.168.99.20"
+	BGPIPAMEnd   = "192.168.99.250"
+	// BGPRoutingTemplateCM is the cluster-wide ConfigMap FLO renders into
+	// every TMM pod's ZeBOS config (one per CNEInstance, shared by all TMM
+	// pods). A single shared template still yields a unique router-id per
+	// pod because `bgp router-id %%POD_IP%%` is a per-pod token FLO expands
+	// — the linchpin that lets N-pod anycast work from one ConfigMap.
+	BGPRoutingTemplateCM = "f5-tmm-dynamic-routing-template"
+	// BGP AS numbers mirror the bgp-peer-frr scenario: TMM/ZeBOS in 65000,
+	// the FRR peer in 65001.
+	BGPTMMAS  = 65000
+	BGPPeerAS = 65001
+)
+
 // DAGSelfIPs returns one self-IP per TMM node (192.0.2.10, .11, …), kept
 // below the NAD IPAM range (.20+) so they never collide with addresses
 // host-local hands to other pods on the bridge. selfip_v4s[i] binds to
@@ -58,8 +88,24 @@ func DAGSelfIPs(n int) []string {
 }
 
 // RenderDAGNAD renders the bridge-CNI NetworkAttachmentDefinition that
-// gives each TMM pod a net1 on a per-node software bridge.
+// gives each TMM pod a net1 on a per-node software bridge for the
+// self-IP + DAG all-active path.
 func RenderDAGNAD(namespace string) string {
+	return renderBridgeNAD(DAGNADName, namespace, DAGBridge, DAGSubnet, DAGIPAMStart, DAGIPAMEnd)
+}
+
+// RenderBGPNAD renders the bridge-CNI NetworkAttachmentDefinition for
+// the anycast-bgp path. Same shape as the bgp-peer-frr scenario's NAD
+// (name/bridge/subnet match) so the deploy path and the scenario peer
+// over one L2 segment.
+func RenderBGPNAD(namespace string) string {
+	return renderBridgeNAD(BGPNADName, namespace, BGPBridge, BGPSubnet, BGPIPAMStart, BGPIPAMEnd)
+}
+
+// renderBridgeNAD renders a bridge-CNI NetworkAttachmentDefinition that
+// gives each attached pod a net1 on a per-node software bridge with
+// host-local IPAM. Both RenderDAGNAD and RenderBGPNAD call it.
+func renderBridgeNAD(name, namespace, bridge, subnet, rangeStart, rangeEnd string) string {
 	return fmt.Sprintf(`apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
@@ -86,7 +132,61 @@ spec:
         "rangeEnd": "%s"
       }
     }
-`, DAGNADName, namespace, DAGNADName, DAGBridge, DAGSubnet, DAGIPAMStart, DAGIPAMEnd)
+`, name, namespace, name, bridge, subnet, rangeStart, rangeEnd)
+}
+
+// RenderAnycastZebosConfigMap renders the cluster-wide ZeBOS routing
+// template ConfigMap for the anycast-bgp path. It generalizes the
+// bgp-peer-frr scenario's 05-zebos-template: every TMM pod peers with
+// the FRR router at peerIP over net1 and advertises its VIP /32 over
+// BGP.
+//
+// router-id is the literal token %%POD_IP%% — FLO expands it per pod, so
+// this single shared ConfigMap yields a UNIQUE router-id per TMM pod
+// (the linchpin that lets N pods form distinct sessions for anycast).
+//
+// redistribute kernel + connected: the Gateway VIP /32 that FLO installs
+// as a kernel route (route type "K") is picked up by `redistribute
+// kernel`; net1's connected subnet (type "C") by `redistribute
+// connected`. ZeBOS treats K and C as distinct origins, so both lines
+// are needed, and both MUST sit at router-bgp scope — F5 ZeBOS silently
+// drops them from `address-family ipv4`.
+//
+// vip is optional. When non-empty a `network <vip>/32` statement is
+// added (advertised only if the route is present in the RIB); when empty
+// the path relies entirely on `redistribute kernel` to advertise the
+// Gateway VIP that FLO installs — the preferred, lower-coupling default
+// (mirrors how http-routing-e2e reaches Gateways).
+func RenderAnycastZebosConfigMap(namespace, peerIP, vip string) string {
+	var networkStmt string
+	if vip != "" {
+		networkStmt = fmt.Sprintf("      network %s/32\n", vip)
+	}
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+data:
+  ZebOS.conf: |
+    router bgp %d
+      bgp router-id %%%%POD_IP%%%%
+      bgp log-neighbor-changes
+      bgp graceful-restart restart-time 120
+      no bgp default ipv4-unicast
+      redistribute kernel
+      redistribute connected
+%s      !
+      neighbor %s remote-as %d
+      neighbor %s update-source net1
+      !
+      address-family ipv4
+        neighbor %s activate
+        neighbor %s soft-reconfiguration inbound
+      exit-address-family
+    !
+`, BGPRoutingTemplateCM, namespace, BGPTMMAS, networkStmt,
+		peerIP, BGPPeerAS, peerIP, peerIP, peerIP)
 }
 
 // RenderTMMVlan renders the F5SPKVlan that turns the mapres-grabbed net1

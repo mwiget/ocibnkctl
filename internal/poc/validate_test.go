@@ -173,3 +173,100 @@ func TestTMMLabelOverride(t *testing.T) {
 		t.Errorf("override TMM label: got %s=%s want role=edge", k, v)
 	}
 }
+
+// TestDataplaneMode pins the legacy-bool → enum folding and the three
+// helpers. The explicit field always wins; the bool aliases to selfip-dag.
+func TestDataplaneMode(t *testing.T) {
+	cases := []struct {
+		name       string
+		active     bool
+		mode       string
+		want       string
+		wantSelfIP bool
+		wantBGP    bool
+		wantAA     bool
+	}{
+		{"default standby", false, "", DataplaneStandby, false, false, false},
+		{"explicit standby", false, DataplaneStandby, DataplaneStandby, false, false, false},
+		{"legacy bool aliases selfip-dag", true, "", DataplaneSelfIPDAG, true, false, true},
+		{"explicit selfip-dag", false, DataplaneSelfIPDAG, DataplaneSelfIPDAG, true, false, true},
+		{"explicit anycast-bgp", false, DataplaneAnycastBGP, DataplaneAnycastBGP, false, true, true},
+		{"field wins over absent bool", false, DataplaneAnycastBGP, DataplaneAnycastBGP, false, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := BNK{ActiveActive: c.active, TMMDataplaneMode: c.mode}
+			if got := b.DataplaneMode(); got != c.want {
+				t.Errorf("DataplaneMode() = %q, want %q", got, c.want)
+			}
+			if got := b.IsSelfIPDAG(); got != c.wantSelfIP {
+				t.Errorf("IsSelfIPDAG() = %v, want %v", got, c.wantSelfIP)
+			}
+			if got := b.IsAnycastBGP(); got != c.wantBGP {
+				t.Errorf("IsAnycastBGP() = %v, want %v", got, c.wantBGP)
+			}
+			if got := b.IsAllActive(); got != c.wantAA {
+				t.Errorf("IsAllActive() = %v, want %v", got, c.wantAA)
+			}
+		})
+	}
+}
+
+// TestValidateDataplaneMode covers the enum validation + the legacy-bool
+// conflict rule.
+func TestValidateDataplaneMode(t *testing.T) {
+	t.Run("bad mode value", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.TMMDataplaneMode = "anycast"
+		r := p.Validate()
+		if r.Valid() {
+			t.Fatal("expected error for bad mode value, got clean")
+		}
+		if !strings.Contains(strings.Join(r.Errors, "\n"), "tmm_dataplane_mode") {
+			t.Fatalf("expected tmm_dataplane_mode error, got: %v", r.Errors)
+		}
+	})
+	t.Run("legacy bool + conflicting mode errors", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.ActiveActive = true
+		p.BNK.TMMDataplaneMode = DataplaneAnycastBGP
+		r := p.Validate()
+		if r.Valid() {
+			t.Fatal("expected conflict error, got clean")
+		}
+		if !strings.Contains(strings.Join(r.Errors, "\n"), "conflicts") {
+			t.Fatalf("expected conflict error, got: %v", r.Errors)
+		}
+	})
+	t.Run("legacy bool + matching selfip-dag is fine", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.ActiveActive = true
+		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
+		r := p.Validate()
+		if !r.Valid() {
+			t.Fatalf("bool + matching mode should be valid, got: %v", r.Errors)
+		}
+	})
+	t.Run("anycast-bgp valid with single-host caveat warning", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.TMMDataplaneMode = DataplaneAnycastBGP
+		r := p.Validate()
+		if !r.Valid() {
+			t.Fatalf("anycast-bgp should be valid, got: %v", r.Errors)
+		}
+		if !strings.Contains(strings.Join(r.Warnings, "\n"), "anycast-bgp") {
+			t.Fatalf("expected single-host caveat warning, got: %v", r.Warnings)
+		}
+	})
+	t.Run("legacy bool alone warns deprecation", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.ActiveActive = true
+		r := p.Validate()
+		if !r.Valid() {
+			t.Fatalf("legacy bool alone should be valid, got: %v", r.Errors)
+		}
+		if !strings.Contains(strings.Join(r.Warnings, "\n"), "deprecated") {
+			t.Fatalf("expected deprecation warning, got: %v", r.Warnings)
+		}
+	})
+}

@@ -52,6 +52,51 @@ func TestRenderDAGNAD(t *testing.T) {
 	}
 }
 
+func TestRenderBGPNAD(t *testing.T) {
+	got := RenderBGPNAD("default")
+	for _, want := range []string{
+		"kind: NetworkAttachmentDefinition",
+		"name: " + BGPNADName,
+		"namespace: default",
+		`"type": "bridge"`,
+		`"bridge": "` + BGPBridge + `"`,
+		BGPSubnet,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RenderBGPNAD missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderAnycastZebosConfigMap(t *testing.T) {
+	got := RenderAnycastZebosConfigMap("default", "192.168.99.20", "")
+	for _, want := range []string{
+		"kind: ConfigMap",
+		"name: " + BGPRoutingTemplateCM,
+		"router bgp 65000",
+		// router-id must render as the per-pod token FLO expands, NOT a
+		// fixed value — the linchpin for distinct per-pod sessions.
+		"bgp router-id %%POD_IP%%",
+		"redistribute kernel",
+		"redistribute connected",
+		"neighbor 192.168.99.20 remote-as 65001",
+		"neighbor 192.168.99.20 update-source net1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RenderAnycastZebosConfigMap missing %q:\n%s", want, got)
+		}
+	}
+	// Empty vip → no static network statement (rely on redistribute kernel).
+	if strings.Contains(got, "network ") {
+		t.Errorf("empty vip should emit no `network` statement:\n%s", got)
+	}
+	// Non-empty vip → a /32 network statement is added.
+	withVIP := RenderAnycastZebosConfigMap("default", "192.168.99.20", "203.0.113.50")
+	if !strings.Contains(withVIP, "network 203.0.113.50/32") {
+		t.Errorf("non-empty vip should emit `network 203.0.113.50/32`:\n%s", withVIP)
+	}
+}
+
 func TestRenderTMMVlan(t *testing.T) {
 	got := RenderTMMVlan("default", DAGSelfIPs(2))
 	for _, want := range []string{

@@ -47,6 +47,43 @@ func TestRenderCNEInstance_ActiveActiveNetworkAttachments(t *testing.T) {
 	}
 }
 
+// TestRenderCNEInstance_DataplaneMode pins the NAD + mapres dispatch for
+// each tmm_dataplane_mode: standby (no NAD, mapres TRUE), selfip-dag (DAG
+// NAD, mapres TRUE), anycast-bgp (bnk-bgp NAD, mapres FALSE). The legacy
+// tmm_active_active bool must render identically to selfip-dag.
+func TestRenderCNEInstance_DataplaneMode(t *testing.T) {
+	cases := []struct {
+		name       string
+		bnk        poc.BNK
+		wantNAD    string // "" → no networkAttachments block
+		wantMapres string
+	}{
+		{"standby default", poc.BNK{}, "", `value: "TRUE"`},
+		{"explicit standby", poc.BNK{TMMDataplaneMode: poc.DataplaneStandby}, "", `value: "TRUE"`},
+		{"selfip-dag", poc.BNK{TMMDataplaneMode: poc.DataplaneSelfIPDAG}, DAGNADName, `value: "TRUE"`},
+		{"legacy bool == selfip-dag", poc.BNK{ActiveActive: true}, DAGNADName, `value: "TRUE"`},
+		{"anycast-bgp", poc.BNK{TMMDataplaneMode: poc.DataplaneAnycastBGP}, BGPNADName, `value: "FALSE"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := RenderCNEInstance(&poc.PoC{BNK: c.bnk})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.wantNAD == "" {
+				if strings.Contains(got, "networkAttachments") {
+					t.Errorf("want no networkAttachments block:\n%s", got)
+				}
+			} else if !strings.Contains(got, "- "+c.wantNAD) {
+				t.Errorf("want NAD %q attached:\n%s", c.wantNAD, got)
+			}
+			if !strings.Contains(got, c.wantMapres) {
+				t.Errorf("want mapres %s:\n%s", c.wantMapres, got)
+			}
+		})
+	}
+}
+
 func TestRenderCNEInstance_MetricSubsystemByProfile(t *testing.T) {
 	cases := []struct {
 		profile string

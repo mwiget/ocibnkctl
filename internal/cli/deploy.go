@@ -372,12 +372,13 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			runtime.NumCPU(), version.MinBaseline.Cores)
 	}
 
-	// 0. Active/active data plane (opt-in via bnk.tmm_active_active).
-	// Multus, the bridge CNI plugin, and the DAG NAD must all exist
-	// BEFORE the CNEInstance attaches the NAD to TMM — otherwise the TMM
-	// pods get stuck in sandbox creation ("failed to find plugin bridge").
-	// All three steps are idempotent.
-	if p.BNK.ActiveActive {
+	// 0. All-active data-plane prep (opt-in via bnk.tmm_dataplane_mode).
+	// Multus, the bridge CNI plugin, and the NAD(s) must all exist BEFORE
+	// the CNEInstance attaches the NAD to TMM — otherwise the TMM pods get
+	// stuck in sandbox creation ("failed to find plugin bridge"). All
+	// steps are idempotent.
+	switch {
+	case p.BNK.IsSelfIPDAG():
 		fmt.Fprintln(out, "[0/4] Active/active prep: Multus + bridge CNI + DAG NAD ...")
 		if err := deploy.EnsureMultus(ctx, r); err != nil {
 			return fmt.Errorf("active/active: ensure multus: %w", err)
@@ -387,6 +388,33 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, strings.Fields(namesOut), out)
 		if err := r.Apply(ctx, deploy.RenderDAGNAD("default")); err != nil {
 			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
+		}
+	case p.BNK.IsAnycastBGP():
+		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + bridge CNI + bnk-bgp NAD + FRR peer ...")
+		if err := deploy.EnsureMultus(ctx, r); err != nil {
+			return fmt.Errorf("anycast-bgp: ensure multus: %w", err)
+		}
+		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
+			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+		nodes := strings.Fields(namesOut)
+		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, nodes, out)
+		// Packets on the bnk-bgp bridge must bypass the node's iptables, or
+		// Calico's natOutgoing MASQUERADE breaks the data plane (see the
+		// scenario's disableBridgeNetfilter rationale). Docker-only.
+		disableBridgeNetfilter(ctx, p.Cluster.Provider, nodes, out)
+		// TMM's NAD (host-local .20+) and FRR's static-IP NAD (.2), both on
+		// br-bnk-bgp.
+		if err := r.Apply(ctx, deploy.RenderBGPNAD("default")); err != nil {
+			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
+		}
+		if err := r.Apply(ctx, deploy.RenderFRRStaticNAD("default")); err != nil {
+			return fmt.Errorf("anycast-bgp: apply FRR NAD: %w", err)
+		}
+		// FRR peer (one per app=f5-tmm node). Deployed now so it's
+		// converging while TMM comes up.
+		k, v := p.BNK.TMMLabel()
+		if err := r.Apply(ctx, deploy.RenderFRRPeer("default", k, v)); err != nil {
+			return fmt.Errorf("anycast-bgp: apply FRR peer: %w", err)
 		}
 	}
 
@@ -514,19 +542,66 @@ spec:
 		fmt.Fprintf(out, "      strategy=%s\n", strategyDesc)
 	}
 
-	// 6. Active/active VLAN: once TMM has net1 (mapres grabs it as
-	// interface "1.1"), program the F5SPKVlan with one self-IP per TMM so
-	// each leaves standby and becomes active, plus pod_hash for the
-	// stateless DAG. Done last because it needs the rolled TMM pods up.
-	if p.BNK.ActiveActive {
+	// 6. All-active data-plane finalize. Done last because it needs the
+	// rolled TMM pods up with net1 attached.
+	switch {
+	case p.BNK.IsSelfIPDAG():
+		// Once TMM has net1 (mapres grabs it as interface "1.1"), program
+		// the F5SPKVlan with one self-IP per TMM so each leaves standby and
+		// becomes active, plus pod_hash for the stateless DAG.
 		n := p.Cluster.Workers()
 		selfIPs := deploy.DAGSelfIPs(n)
 		fmt.Fprintf(out, "[6/6] Active/active: F5SPKVlan with %d self-IP(s) %v + pod_hash DAG ...\n", n, selfIPs)
-		waitTMMNet1(ctx, r, 3*time.Minute, out)
+		waitTMMNet1(ctx, r, deploy.DAGNADName, 3*time.Minute, out)
 		if err := r.Apply(ctx, deploy.RenderTMMVlan("default", selfIPs)); err != nil {
 			fmt.Fprintf(out, "      WARN: apply F5SPKVlan: %v (TMMs stay standby)\n", err)
 		} else {
 			fmt.Fprintf(out, "      %d TMM(s) active; each serves its own node's ingress\n", n)
+		}
+	case p.BNK.IsAnycastBGP():
+		// Each TMM peers with its node-local FRR over net1 and advertises
+		// its VIP /32 over BGP (anycast). Apply the cluster-wide ZeBOS
+		// template (one neighbor = FRR's static IP, valid for every TMM
+		// pod; router-id is the per-pod %%POD_IP%% token FLO expands), then
+		// roll TMM ONCE so it loads the config, and inject passwd.conf into
+		// every Running TMM pod (each runs its own ZeBOS session).
+		n := p.Cluster.Workers()
+		fmt.Fprintf(out, "[6/6] Anycast-BGP: ZeBOS template (neighbor %s) + roll %d TMM(s) + passwd.conf ...\n",
+			deploy.BGPPeerIP, n)
+		waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
+		// vip="" → advertise via `redistribute kernel` (FLO installs the
+		// Gateway VIP /32 as a kernel route once a workload Gateway exists).
+		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default", deploy.BGPPeerIP, "")); err != nil {
+			fmt.Fprintf(out, "      WARN: apply ZeBOS ConfigMap: %v (TMMs won't peer)\n", err)
+		} else {
+			// One rollout restart so TMM reloads the routing template it now
+			// mounts. Safe to re-run: FLO bakes the bnk-bgp NAD annotation
+			// into the f5-tmm Deployment's pod template (from
+			// CNEInstance.spec.networkAttachments), so restarted pods keep
+			// net1 — unlike the bgp-peer-frr scenario's runtime-patch flow,
+			// where the NAD isn't in the base spec and a bare restart drops
+			// it (verified on a 2-node cluster, 2026-06-15).
+			if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "deployment/f5-tmm"); err != nil {
+				fmt.Fprintf(out, "      WARN: rollout restart f5-tmm: %v\n", err)
+			}
+			// TMM pods roll one-at-a-time (maxUnavailable=1/maxSurge=0) and
+			// each heavy pod takes a few minutes, so the status timeout must
+			// scale with the node count or it spuriously trips on N>1.
+			rolloutTimeout := time.Duration(4*(n+1)) * time.Minute
+			if err := r.Kubectl(ctx, "-n", "default", "rollout", "status",
+				"deployment/f5-tmm", "--timeout="+rolloutTimeout.String()); err != nil {
+				fmt.Fprintf(out, "      WARN: f5-tmm rollout did not complete in %s: %v\n", rolloutTimeout, err)
+			}
+			waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
+			if err := deploy.InjectPasswdConfAll(ctx, r); err != nil {
+				fmt.Fprintf(out, "      WARN: inject passwd.conf: %v (ZeBOS may not load until injected)\n", err)
+			} else {
+				// Each TMM peers with its node-local FRR and advertises its
+				// connected/kernel routes; the Gateway VIP /32 appears once a
+				// workload Gateway exists (redistribute kernel picks it up).
+				fmt.Fprintf(out, "      %d TMM(s) peering with FRR at %s; each advertises its VIP /32 over BGP (anycast model)\n",
+					n, deploy.BGPPeerIP)
+			}
 		}
 	}
 
@@ -562,15 +637,16 @@ func seedBridgeCNIPlugin(ctx context.Context, tool string, nodes []string, out i
 	}
 }
 
-// waitTMMNet1 blocks until at least one TMM pod reports the DAG NAD in
-// its Multus network-status annotation (i.e. net1 attached), so the
-// F5SPKVlan that binds interface "1.1" has something to land on.
-func waitTMMNet1(ctx context.Context, r *deploy.Runner, timeout time.Duration, out io.Writer) {
+// waitTMMNet1 blocks until at least one TMM pod reports nadName in its
+// Multus network-status annotation (i.e. net1 attached), so whatever
+// binds net1 (the F5SPKVlan's interface "1.1" for selfip-dag, or ZeBOS's
+// update-source for anycast-bgp) has something to land on.
+func waitTMMNet1(ctx context.Context, r *deploy.Runner, nadName string, timeout time.Duration, out io.Writer) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		st, _ := r.KubectlCapture(ctx, "-n", "default", "get", "pods", "-l", "app=f5-tmm",
 			"-o", `jsonpath={range .items[*]}{.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}{end}`)
-		if strings.Contains(st, deploy.DAGNADName) {
+		if strings.Contains(st, nadName) {
 			return
 		}
 		select {
@@ -579,8 +655,37 @@ func waitTMMNet1(ctx context.Context, r *deploy.Runner, timeout time.Duration, o
 		case <-time.After(5 * time.Second):
 		}
 	}
-	fmt.Fprintf(out, "      WARN: TMM net1 (%s) not observed within %s — the VLAN may not bind until net1 is up\n",
-		deploy.DAGNADName, timeout)
+	fmt.Fprintf(out, "      WARN: TMM net1 (%s) not observed within %s — net1-bound config may not apply until net1 is up\n",
+		nadName, timeout)
+}
+
+// disableBridgeNetfilter sets net.bridge.bridge-nf-call-iptables=0 on
+// every k3s node so packets crossing the bnk-bgp Multus bridge bypass
+// the node's iptables — otherwise Calico's natOutgoing MASQUERADE SNATs
+// FRR↔TMM data-plane traffic and breaks return symmetry over net1. Gated
+// on whether br_netfilter is actually loaded (it is on Docker Desktop;
+// on native-Linux docker the node container can't load the host module,
+// so the sysctl is absent and there's nothing to disable). docker
+// exec-only (podman unsupported — a pre-existing limitation carried over
+// from the bgp-peer-frr scenario). Best-effort per node; idempotent.
+func disableBridgeNetfilter(ctx context.Context, provider string, nodes []string, out io.Writer) {
+	const sysctl = "/proc/sys/net/bridge/bridge-nf-call-iptables"
+	for _, n := range nodes {
+		if n == "" {
+			continue
+		}
+		_ = exec.CommandContext(ctx, provider, "exec", n, "modprobe", "br_netfilter").Run()
+		o, err := exec.CommandContext(ctx, provider, "exec", n, "sh", "-c",
+			"if [ -e "+sysctl+" ]; then echo 0 > "+sysctl+" && echo set; else echo absent; fi").CombinedOutput()
+		switch {
+		case err != nil:
+			fmt.Fprintf(out, "      WARN: bridge-nf-call-iptables on %s: %v\n", n, err)
+		case strings.TrimSpace(string(o)) == "absent":
+			fmt.Fprintf(out, "      bridge-nf-call-iptables on %s: absent (NAD bridge bypasses iptables)\n", n)
+		default:
+			fmt.Fprintf(out, "      bridge-nf-call-iptables=0 on %s\n", n)
+		}
+	}
 }
 
 // ---------- shrink (optional) ----------
