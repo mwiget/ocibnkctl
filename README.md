@@ -713,7 +713,10 @@ the **same** host, so an extra TMM node adds load, not capacity.
 **All-active data plane (optional).** `bnk.tmm_dataplane_mode` selects how
 multi-node TMM presents its data plane — the two all-active modes are
 mutually exclusive on `net1` (one needs mapres `TRUE`, the other `FALSE`),
-so it's a three-value enum rather than a bool:
+so it's a three-value enum rather than a bool. For the full architecture —
+how each mode wires TMM, why `anycast-bgp` needs no `F5SPKVlan`, and how
+they compare to production BNK and the `tmmlite` model — see
+[`docs/dataplane-modes.md`](docs/dataplane-modes.md).
 
 | `tmm_dataplane_mode` | `net1` / mapres | What `deploy` does |
 |---|---|---|
