@@ -127,14 +127,14 @@ shared-VLAN + DAG model. `anycast-bgp` is the pod-IP + BGP + ECMP model.
 ### Datapath — `selfip-dag` (mapres TRUE, self-IP + DAG)
 
 ```
-                          TMM pod (default)  app=f5-tmm
-                          ┌───────────────────────────────────────┐
- net1 / f5-tmm-dag bridge │ net1 ─▶[xnet1]  mapres splice          │ eth0 / Calico
- (192.0.2.0/24)           │   becomes interface "1.1"             │ (backend wire)
-   ── ingress ──▶         │   F5SPKVlan binds 1.1 → self-IP        │ ── SNAT-automap ──▶ backends
-                          │   192.0.2.1{0,1,…} (one per TMM)       │   src = TMM eth0 pod IP
+                           TMM pod (default)  app=f5-tmm
+                          ┌────────────────────────────────────────┐
+net1 / f5-tmm-dag bridge  │ net1 ─▶[xnet1]  mapres splice          │ eth0 / Calico
+(192.0.2.0/24)            │   becomes interface "1.1"              │ (backend wire)
+  ── ingress ──▶          │   F5SPKVlan binds 1.1 → self-IP        │ ── SNAT-automap ──▶ backends
+                          │   192.0.2.1{0,1,…} (one per TMM)       │ src = TMM eth0 pod IP
                           │   DAG: pod_hash=SRC_ADDR               │
-                          └───────────────────────────────────────┘
+                          └────────────────────────────────────────┘
    one self-IP per TMM, all on the shared f5-tmm-dag bridge; the DAG
    hashes flows across the replicas' self-IPs (production BNK's model).
 ```
@@ -143,16 +143,17 @@ shared-VLAN + DAG model. `anycast-bgp` is the pod-IP + BGP + ECMP model.
 
 ```
  FRR peer (per TMM node)            TMM pod (default)  app=f5-tmm
- ┌──────────────────┐              ┌───────────────────────────────────────┐
- │ bnk-frr DaemonSet│ net1/bridge  │ net1  192.168.99.x  (kernel IP kept)   │ eth0 / Calico
- │ net1 192.168.99.2│ ◀── BGP ───▶ │   ZeBOS (f5-tmm-routing):              │ ── SNAT-automap ──▶
- │ AS 65001         │  br-bnk-bgp  │     router bgp 65000                   │   backends
- │ listen-range     │              │     bgp router-id %%POD_IP%% (per pod) │
- │ 192.168.99.0/24  │ ◀ VIP /32 ── │     redistribute kernel + connected    │
- └──────────────────┘  advertised  │     neighbor 192.168.99.2 update-source net1
-        │                          └───────────────────────────────────────┘
-        └─ installs VIP /32 as a kernel route via net1 → data-plane curls
-           reach Gateways over the NAD bridge (control-plane BGP demo).
+ ┌──────────────────┐              ┌────────────────────────────────────────┐
+ │ bnk-frr DaemonSet│ net1/bridge  │ net1 192.168.99.x  (kernel IP kept)    │ eth0 / Calico
+ │ net1 192.168.99.2│ ◀── BGP ──▶  │  ZeBOS (f5-tmm-routing):               │ ── SNAT-automap ──▶
+ │ AS 65001         │  br-bnk-bgp  │    router bgp 65000                    │ backends
+ │ listen-range     │              │    bgp router-id %%POD_IP%%  ← per pod │
+ │ 192.168.99.0/24  │ ◀ VIP /32    │    redistribute kernel + connected     │
+ └──────────────────┘  advertised  │    neighbor 192.168.99.2               │
+                                   │      update-source net1                │
+                                   └────────────────────────────────────────┘
+                       installs VIP /32 as a kernel route via net1 → data-plane
+                       curls reach Gateways over the NAD bridge (BGP demo).
 
    each TMM advertises the SAME VIP /32 from its OWN session; the router
    learns it from N next-hops and ECMPs across the TMM pods (anycast).
