@@ -6,6 +6,7 @@
 ![Go](https://img.shields.io/github/go-mod/go-version/mwiget/ocibnkctl)
 ![License](https://img.shields.io/github/license/mwiget/ocibnkctl)
 ![Last commit](https://img.shields.io/github/last-commit/mwiget/ocibnkctl)
+[![regcachectl](https://img.shields.io/badge/image%20cache-regcachectl-2496ed?logo=docker&logoColor=white)](https://github.com/mwiget/regcachectl)
 [![Release](https://img.shields.io/github/v/release/mwiget/ocibnkctl?label=download)](https://github.com/mwiget/ocibnkctl/releases/latest)
 
 Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.0
