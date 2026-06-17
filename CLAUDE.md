@@ -158,6 +158,29 @@ registers the k3s cluster with bnk-forge. If bnk-forge isn't running, the
 hook logs a clean skip and continues — deployment never blocks on it.
 `ocibnkctl` will not install or start bnk-forge.
 
+## Local registry cache (optional)
+
+Repeated cluster create/destroy cycles re-pull the same images (each k3s node's
+containerd store is wiped on `destroy`). The companion **`regcachectl`** tool
+(separate repo, `../regcachectl`) runs a host-local pull-through cache fleet —
+anonymous `registry:2` caches for `docker.io`/`ghcr.io`/`quay.io` and a
+**credential-free blob cache** for `repo.f5.com`. Opt a cluster in via `poc.yaml`:
+
+```yaml
+cluster:
+  registry_cache:
+    enabled: true            # default false → direct pulls, unchanged
+    host: host.docker.internal   # optional
+    port_base: 5000              # optional
+```
+
+`cluster up` (and `scale`) then render `artifacts/registries.yaml` (each upstream
+→ cache, real upstream as fallback; plus a `configs:` block carrying THIS PoC's
+FAR key for the credential-free F5 cache) and bind-mount it into every node.
+The cache stores no secret; each cluster supplies its own key, so GA vs
+engineering builds share one cache. Renderer/mount: `internal/cluster/
+{registries,k3s}.go`; wiring: `applyRegistryCache` in `internal/cli/backend.go`.
+
 ## Customer-supplied secrets
 
 `keys/f5-far-auth-key.tgz` (FAR image-pull tarball for `repo.f5.com`) and

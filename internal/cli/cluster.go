@@ -108,6 +108,14 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if err := prov.EnsurePresent(); err != nil {
 		return err
 	}
+	// Opt-in: steer node containerd at the local pull-through cache fleet
+	// (regcachectl). Renders + mounts registries.yaml on every node. Must run
+	// before CreateCluster.
+	if msg, err := applyRegistryCache(prov, p, repo); err != nil {
+		return err
+	} else if msg != "" {
+		fmt.Fprintf(out, "      %s\n", msg)
+	}
 
 	// 2. Render the backend config + create cluster (idempotent).
 	cfgName := prov.ConfigArtifact()

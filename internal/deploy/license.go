@@ -33,8 +33,8 @@ type JWTInfo struct {
 //     authoritative because each environment (prod / tst / future stg)
 //     publishes its own keys and only verifies tokens signed by them.
 //     Substring matches on the hostname:
-//       product-tst.apis.f5networks.net → tst
-//       product.apis.f5.com             → prod
+//     product-tst.apis.f5networks.net → tst
+//     product.apis.f5.com             → prod
 //
 //  2. claims.sub prefix — "TST-*" is a strong secondary signal when
 //     jku is missing or unrecognized (e.g. hand-crafted test tokens).
@@ -235,8 +235,8 @@ func buildGARDockerConfig(saJSON []byte) []byte {
 // password directly. Handles both auth forms in case an operator
 // supplies a hand-crafted dockerconfigjson:
 //
-//   _json_key:<raw-json>            (older bnk-forge convention)
-//   _json_key_base64:<base64-json>  (current f5-bnk convention)
+//	_json_key:<raw-json>            (older bnk-forge convention)
+//	_json_key_base64:<base64-json>  (current f5-bnk convention)
 func UnwrapGARAuth(dockerCfg []byte) (string, error) {
 	var cfg struct {
 		Auths map[string]struct {
@@ -269,6 +269,50 @@ func UnwrapGARAuth(dockerCfg []byte) (string, error) {
 	default:
 		return "", fmt.Errorf("auth does not start with _json_key: or _json_key_base64:")
 	}
+}
+
+// FARCreds extracts the repo.f5.com upstream username/password from the FAR
+// tgz, for placing in a client-side k3s registries.yaml `configs` block. This
+// lets each cluster authenticate the pull-through cache itself (different BNK
+// versions can carry different keys) while the cache stores no credential.
+func FARCreds(tgzPath string) (username, password string, err error) {
+	cfg, err := ExtractFARDockerConfig(tgzPath)
+	if err != nil {
+		return "", "", err
+	}
+	var doc struct {
+		Auths map[string]struct {
+			Auth     string `json:"auth"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(cfg, &doc); err != nil {
+		return "", "", fmt.Errorf("parse far dockerconfig: %w", err)
+	}
+	e, ok := doc.Auths["repo.f5.com"]
+	if !ok {
+		for _, v := range doc.Auths { // fall back to any entry
+			e = v
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return "", "", fmt.Errorf("far dockerconfig has no auth entries")
+	}
+	if e.Username != "" {
+		return e.Username, e.Password, nil
+	}
+	dec, err := base64.StdEncoding.DecodeString(e.Auth)
+	if err != nil {
+		return "", "", fmt.Errorf("decode far auth: %w", err)
+	}
+	u, p, found := strings.Cut(string(dec), ":")
+	if !found {
+		return "", "", fmt.Errorf("far auth not in user:pass form")
+	}
+	return u, p, nil
 }
 
 // RenderFARSecret produces a Secret manifest of type

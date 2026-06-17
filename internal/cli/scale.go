@@ -90,6 +90,13 @@ func runScale(ctx context.Context, out io.Writer, f *scaleFlags) error {
 	if err := prov.EnsurePresent(); err != nil {
 		return err
 	}
+	// Mirror the registry-cache wiring so scaled-up worker nodes pull through
+	// the same fleet as the originals (no-op when disabled). Before AddWorker.
+	if msg, err := applyRegistryCache(prov, p, repo); err != nil {
+		return err
+	} else if msg != "" {
+		fmt.Fprintf(out, "      %s\n", msg)
+	}
 	nodeImage := p.Versions.NodeImage
 	if nodeImage == "" {
 		nodeImage = prov.DefaultNodeImage()
