@@ -13,23 +13,23 @@ const (
 )
 
 type PoC struct {
-	APIVersion string    `yaml:"apiVersion"`
-	Kind       string    `yaml:"kind"`
-	Metadata   Metadata  `yaml:"metadata"`
-	Versions   Versions  `yaml:"versions"`
-	Cluster    Cluster   `yaml:"cluster"`
-	Networks   Networks  `yaml:"networks"`
-	BNK        BNK       `yaml:"bnk"`
-	BNKForge   BNKForge  `yaml:"bnk_forge,omitempty"`
-	Status     Status    `yaml:"status"`
+	APIVersion string   `yaml:"apiVersion"`
+	Kind       string   `yaml:"kind"`
+	Metadata   Metadata `yaml:"metadata"`
+	Versions   Versions `yaml:"versions"`
+	Cluster    Cluster  `yaml:"cluster"`
+	Networks   Networks `yaml:"networks"`
+	BNK        BNK      `yaml:"bnk"`
+	BNKForge   BNKForge `yaml:"bnk_forge,omitempty"`
+	Status     Status   `yaml:"status"`
 }
 
 type Metadata struct {
-	Name              string    `yaml:"name"`
-	Customer          string    `yaml:"customer,omitempty"`
-	Created           time.Time `yaml:"created"`
-	OcibnkctlVersion  string    `yaml:"ocibnkctl_version,omitempty"`
-	BNKVersion        string    `yaml:"bnk_version"`
+	Name             string    `yaml:"name"`
+	Customer         string    `yaml:"customer,omitempty"`
+	Created          time.Time `yaml:"created"`
+	OcibnkctlVersion string    `yaml:"ocibnkctl_version,omitempty"`
+	BNKVersion       string    `yaml:"bnk_version"`
 }
 
 // Versions captures the BNK 2.3.0 component pins. FLOChart is resolved
@@ -57,6 +57,45 @@ type Cluster struct {
 	// available in demo mode — each TMM serves the traffic that lands on
 	// its own node.
 	TMMNodes int `yaml:"tmm_nodes,omitempty"`
+	// RegistryCache opts this cluster into pulling images through a local
+	// pull-through cache fleet (the companion `regcachectl` tool) so repeated
+	// cluster create/destroy cycles stop re-pulling the same images. When
+	// enabled, `cluster up` renders a k3s registries.yaml mapping each upstream
+	// (docker.io/ghcr.io/quay.io/repo.f5.com) to http://<Host>:<PortBase+i>
+	// with the real upstream as a fallback, and bind-mounts it into every node.
+	// Opt-in: unset → today's direct-pull behaviour, no change.
+	RegistryCache RegistryCache `yaml:"registry_cache,omitempty"`
+}
+
+// RegistryCache configures the optional local pull-through cache wiring.
+// The cache fleet itself is managed out-of-band by `regcachectl up`; this
+// block only steers the cluster's nodes at it.
+type RegistryCache struct {
+	Enabled bool `yaml:"enabled"`
+	// Host is the address the k3s node containers use to reach the
+	// host-published caches. Defaults to host.docker.internal (resolved via
+	// an --add-host host-gateway alias added to every node). Override with a
+	// bridge-gateway IP if host.docker.internal is unavailable.
+	Host string `yaml:"host,omitempty"`
+	// PortBase is the host port of the first cache (docker.io); the rest
+	// follow in order. Defaults to 5000, matching regcachectl's layout.
+	PortBase int `yaml:"port_base,omitempty"`
+}
+
+// CacheHost returns the cache host, defaulting to host.docker.internal.
+func (r RegistryCache) CacheHost() string {
+	if r.Host == "" {
+		return "host.docker.internal"
+	}
+	return r.Host
+}
+
+// CachePortBase returns the first cache's host port, defaulting to 5000.
+func (r RegistryCache) CachePortBase() int {
+	if r.PortBase <= 0 {
+		return 5000
+	}
+	return r.PortBase
 }
 
 // Workers returns the configured TMM/agent node count, defaulting to 1

@@ -25,6 +25,12 @@ import (
 type K3s struct {
 	Runtime Runtime
 	Out     io.Writer
+	// RegistriesYAMLPath, when set, is the absolute host path of a rendered
+	// registries.yaml (see RenderRegistriesYAML) bind-mounted into every
+	// server/agent node at /etc/rancher/k3s/registries.yaml so containerd
+	// pulls through the local regcachectl pull-through caches. Empty = today's
+	// behaviour (direct pulls).
+	RegistriesYAMLPath string
 }
 
 const (
@@ -70,6 +76,20 @@ var k3sServerArgs = []string{
 	"--disable=servicelb",
 	"--disable=metrics-server",
 	"--tls-san=127.0.0.1",
+}
+
+// mirrorArgs returns the `<runtime> run` flags that wire a node container to
+// the local pull-through cache fleet: the registries.yaml bind-mount plus the
+// host-gateway alias so the host-published caches resolve from inside the node
+// netns. Empty when RegistriesYAMLPath is unset.
+func (k *K3s) mirrorArgs() []string {
+	if k.RegistriesYAMLPath == "" {
+		return nil
+	}
+	return []string{
+		"--add-host", "host.docker.internal:host-gateway",
+		"-v", k.RegistriesYAMLPath + ":/etc/rancher/k3s/registries.yaml:ro",
+	}
 }
 
 func (k *K3s) rt() string {
@@ -304,6 +324,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 		"-p", "127.0.0.1::6443",
 	}
 	serverArgs = append(serverArgs, dns...)
+	serverArgs = append(serverArgs, k.mirrorArgs()...)
 	serverArgs = append(serverArgs, nodeImage, "server", "--node-name", server)
 	serverArgs = append(serverArgs, k3sServerArgs...)
 	if err := k.runVisible(ctx, serverArgs...); err != nil {
@@ -361,6 +382,7 @@ func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage 
 		"-e", "K3S_URL=https://" + server + ":6443",
 	}
 	agentArgs = append(agentArgs, dns...)
+	agentArgs = append(agentArgs, k.mirrorArgs()...)
 	agentArgs = append(agentArgs, nodeImage, "agent", "--node-name", agent)
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
 		return fmt.Errorf("start k3s agent %s: %w", agent, err)
