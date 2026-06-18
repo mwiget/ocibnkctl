@@ -130,7 +130,16 @@ func (e *exporter) collect() ([]sample, error) {
 			for _, r := range rows {
 				lbls := make([]label, 0, len(keyCols))
 				for _, kc := range keyCols {
-					lbls = append(lbls, label{sanitize(kc.Name), r.Value(kc)})
+					v := r.Value(kc)
+					// tmstat addresses (pool_member.addr, virtual_server
+					// .destination/.source) are 20-byte colon-hex — decode to a
+					// human IP so the dashboard labels are meaningful.
+					if kc.IsAddress() {
+						if ip, ok := tmstat.DecodeAddr(v); ok {
+							v = ip
+						}
+					}
+					lbls = append(lbls, label{sanitize(kc.Name), v})
 				}
 				out = append(out, sample{metric: metric, labels: lbls, value: r.Float(c)})
 			}

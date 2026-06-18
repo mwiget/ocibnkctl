@@ -33,6 +33,25 @@ func loadSegment(t *testing.T) *Segment {
 	return seg
 }
 
+func TestDecodeAddr(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"00:00:00:00:00:00:00:00:00:00:FF:FF:A9:FE:00:01:00:00:00:00", "169.254.0.1", true},
+		{"00:00:00:00:00:00:00:00:00:00:FF:FF:CB:00:71:64:00:00:00:00", "203.0.113.100", true},
+		{"00:00:00:00:00:00:00:00:00:00:FF:FF:7F:14:01:FE:00:00:00:00", "127.20.1.254", true},
+		{"FE:80:00:00:00:00:00:00:02:01:23:FF:FE:45:67:00:00:00:00:00", "fe80::201:23ff:fe45:6700", true},
+		{"not-an-address", "", false},
+	}
+	for _, c := range cases {
+		got, ok := DecodeAddr(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("DecodeAddr(%q) = %q,%v; want %q,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 func TestSegmentBasics(t *testing.T) {
 	seg := loadSegment(t)
 	if seg.slabSize != 4096 {

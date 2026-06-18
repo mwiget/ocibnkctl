@@ -35,6 +35,7 @@ package tmstat
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -83,6 +84,34 @@ func (c Column) IsCounter() bool { return c.Rule == ruleCounter }
 // metric sample), as opposed to a string or byte address.
 func (c Column) IsNumeric() bool {
 	return c.Type == typeSignedInt || c.Type == typeUnsignedInt
+}
+
+// IsAddress reports whether the column is a tmstat byte-address (type 6) —
+// rendered as colon-hex by Value, but decodable to a human IP via DecodeAddr.
+func (c Column) IsAddress() bool { return c.Type == typeAddress }
+
+// DecodeAddr converts a tmstat 20-byte colon-hex address (the form Value returns
+// for type-6 columns, e.g. pool_member.addr / virtual_server.destination) to a
+// human-readable IP. The layout is a 16-byte IP — IPv4-mapped when bytes 10-11
+// are ff:ff — followed by a 4-byte route domain. Returns (ip, true) on success,
+// ("", false) if the input isn't 20 hex bytes.
+func DecodeAddr(colonHex string) (string, bool) {
+	parts := strings.Split(colonHex, ":")
+	if len(parts) != 20 {
+		return "", false
+	}
+	var b [20]byte
+	for i, p := range parts {
+		v, err := strconv.ParseUint(p, 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b[i] = byte(v)
+	}
+	if b[10] == 0xff && b[11] == 0xff {
+		return net.IPv4(b[12], b[13], b[14], b[15]).String(), true
+	}
+	return net.IP(b[:16]).String(), true
 }
 
 // Table is the schema + location metadata for one tmstat table.
