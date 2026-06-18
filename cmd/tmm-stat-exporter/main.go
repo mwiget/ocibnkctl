@@ -124,6 +124,11 @@ func (e *exporter) collect() ([]sample, error) {
 				valCols = append(valCols, c)
 			}
 		}
+		// Drop tmm's internal objects: it names control-plane pools / virtuals
+		// with a leading underscore (_kmd_pool, _tmm_apmd_pool, …) — noise for
+		// users, never their traffic. Filtering here keeps them out of Prometheus
+		// entirely (not just hidden in a panel).
+		rows = dropInternal(rows, keyCols)
 		prefix := "f5tmm_" + strings.TrimSuffix(name, "_stat") + "_"
 		for _, c := range valCols {
 			metric := prefix + sanitize(c.Name)
@@ -146,6 +151,26 @@ func (e *exporter) collect() ([]sample, error) {
 		}
 	}
 	return out, nil
+}
+
+// dropInternal removes rows whose key identity starts with "_" — tmm's
+// convention for internal objects (control-plane pools/virtuals) that aren't
+// user traffic. Filters in place (reuses the backing array).
+func dropInternal(rows []tmstat.Row, keyCols []tmstat.Column) []tmstat.Row {
+	out := rows[:0]
+	for _, r := range rows {
+		internal := false
+		for _, kc := range keyCols {
+			if strings.HasPrefix(r.Value(kc), "_") {
+				internal = true
+				break
+			}
+		}
+		if !internal {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
