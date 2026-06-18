@@ -153,17 +153,30 @@ func (e *exporter) collect() ([]sample, error) {
 	return out, nil
 }
 
-// dropInternal removes rows whose key identity starts with "_" — tmm's
-// convention for internal objects (control-plane pools/virtuals) that aren't
-// user traffic. Filters in place (reuses the backing array).
+// dropInternal removes rows that belong to tmm's own control plane rather than
+// user traffic, on two signals:
+//   - a key whose name starts with "_" — tmm's convention for internal objects
+//     (control-plane pools/virtuals: _kmd_pool, _tmm_apmd_pool, …)
+//   - an address key that decodes to a link-local address — 169.254.x.x
+//     (IPv4) or fe80:: (IPv6) — tmm's internal self/management addresses,
+//     never user-facing.
+//
+// Filters in place (reuses the backing array).
 func dropInternal(rows []tmstat.Row, keyCols []tmstat.Column) []tmstat.Row {
 	out := rows[:0]
 	for _, r := range rows {
 		internal := false
 		for _, kc := range keyCols {
-			if strings.HasPrefix(r.Value(kc), "_") {
+			v := r.Value(kc)
+			if strings.HasPrefix(v, "_") {
 				internal = true
 				break
+			}
+			if kc.IsAddress() {
+				if ip, ok := tmstat.DecodeAddr(v); ok && isLinkLocal(ip) {
+					internal = true
+					break
+				}
 			}
 		}
 		if !internal {
@@ -171,6 +184,13 @@ func dropInternal(rows []tmstat.Row, keyCols []tmstat.Column) []tmstat.Row {
 		}
 	}
 	return out
+}
+
+// isLinkLocal reports whether a decoded IP is link-local: 169.254.0.0/16
+// (IPv4) or fe80::/10 (IPv6). tmm uses these for internal self/management
+// addresses, never user traffic.
+func isLinkLocal(ip string) bool {
+	return strings.HasPrefix(ip, "169.254.") || strings.HasPrefix(ip, "fe80:")
 }
 
 func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
