@@ -76,12 +76,23 @@ and is shipped inside the binary via `go:embed` (`internal/embedded/`).
 ## Pipeline shape
 
 ```
-validate → cluster up → deploy prereqs → deploy flo → deploy cne
+validate → cluster up → deploy prereqs → deploy flo → deploy cne → deploy telemetry
 ```
 
 Each phase is idempotent and gated by `--yolo` plus a typo-guard:
 `--confirm-cluster <name>` (cluster mutations) or `--confirm-deploy <name>`
-(in-cluster mutations) must echo the PoC name. `e2e` chains all five phases.
+(in-cluster mutations) must echo the PoC name. `e2e` chains all phases.
+
+`deploy telemetry` is optional real-time tmm monitoring (on by default; opt out
+with `poc.yaml` `telemetry.enabled: false`). A mutating admission webhook injects
+a `tmm-stat-exporter` sidecar into the operator-managed f5-tmm pod (the operator
+owns the pod spec, so it can't be patched directly); the sidecar reads tmm's
+`/var/tmstat` segment directly (`internal/tmstat`, no tmctl) and PUSHES the
+metrics to bnk-forge's Prometheus via remote_write — TMM hooks inbound TCP on its
+dataplane interfaces, so the sidecar can't be scraped. The webhook's serving cert
+is issued by cert-manager with the caBundle filled by cainjector. The
+exporter/webhook are locally-built images (`make telemetry-images`), imported
+into the k3s nodes; `deploy telemetry` self-skips if they're absent.
 `destroy` runs them in reverse: bnk-forge unregister → remove k3s node containers
 → remove the cluster's docker network.
 
@@ -99,7 +110,10 @@ cmd/ocibnkctl/        main entrypoint (just wires internal/cli.NewRootCmd)
 internal/cli/          cobra subcommands — root.go assembles the tree
 internal/poc/          poc.yaml schema + I/O + validation
 internal/cluster/      native k3s backend (Provisioner) + docker/podman wrappers
-internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kubectl/helm wrapper)
+internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, telemetry webhook, Runner (kubectl/helm wrapper)
+internal/tmstat/       dependency-free reader for tmm's TMSS shared-memory stat segment (byte-exact vs tmctl)
+cmd/tmm-stat-exporter/ Prometheus exporter sidecar (reads tmstat, pushes remote_write)
+cmd/tmm-stat-webhook/  mutating admission webhook that injects the exporter into operator-managed tmm pods
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/embedded/     go:embed of AGENTS.md, CLAUDE.md, templates/

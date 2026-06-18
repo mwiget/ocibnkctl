@@ -1,4 +1,4 @@
-.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64
+.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64 exporter-image webhook-image telemetry-images
 
 all: build-all
 
@@ -29,6 +29,26 @@ build-darwin-arm64:
 	    -o bin/ocibnkctl-darwin-arm64 ./cmd/ocibnkctl
 
 build-all: build build-linux-arm64
+
+# --- tmm telemetry images (exporter sidecar + injection webhook) ---------
+# Built locally and imported into the k3s nodes by `deploy telemetry` (no
+# registry behind them). IMG_ARCH must match the k3s nodes (default: host arch).
+IMG_ARCH        ?= $(shell go env GOARCH)
+EXPORTER_IMAGE  ?= tmm-stat-exporter:dev
+WEBHOOK_IMAGE   ?= tmm-stat-webhook:dev
+
+exporter-image:
+	@mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(IMG_ARCH) go build -trimpath -ldflags "$(LDFLAGS)" -o bin/tmm-stat-exporter ./cmd/tmm-stat-exporter
+	docker build -f cmd/tmm-stat-exporter/Dockerfile -t $(EXPORTER_IMAGE) .
+
+webhook-image:
+	@mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(IMG_ARCH) go build -trimpath -ldflags "$(LDFLAGS)" -o bin/tmm-stat-webhook ./cmd/tmm-stat-webhook
+	docker build -f cmd/tmm-stat-webhook/Dockerfile -t $(WEBHOOK_IMAGE) .
+
+# Build both telemetry images (deploy telemetry imports them into the nodes).
+telemetry-images: exporter-image webhook-image
 
 # --- release artifacts --------------------------------------------------
 #
