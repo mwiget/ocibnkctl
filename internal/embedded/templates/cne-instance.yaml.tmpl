@@ -117,3 +117,20 @@ spec:
         value: "{{.MapresOnDP}}"
       - name: "ZEBOS_STATE"
         value: legacy
+      # Cap TMM's mbuf/buffer pool to 768 x 2MB = 1.5GiB instead of letting
+      # the generic-socket driver auto-size to ~fill its cgroup memory limit.
+      # FLO hard-pins the f5-tmm container to 2Gi (the f5-tmm-pod-manager
+      # enforces it — no Deployment/Kyverno override survives), and stock TMM
+      # mlock()s its pool, so auto-sizing lands at ~2.04GiB and the unevictable
+      # overshoot OOM-kills the whole pod (memory.oom.group) on cgroup-v2 hosts
+      # where pinned pages can't spill to swap (e.g. Ubuntu 26.04 / kernel 7).
+      # Pinning it low fits 2Gi with headroom on EVERY host (older releases
+      # only avoided the OOM by luck), with no functional loss on the demo/veth
+      # datapath. IGNORE_MEM_LIMIT skips mapres's no-hugepage memory gate so TMM
+      # starts without host hugepages (USE_PHYS_MEM=false generic-socket mode).
+      # This mirrors tmmlite, which sets both unconditionally. Not host-gated:
+      # safe and strictly more robust everywhere.
+      - name: "TMM_MAPRES_HUGEPAGES"
+        value: "768"
+      - name: "TMM_IGNORE_MEM_LIMIT"
+        value: "TRUE"
