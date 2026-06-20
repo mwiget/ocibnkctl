@@ -51,11 +51,6 @@ var canonicalPhases = []e2ePhase{
 		destructive: true, confirmFlag: "--confirm-deploy", auto: true},
 	{name: "deploy-cne", subcmd: []string{"deploy", "cne"},
 		destructive: true, confirmFlag: "--confirm-deploy"},
-	// Telemetry runs last (the tmm pod must exist first). It self-skips when
-	// poc.yaml telemetry.enabled:false or the local images aren't built, so it
-	// is safe in the default chain.
-	{name: "deploy-telemetry", subcmd: []string{"deploy", "telemetry"},
-		destructive: true, confirmFlag: "--confirm-deploy"},
 }
 
 // autoShrinkDecision reports the host core count, the workers-scaled
