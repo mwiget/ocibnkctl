@@ -13,39 +13,15 @@ const (
 )
 
 type PoC struct {
-	APIVersion string    `yaml:"apiVersion"`
-	Kind       string    `yaml:"kind"`
-	Metadata   Metadata  `yaml:"metadata"`
-	Versions   Versions  `yaml:"versions"`
-	Cluster    Cluster   `yaml:"cluster"`
-	Networks   Networks  `yaml:"networks"`
-	BNK        BNK       `yaml:"bnk"`
-	BNKForge   BNKForge  `yaml:"bnk_forge,omitempty"`
-	Telemetry  Telemetry `yaml:"telemetry,omitempty"`
-	Status     Status    `yaml:"status"`
-}
-
-// Telemetry opts the cluster into real-time tmm monitoring: a mutating webhook
-// injects a tmm-stat-exporter sidecar into the (operator-managed) f5-tmm pod,
-// which reads tmm's /var/tmstat segment and pushes Prometheus remote_write to
-// bnk-forge. Enabled by default; set `telemetry.enabled: false` to opt out.
-type Telemetry struct {
-	// Enabled is a pointer so the zero value (absent block) means "on". Set
-	// explicitly to false to disable.
-	Enabled *bool `yaml:"enabled,omitempty"`
-	// RemoteWriteURL overrides where the exporter pushes. Empty = the default
-	// (the host docker-bridge gateway on :9491 — bnk-forge's Prometheus,
-	// reachable from the tmm pod by plain egress; see deploy/telemetry.go).
-	RemoteWriteURL string `yaml:"remote_write_url,omitempty"`
-}
-
-// TelemetryEnabled reports whether the tmm telemetry webhook + exporter should
-// be wired. Defaults to true unless poc.yaml sets telemetry.enabled:false.
-func (p *PoC) TelemetryEnabled() bool {
-	if p.Telemetry.Enabled != nil {
-		return *p.Telemetry.Enabled
-	}
-	return true
+	APIVersion string   `yaml:"apiVersion"`
+	Kind       string   `yaml:"kind"`
+	Metadata   Metadata `yaml:"metadata"`
+	Versions   Versions `yaml:"versions"`
+	Cluster    Cluster  `yaml:"cluster"`
+	Networks   Networks `yaml:"networks"`
+	BNK        BNK      `yaml:"bnk"`
+	BNKForge   BNKForge `yaml:"bnk_forge,omitempty"`
+	Status     Status   `yaml:"status"`
 }
 
 type Metadata struct {

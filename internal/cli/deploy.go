@@ -27,75 +27,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.AddCommand(newDeployFLOCmd())
 	cmd.AddCommand(newDeployCNECmd())
 	cmd.AddCommand(newDeployShrinkCmd())
-	cmd.AddCommand(newDeployTelemetryCmd())
 	return cmd
-}
-
-// ---------- telemetry ----------
-
-type deployTelemetryFlags struct {
-	pocDir        string
-	yolo          bool
-	confirmDeploy string
-}
-
-func newDeployTelemetryCmd() *cobra.Command {
-	f := &deployTelemetryFlags{}
-	cmd := &cobra.Command{
-		Use:   "telemetry",
-		Short: "Install the tmm real-time telemetry webhook (DESTRUCTIVE: rolls the tmm pod)",
-		Long: `Install real-time tmm monitoring. A mutating admission webhook injects a
-tmm-stat-exporter sidecar into the (operator-managed) f5-tmm pod; the sidecar
-reads tmm's /var/tmstat segment directly and PUSHES the metrics via Prometheus
-remote_write to bnk-forge (TMM hooks inbound TCP on its dataplane interfaces, so
-the sidecar can't be scraped — it pushes outbound). Metrics show up in
-bnk-forge's Grafana under cluster=<poc name>.
-
-The webhook's serving cert is issued by cert-manager (deploy prereqs) with the
-caBundle filled by cainjector. The exporter/webhook images are imported into the
-k3s nodes. Finally the tmm pod is rolled so the sidecar is injected.
-
-Opt out with poc.yaml telemetry.enabled:false; override the push target with
-telemetry.remote_write_url.
-
-Required gates:
-  --yolo                  acknowledge cluster writes
-  --confirm-deploy NAME   must equal poc.yaml.metadata.name`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeployTelemetry(cmd.Context(), cmd.OutOrStdout(), f)
-		},
-	}
-	cmd.Flags().StringVar(&f.pocDir, "poc", "", "PoC repo path (default: current directory)")
-	cmd.Flags().BoolVar(&f.yolo, "yolo", false, "Acknowledge cluster writes")
-	cmd.Flags().StringVar(&f.confirmDeploy, "confirm-deploy", "", "Must equal poc.yaml.metadata.name (typo guard)")
-	return cmd
-}
-
-func runDeployTelemetry(ctx context.Context, out io.Writer, f *deployTelemetryFlags) error {
-	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
-	if err != nil {
-		return err
-	}
-	if err := requireTwoGates(f.yolo, "--confirm-deploy", f.confirmDeploy,
-		p.Metadata.Name, "deploy telemetry"); err != nil {
-		return err
-	}
-	if !p.TelemetryEnabled() {
-		fmt.Fprintln(out, "telemetry.enabled: false — nothing to do.")
-		return nil
-	}
-	r := &deploy.Runner{
-		KubeconfigPath: kubeconfig,
-		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-		Out:            prefixWriter{w: out, prefix: "      | "},
-	}
-	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, kubeconfig)
-
-	if err := deploy.DeployTelemetry(ctx, r, out, p.Metadata.Name, p.Telemetry.RemoteWriteURL); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "\nDONE.")
-	return nil
 }
 
 // ---------- prereqs ----------
