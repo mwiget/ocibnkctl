@@ -73,6 +73,22 @@ const (
 	// declares as supported on the cluster side.
 	CalicoManifestURL = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 
+	// Whereabouts is the cluster-wide IPAM plugin for Multus secondary
+	// interfaces. The base cluster ships none; the foundation layer installs
+	// it so the bnk-bgp NAD's `ipam: {type: whereabouts}` hands each TMM
+	// net1 a UNIQUE address from one shared cluster-wide pool — the
+	// linchpin that lets a single NAD scale to N TMM workers (wholeCluster
+	// DaemonSet) without per-node net1 IP collisions on the shared edge L2.
+	// All three manifests are SHA-pinned (see deploy.EnsureWhereabouts); the
+	// DaemonSet image is repinned off upstream's :latest to this tag.
+	WhereaboutsTag               = "v0.8.0"
+	WhereaboutsDaemonSetURL      = "https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.8.0/doc/crds/daemonset-install.yaml"
+	WhereaboutsDaemonSetSHA      = "4292b79c85115823b697d99171eb701783eaecf13c0eb8d6a6657f1c5d86b2eb"
+	WhereaboutsIPPoolCRDURL      = "https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.8.0/doc/crds/whereabouts.cni.cncf.io_ippools.yaml"
+	WhereaboutsIPPoolCRDSHA      = "8957e53f260e5ee0ad6560743d02c609ff21e15f6c3b23851971522b3bf6027a"
+	WhereaboutsReservationCRDURL = "https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.8.0/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml"
+	WhereaboutsReservationCRDSHA = "59ff31b1cbe8ff7732160f3f533a71884c4bb03b18d2aa48c97b0a2aadcc4cb0"
+
 	// DockerNetworkInternal / External are the default names used when
 	// poc.yaml leaves networks.{internal,external}.name unset. The k3s
 	// cluster's two node containers both join these networks so
