@@ -6,20 +6,21 @@
 // BIG-IP Next for Kubernetes Controller [...] watches multiple
 // namespaces" and that all BNK components share a namespace.
 // Our deploy already runs FLO in that posture
-// (CNEInstance.spec.watchNamespaces=["All"], single
-// f5-cne-controller Deployment in `default`).
+// (CNEInstance.spec.wholeCluster=true — which watches every
+// namespace by design — single f5-cne-controller Deployment in
+// `default`).
 //
 // The scenario doesn't reconfigure anything — it asserts the
 // claim concretely by:
 //
-//   1. Reading the CNEInstance and confirming watchNamespaces
-//      includes "All".
-//   2. Confirming the f5-cne-controller Deployment is a single
-//      replica (the "one controller" claim).
-//   3. Applying a brand-new namespace `scn-cwatch` with its own
-//      Gateway + HTTPRoute + nginx backend, then asserting the
-//      same controller reconciles those resources without any
-//      per-namespace controller install.
+//  1. Reading the CNEInstance and confirming it watches the whole
+//     cluster (wholeCluster=true, or legacy watchNamespaces=["All"]).
+//  2. Confirming the f5-cne-controller Deployment is a single
+//     replica (the "one controller" claim).
+//  3. Applying a brand-new namespace `scn-cwatch` with its own
+//     Gateway + HTTPRoute + nginx backend, then asserting the
+//     same controller reconciles those resources without any
+//     per-namespace controller install.
 //
 // This is the most honest interpretation we can give of how-to #2
 // on kind: the docs are conceptual, the running cluster already
@@ -64,7 +65,7 @@ kubectl commands; it states two load-bearing claims:
     namespace."
 
 Our ocibnkctl deploy already runs FLO in that posture:
-  - CNEInstance.spec.watchNamespaces = ["All"]
+  - CNEInstance.spec.wholeCluster = true (watches every namespace)
   - f5-cne-controller is a single Deployment in the
     default namespace
   - f5-cne-core hosts the shared CWC + DSSM + RabbitMQ +
@@ -128,14 +129,21 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	r := ctx.Runner
 	res := scenarios.Result{}
 
-	// 1. CNEInstance.spec.watchNamespaces contains "All".
+	// 1. The controller watches the whole cluster. Under wholeCluster=true
+	//    (the default since the DaemonSet migration) BNK watches every
+	//    namespace by design — there is no watchNamespaces field. Older
+	//    configs expressed the same intent as watchNamespaces=["All"].
+	//    Accept either as proof of the cluster-wide-watch behaviour.
+	whole, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get",
+		"cneinstance", "bnk-instance",
+		"-o", `jsonpath={.spec.wholeCluster}`)
 	watch, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get",
 		"cneinstance", "bnk-instance",
 		"-o", `jsonpath={.spec.watchNamespaces}`)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: `CNEInstance.spec.watchNamespaces contains "All"`,
-		OK:          strings.Contains(watch, "All"),
-		Got:         oneLine(watch, 120),
+		Description: `CNEInstance watches the whole cluster (wholeCluster=true or watchNamespaces=["All"])`,
+		OK:          strings.TrimSpace(whole) == "true" || strings.Contains(watch, "All"),
+		Got:         "wholeCluster=" + strings.TrimSpace(whole) + " watchNamespaces=" + oneLine(watch, 80),
 	})
 
 	// 2. f5-cne-controller is exactly one Deployment with one
