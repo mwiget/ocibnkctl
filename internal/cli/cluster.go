@@ -27,7 +27,7 @@ func newClusterCmd() *cobra.Command {
 		Use:   "cluster",
 		Short: "Bring up (or down) the k3s cluster",
 	}
-	cmd.AddCommand(newClusterUpCmd())
+	cmd.AddCommand(newClusterUpCmd(), newClusterListCmd(), newClusterUseCmd())
 	return cmd
 }
 
