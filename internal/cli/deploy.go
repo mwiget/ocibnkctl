@@ -414,7 +414,7 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		// `cluster up` already enslaved onto the shared bnk-edge L2 alongside
 		// the external FRR (.41) and origin (.50). No in-cluster FRR: the BGP
 		// peer is the external bnk-edge FRR container.
-		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default")); err != nil {
+		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default", p.Cluster.EdgeNet())); err != nil {
 			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
 		}
 	}

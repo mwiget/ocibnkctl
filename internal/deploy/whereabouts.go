@@ -50,8 +50,18 @@ func EnsureWhereabouts(ctx context.Context, r *Runner) error {
 // pod a UNIQUE net1 from the shared pool, so N TMMs across N workers never
 // collide on the shared bnk-edge L2. Same name/bridge/subnet as RenderBGPNAD
 // (the L2 shape is unchanged) — only the IPAM backend differs.
-func RenderBGPNADWhereabouts(namespace string) string {
-	return renderWhereaboutsBridgeNAD(BGPNADName, namespace, BGPBridge, BGPSubnet, BGPWhereaboutsStart, BGPIPAMEnd)
+//
+// octet is the cluster's edge_octet (Cluster.EdgeNet()): the TMM net1 pool
+// MUST sit on the same 192.168.<octet>.0/24 L2 as the edge fabric's external
+// FRR (.41) and origin (.50), or the TMM can't reach its BGP peer. Deriving
+// the subnet/range from the octet (not the hardcoded .99 constants) is what
+// makes a non-default edge_octet work — with the default octet 99 this yields
+// exactly the old BGPSubnet/.160-.250 values.
+func RenderBGPNADWhereabouts(namespace string, octet int) string {
+	subnet := fmt.Sprintf("192.168.%d.0/24", octet)
+	rangeStart := fmt.Sprintf("192.168.%d.160", octet)
+	rangeEnd := fmt.Sprintf("192.168.%d.250", octet)
+	return renderWhereaboutsBridgeNAD(BGPNADName, namespace, BGPBridge, subnet, rangeStart, rangeEnd)
 }
 
 // renderWhereaboutsBridgeNAD renders a bridge-CNI NetworkAttachmentDefinition
