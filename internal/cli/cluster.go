@@ -213,7 +213,7 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		return fmt.Errorf("no %s node containers found for cluster %q — does `%s` list it?", prov.Backend(), p.Cluster.Name, prov.Tool())
 	}
 	workerNodes := prov.WorkerNodeNames(p.Cluster.Name, p.Cluster.Workers())
-	fmt.Fprintf(out, "[5/6] Labelling %d worker node(s) for TMM ...\n", len(workerNodes))
+	fmt.Fprintf(out, "[5/6] Labelling %d worker node(s) for TMM + dedicating the control node ...\n", len(workerNodes))
 	labelKey, labelVal := p.BNK.TMMLabel()
 	for _, workerNode := range workerNodes {
 		if err := r.Kubectl(ctx, "label", "node", workerNode,
@@ -221,6 +221,22 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 			return fmt.Errorf("label %s %s=%s: %w", workerNode, labelKey, labelVal, err)
 		}
 	}
+	// Dedicate the control node: k3s leaves the server node schedulable
+	// (unlike kubeadm/kind), so without this every BNK control-plane pod
+	// — and, in wholeCluster mode, TMM itself — could land on it. Taint it
+	// control-plane:NoSchedule so the server runs only the k8s control
+	// plane (apiserver/etcd/scheduler + the k3s system pods that already
+	// tolerate this taint) and all BNK workloads land on the labelled
+	// worker(s). NoSchedule (not NoExecute) never evicts a running pod, so
+	// this is safe to (re-)apply on an existing cluster; --overwrite keeps
+	// it idempotent across re-runs. This matches the production topology
+	// (dedicated control node + N TMM workers) the tmmlite fork adopted.
+	serverNode := prov.ServerNodeName(p.Cluster.Name)
+	if err := r.Kubectl(ctx, "taint", "node", serverNode,
+		"node-role.kubernetes.io/control-plane=:NoSchedule", "--overwrite"); err != nil {
+		return fmt.Errorf("taint control node %s: %w", serverNode, err)
+	}
+	fmt.Fprintf(out, "      control node %s tainted control-plane:NoSchedule\n", serverNode)
 
 	// 6. bnk-forge auto-registration (best-effort).
 	fmt.Fprintln(out, "[6/6] bnk-forge registration ...")
