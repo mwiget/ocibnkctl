@@ -241,6 +241,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	deadline := time.Now().Add(2 * time.Minute)
 	gwLearned := false
 	for time.Now().Before(deadline) {
+		scenarios.RetriggerRedistribute(ctx)
 		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		if strings.Contains(bgpTable, "203.0.113.104") {
 			gwLearned = true

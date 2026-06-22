@@ -175,6 +175,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
+		scenarios.RetriggerRedistribute(ctx)
 		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, "203.0.113.100") {
@@ -196,8 +197,8 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	// Also confirm the kernel route is installed on the FRR (BGP→FIB).
 	frrKernelRoute, _ := scenarios.FRRExec(ctx, "ip", "route", "show", "203.0.113.100")
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "FRR kernel route 203.0.113.100/32 installed via net1",
-		OK:          strings.Contains(frrKernelRoute, "net1"),
+		Description: "FRR kernel route 203.0.113.100/32 installed via the bnk-edge nexthop",
+		OK:          strings.Contains(frrKernelRoute, scenarios.EdgePrefix(ctx)),
 		Got:         oneLine(frrKernelRoute, 150),
 	})
 

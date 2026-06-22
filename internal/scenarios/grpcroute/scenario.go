@@ -305,6 +305,7 @@ func waitBGP(ctx *scenarios.Context, addr string) (bool, string) {
 	deadline := time.Now().Add(2 * time.Minute)
 	var last string
 	for time.Now().Before(deadline) {
+		scenarios.RetriggerRedistribute(ctx)
 		t, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		last = t
 		if strings.Contains(t, addr) {

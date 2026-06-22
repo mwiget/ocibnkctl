@@ -182,6 +182,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	deadline := time.Now().Add(2 * time.Minute)
 	gwLearned := false
 	for time.Now().Before(deadline) {
+		scenarios.RetriggerRedistribute(ctx)
 		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		if strings.Contains(bgpTable, "203.0.113.103") {
 			gwLearned = true
@@ -221,22 +222,29 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         fmt.Sprintf("%d/%d", successBodies, curls),
 	})
 
-	// Scrape TMM logs for the token-counting iRule's TOKEN(...) lines.
-	tmm, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pod",
+	// Scrape ALL TMM logs for the token-counting iRule's TOKEN(...) lines.
+	// Under the wholeCluster DaemonSet + anycast there are N TMMs and the FRR's
+	// ECMP picks whichever one handles a given curl, so the iRule fires (and
+	// logs) on ANY of them — scraping only items[0] is a coin-flip. Concatenate
+	// every Running TMM's logs so we observe the counter wherever it fired.
+	tmmList, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pods",
 		"-l", "app=f5-tmm",
 		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	tmm = strings.TrimSpace(tmm)
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
 	// Per-request evidence (rule name + TOKEN(...) + cumulative) fires on
 	// every request, so it's always within the recent window. The
 	// "TOKEN COUNTING IRULE INIT" marker, by contrast, is logged once when
 	// TMM compiles the iRule — on a re-run the Gateway is unchanged so TMM
 	// doesn't recompile and that lone line ages out of --since; check it
 	// against the full log so the assertion stays idempotent across re-runs.
-	tmmLogs, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm,
-		"-c", "f5-tmm", "--since=60s")
-	tmmLogsAll, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm,
-		"-c", "f5-tmm")
+	var tmmLogsB, tmmLogsAllB strings.Builder
+	for _, tmm := range strings.Fields(tmmList) {
+		s, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm, "-c", "f5-tmm", "--since=60s")
+		tmmLogsB.WriteString(s)
+		a, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm, "-c", "f5-tmm")
+		tmmLogsAllB.WriteString(a)
+	}
+	tmmLogs, tmmLogsAll := tmmLogsB.String(), tmmLogsAllB.String()
 	hasToken := strings.Contains(tmmLogsAll, "TOKEN COUNTING IRULE INIT") &&
 		strings.Contains(tmmLogs, "scn-tokencount-gateway-scn-tokencount-token-counting") &&
 		strings.Contains(tmmLogs, "TOKEN(") &&

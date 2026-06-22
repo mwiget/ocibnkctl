@@ -129,6 +129,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
+		scenarios.RetriggerRedistribute(ctx)
 		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, gwAddr) {

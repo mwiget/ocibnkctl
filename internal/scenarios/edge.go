@@ -103,6 +103,37 @@ func FRRNetnsRun(ctx *Context, extraRunArgs []string, cmd ...string) (string, er
 	return runtimeCapture(ctx, args...)
 }
 
+// RetriggerRedistribute re-issues the OcNOS BGP `redistribute kernel/connected
+// route-map RMALL` statements on every TMM pod's f5-tmm-routing daemon. OcNOS
+// XP-6.6.0 only injects a redistributed route into BGP when the statement is
+// (re-)issued at RUNTIME after the route exists — so a Gateway VIP /32 created
+// by a data-plane scenario's Apply (a kernel route on TMM) is NOT advertised to
+// the external FRR until this runs. The deploy + bgp-peer-frr only trigger once,
+// before any data-plane VIP exists, so every FRR-vantage scenario must re-trigger
+// itself. Best-effort + noisy (imish prints stray errors); the caller polls the
+// FRR BGP table to confirm the VIP actually converged, so call this INSIDE that
+// poll loop. AS 65000 matches BGPTMMAS / the bgp-peer-frr scenario.
+func RetriggerRedistribute(ctx *Context) {
+	out, err := ctx.Runner.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pods",
+		"-l", "app=f5-tmm", "-o",
+		`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+	if err != nil {
+		return
+	}
+	for _, pod := range strings.Fields(out) {
+		if pod == "" {
+			continue
+		}
+		// imish -f a tiny config file: unlike repeated `-e` flags (each of which
+		// runs in exec mode and never enters router-bgp config context), a -f
+		// script keeps config-mode context across lines, so the redistribute is
+		// actually re-issued and OcNOS rescans the kernel RIB.
+		_ = ctx.Runner.Kubectl(ctx.Ctx, "-n", "default", "exec", pod,
+			"-c", "f5-tmm-routing", "--", "sh", "-c",
+			`printf 'configure terminal\nrouter bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`)
+	}
+}
+
 func oneLineEdge(s string, n int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 	if len(s) > n {
