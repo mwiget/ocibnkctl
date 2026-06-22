@@ -42,10 +42,13 @@ type Versions struct {
 	CNEManifest string `yaml:"cne_manifest"`
 }
 
-// Cluster is the cluster shape: one combined control-plane+worker
-// (server) plus TMMNodes worker (agent) nodes, each labelled app=f5-tmm.
-// The operator knobs are the cluster name, the container runtime
-// (docker vs podman), and how many TMM nodes to run.
+// Cluster is the cluster shape: one dedicated control node (server,
+// tainted control-plane:NoSchedule) plus TMMNodes worker (agent) nodes,
+// each labelled app=f5-tmm. Under wholeCluster, FLO runs TMM as a
+// DaemonSet so one TMM pod lands on each labelled worker — scaling out is
+// purely a matter of the worker count. The operator knobs are the cluster
+// name, the container runtime (docker vs podman), and how many TMM nodes
+// to run.
 type Cluster struct {
 	Name     string `yaml:"name"`
 	Provider string `yaml:"provider"` // "docker" or "podman"
@@ -108,10 +111,11 @@ func (c Cluster) Workers() int {
 }
 
 // MaxTMMNodes caps tmm_nodes. It's a guard-rail, not a hard product
-// limit (BNK scales TMM to 32 pods); the demo shape runs every k3s node
-// as a container on one host, so this keeps an accidental large value
-// from oversubscribing the box.
-const MaxTMMNodes = 8
+// limit; BNK scales TMM to 32 pods, and under wholeCluster each labelled
+// worker carries one TMM DaemonSet pod, so 32 matches the product ceiling.
+// The demo shape runs every k3s node as a container on one host, so this
+// still keeps an accidental large value from oversubscribing the box.
+const MaxTMMNodes = 32
 
 // Networks are the two docker bridge networks attached to both k3s
 // node containers. They exist as "scenery" — a routable space where

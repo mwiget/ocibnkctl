@@ -5,10 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this binary is
 
 `ocibnkctl` is a single-binary Go CLI that drives a full F5 BIG-IP Next for
-Kubernetes (BNK) 2.3.0 deployment onto a two-node k3s cluster — one combined
-control-plane+worker (server), one worker (agent) dedicated to TMM running in
-**demo mode** (virtio inside the pod netns, no DPU/SR-IOV/Multus required for
-the base shape). It is a copy-fork of
+Kubernetes (BNK) 2.3.0 deployment onto a native k3s cluster: one **dedicated
+control node** (server, tainted `control-plane:NoSchedule`) plus **N worker
+nodes** (`cluster.tmm_nodes`), each labelled `app=f5-tmm`. TMM runs in **demo
+mode** (virtio inside the pod netns, no DPU/SR-IOV) as a FLO **wholeCluster
+DaemonSet** — one TMM per labelled worker — so the data plane scales out with
+the worker count. The default data-plane mode is **anycast-bgp** (each TMM
+gets a net1 via Multus + whereabouts IPAM on the `bnk-bgp` NAD and advertises
+its VIP /32 over BGP). It is a copy-fork of
 [`dpubnkctl`](https://github.com/mwiget/dpubnkctl) with the
 bare-metal/DPU/kubespray pipeline replaced by native k3s-in-containers, but
 with `internal/deploy` and `internal/bnkforge` forked verbatim (with local
@@ -27,9 +31,10 @@ Calico's `mount-bpffs` init works — plain `docker run` is `rprivate`), joins
 the agent over a per-cluster bridge network with a shared token, and extracts
 the kubeconfig via `docker exec`, rewriting it to the host-mapped API port.
 k3s's bundled flannel/traefik/servicelb are disabled so Calico is the CNI;
-the result is the same two-node Calico-CNI v1.30.8 shape the deploy pipeline
-expects. Note k3s leaves the server node **schedulable** (no control-plane
-taint, unlike kind), so non-TMM pods spread across both nodes.
+the result is a Calico-CNI v1.30.8 cluster of 1 control node + N workers.
+k3s leaves the server node schedulable (unlike kind), so `cluster up`
+**taints it** `control-plane:NoSchedule` to dedicate it — all BNK workloads
+(and the TMM DaemonSet) then land only on the labelled worker(s).
 
 ## Build / test / run
 
@@ -86,11 +91,13 @@ Each phase is idempotent and gated by `--yolo` plus a typo-guard:
 `destroy` runs them in reverse: bnk-forge unregister → remove k3s node containers
 → remove the cluster's docker network.
 
-The deploy phase composes three things: cert-manager via helm, the FLO chart
-pulled at deploy time from the BNK release manifest at `repo.f5.com`, and a
-`CNEInstance` CR with `advanced.demoMode.enabled: true` and TMM pinned via
-`nodeSelector: app=f5-tmm`. The CWC cert-gen step shells into an
-`alpine/k8s:1.31.5` container — that container image is a hard runtime
+The deploy phase composes: cert-manager via helm, Multus + whereabouts
+(cluster-wide IPAM for per-TMM net1) and the `bnk-bgp` NAD for the default
+anycast-bgp data plane, the FLO chart pulled at deploy time from the BNK
+release manifest at `repo.f5.com`, and a `CNEInstance` CR with
+`wholeCluster: true` + `advanced.demoMode.enabled: true` (TMM runs as a
+DaemonSet on the `app=f5-tmm` workers — no `tmmReplicas`). The CWC cert-gen
+step shells into an `alpine/k8s:1.31.5` container — that container image is a hard runtime
 dependency at deploy time.
 
 ## Package layout
@@ -124,7 +131,7 @@ Ratings — set by the scenario itself, only after it's been run:
 
 | Rating | Meaning |
 |---|---|
-| **green** | fully testable in the 2-node demo-TMM shape |
+| **green** | fully testable in the demo-TMM shape (1 control node + N TMM workers) |
 | **amber** | control-plane verifies; data-plane plumbing partially missing (a real BNK 2.3 gap, the k3s shape, or both — see the scenario's `Description()` for which) |
 | **red**   | requires DPUs / real upstream BIG-IP / bondable NICs — listed for discoverability, never executed |
 

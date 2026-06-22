@@ -14,14 +14,15 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/version"
 )
 
-// K3s provisions the two-node cluster by running rancher/k3s containers
-// directly on the host's OCI runtime (docker or podman) — the same
-// shape k3d wraps, but with no third-party orchestrator binary. One
-// server container (combined control-plane + worker) and one agent
-// container (the TMM worker, labelled app=f5-tmm by `cluster up`),
-// joined over a per-cluster user-defined bridge network so the agent
-// can resolve the server by container name via the runtime's embedded
-// DNS. It implements Provisioner.
+// K3s provisions the cluster by running rancher/k3s containers directly
+// on the host's OCI runtime (docker or podman) — the same shape k3d
+// wraps, but with no third-party orchestrator binary. One server
+// container (the dedicated control node — `cluster up` taints it
+// control-plane:NoSchedule) plus N agent containers (the TMM workers,
+// labelled app=f5-tmm by `cluster up`; FLO's wholeCluster DaemonSet lands
+// one TMM on each), joined over a per-cluster user-defined bridge network
+// so agents can resolve the server by container name via the runtime's
+// embedded DNS. It implements Provisioner.
 type K3s struct {
 	Runtime Runtime
 	Out     io.Writer

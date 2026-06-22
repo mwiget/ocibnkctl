@@ -28,10 +28,14 @@ func newScaleCmd() *cobra.Command {
 		Short: "Scale the number of TMM nodes up or down (DESTRUCTIVE)",
 		Long: `Change how many worker nodes host TMM (cluster.tmm_nodes), live.
 
-Scale up:   join new k3s agent node(s), label them app=f5-tmm, then
-            raise CNEInstance.tmmReplicas so FLO schedules a TMM on each.
-Scale down: lower tmmReplicas first (drain TMM off the surplus nodes),
-            then remove the surplus agent node container(s).
+Under wholeCluster, FLO runs TMM as a DaemonSet, so the TMM count simply
+tracks the number of app=f5-tmm-labelled worker nodes — there is no
+tmmReplicas to patch.
+
+Scale up:   join new k3s agent node(s) and label them app=f5-tmm; the
+            f5-tmm DaemonSet auto-schedules a TMM pod onto each.
+Scale down: unlabel the surplus node(s) so the DaemonSet drains TMM off
+            them, then remove the surplus agent node container(s).
 
 The new tmm_nodes value is written back to poc.yaml so the next
 deploy/e2e renders the same count.
@@ -109,9 +113,9 @@ func runScale(ctx context.Context, out io.Writer, f *scaleFlags) error {
 	labelKey, labelVal := p.BNK.TMMLabel()
 
 	if target > current {
-		// Scale up: add + label the new node(s) BEFORE raising tmmReplicas,
-		// so FLO has somewhere to land the extra TMM pods (and they don't
-		// stack on an existing node).
+		// Scale up: add + label the new node(s). Labelling app=f5-tmm is all
+		// it takes — the f5-tmm DaemonSet auto-schedules a TMM pod onto each
+		// newly-labelled node. No replica field to bump.
 		names := prov.WorkerNodeNames(p.Cluster.Name, target)
 		for i := current; i < target; i++ {
 			node := names[i]
@@ -124,19 +128,26 @@ func runScale(ctx context.Context, out io.Writer, f *scaleFlags) error {
 				return fmt.Errorf("label %s: %w", node, err)
 			}
 		}
-		setTMMReplicas(ctx, r, out, target)
+		fmt.Fprintf(out, "[*] %d node(s) labelled %s=%s — the f5-tmm DaemonSet schedules a TMM on each.\n",
+			target-current, labelKey, labelVal)
 	} else {
-		// Scale down: drain TMM off the surplus nodes FIRST (lower
-		// tmmReplicas), give FLO a moment to delete those pods, then
-		// remove the node containers from the highest index down.
-		setTMMReplicas(ctx, r, out, target)
+		// Scale down: unlabel the surplus nodes FIRST so the DaemonSet drains
+		// its TMM pod off them, give it a moment, then remove the node
+		// containers from the highest index down.
+		names := prov.WorkerNodeNames(p.Cluster.Name, current)
+		for i := current - 1; i >= target; i-- {
+			node := names[i]
+			fmt.Fprintf(out, "[*] unlabelling %s (%s-) so the DaemonSet drains TMM off it ...\n", node, labelKey)
+			if err := r.Kubectl(ctx, "label", "node", node, labelKey+"-"); err != nil {
+				fmt.Fprintf(out, "      WARN: could not unlabel %s: %v\n", node, err)
+			}
+		}
 		fmt.Fprintln(out, "      waiting 20s for TMM to drain off surplus node(s) ...")
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(20 * time.Second):
 		}
-		names := prov.WorkerNodeNames(p.Cluster.Name, current)
 		for i := current - 1; i >= target; i-- {
 			node := names[i]
 			fmt.Fprintf(out, "[-] removing TMM node %s ...\n", node)
@@ -156,18 +167,4 @@ func runScale(ctx context.Context, out io.Writer, f *scaleFlags) error {
 	fmt.Fprintf(out, "\nDone — cluster.tmm_nodes=%d persisted to poc.yaml.\n", target)
 	fmt.Fprintln(out, "Each TMM serves the traffic that lands on its own node (per-node active/active).")
 	return nil
-}
-
-// setTMMReplicas patches the live CNEInstance's tmmReplicas. If the
-// CNEInstance isn't present yet (deploy not run), it warns rather than
-// failing — the node-level change still stands, and `deploy cne` will
-// render the right count from poc.yaml.
-func setTMMReplicas(ctx context.Context, r *deploy.Runner, out io.Writer, n int) {
-	fmt.Fprintf(out, "[*] setting CNEInstance tmmReplicas=%d ...\n", n)
-	patch := fmt.Sprintf(`{"spec":{"tmmReplicas":%d}}`, n)
-	if err := r.Kubectl(ctx, "-n", "default", "patch", "cneinstance", "bnk-instance",
-		"--type=merge", "-p", patch); err != nil {
-		fmt.Fprintf(out, "      WARN: could not patch CNEInstance (%v)\n", err)
-		fmt.Fprintf(out, "      run `ocibnkctl deploy cne` to apply tmmReplicas=%d once FLO is up.\n", n)
-	}
 }
