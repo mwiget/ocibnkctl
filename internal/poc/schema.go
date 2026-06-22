@@ -60,6 +60,12 @@ type Cluster struct {
 	// available in demo mode — each TMM serves the traffic that lands on
 	// its own node.
 	TMMNodes int `yaml:"tmm_nodes,omitempty"`
+	// EdgeOctet is the 3rd octet of this PoC's bnk-edge network
+	// (192.168.<EdgeOctet>.0/24) — the shared external L2 the workers
+	// dual-home onto, carrying TMM net1 + the external FRR + origin.
+	// Defaults to 99 (use EdgeNet()). Give each cluster a DISTINCT octet so
+	// multiple clusters can run in parallel without docker subnet collisions.
+	EdgeOctet int `yaml:"edge_octet,omitempty"`
 	// RegistryCache opts this cluster into pulling images through a local
 	// pull-through cache fleet (the companion `regcachectl` tool) so repeated
 	// cluster create/destroy cycles stop re-pulling the same images. When
@@ -108,6 +114,15 @@ func (c Cluster) Workers() int {
 		return 1
 	}
 	return c.TMMNodes
+}
+
+// EdgeNet returns the bnk-edge 3rd octet, defaulting to 99 when unset or out
+// of range. The edge network is 192.168.<EdgeNet()>.0/24.
+func (c Cluster) EdgeNet() int {
+	if c.EdgeOctet < 1 || c.EdgeOctet > 254 {
+		return 99
+	}
+	return c.EdgeOctet
 }
 
 // MaxTMMNodes caps tmm_nodes. It's a guard-rail, not a hard product

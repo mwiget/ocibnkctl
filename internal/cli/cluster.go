@@ -70,6 +70,38 @@ Required gates:
 	return cmd
 }
 
+// calicoEdgeExclude renders the Calico CRs that keep the bnk-edge subnet (and
+// the off-subnet egress dests) out of Calico's pod-IPAM and out of its
+// node-to-node BGP mesh, so attaching workers to the shared bnk-edge L2 doesn't
+// collide with Calico routes. Applied before EnsureEdge attaches the workers.
+func calicoEdgeExclude(octet int) string {
+	return fmt.Sprintf(`apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: bnk-edge-exclude
+spec:
+  cidr: 192.168.%d.0/24
+  disabled: true
+---
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: bnk-egress-dest-exclude
+spec:
+  cidr: 198.51.0.0/16
+  disabled: true
+---
+apiVersion: crd.projectcalico.org/v1
+kind: BGPConfiguration
+metadata:
+  name: default
+spec:
+  nodeToNodeMeshEnabled: true
+  ignoredInterfaces:
+  - br-bnk-bgp
+`, octet)
+}
+
 func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	repo, err := resolvePoCDir(f.pocDir)
 	if err != nil {
@@ -237,6 +269,29 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		return fmt.Errorf("taint control node %s: %w", serverNode, err)
 	}
 	fmt.Fprintf(out, "      control node %s tainted control-plane:NoSchedule\n", serverNode)
+
+	// Edge fabric: the shared bnk-edge docker network the workers dual-home
+	// onto (br-bnk-bgp enslaves each worker's uplink so TMM net1 lands on the
+	// shared L2), plus the external FRR BGP peer + external origin containers.
+	// The control node is deliberately left OFF bnk-edge. This gives one
+	// permanent external FRR as the BGP peer + curl vantage for every
+	// data-plane scenario (no per-scenario scn-frr pod).
+	//
+	// Calico (the CNI here) would otherwise grab br-bnk-bgp's /24 for its pod
+	// pool AND advertise each worker's connected /24 over its node mesh — both
+	// collide on the shared bnk-edge L2 (docker refuses the second worker with
+	// "conflicts with existing route"). Exclude the edge subnet from Calico
+	// IPAM + mesh BEFORE attaching the workers.
+	octet := p.Cluster.EdgeNet()
+	fmt.Fprintln(out, "      calico: excluding bnk-edge subnet from IPAM + BGP mesh ...")
+	if err := r.Apply(ctx, calicoEdgeExclude(octet)); err != nil {
+		return fmt.Errorf("calico edge exclude: %w", err)
+	}
+	fmt.Fprintf(out, "      edge: bnk-edge net + external FRR (%s, AS %d) + origin (%s) ...\n",
+		cluster.EdgeFRRIP(octet), cluster.EdgeFRRAS, cluster.EdgeOriginIP(octet))
+	if err := dc.EnsureEdge(ctx, p.Cluster.Name, octet, workerNodes); err != nil {
+		return fmt.Errorf("edge fabric: %w", err)
+	}
 
 	// 6. bnk-forge auto-registration (best-effort).
 	fmt.Fprintln(out, "[6/6] bnk-forge registration ...")

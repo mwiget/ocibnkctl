@@ -108,6 +108,12 @@ func runDestroy(ctx context.Context, out io.Writer, f *destroyFlags) error {
 	if f.keepNetworks {
 		fmt.Fprintln(out, "      skipped (--keep-networks)")
 	} else if rt != "" {
+		// Edge fabric: external FRR + origin containers + the bnk-edge network.
+		// Best-effort (the worker node containers themselves went with the
+		// cluster delete above).
+		if err := dc.RemoveEdge(ctx, p.Cluster.Name); err != nil {
+			fmt.Fprintf(out, "      WARN: %v\n", err)
+		}
 		for _, n := range []string{p.Networks.Internal.Name, p.Networks.External.Name} {
 			if n == "" {
 				continue
