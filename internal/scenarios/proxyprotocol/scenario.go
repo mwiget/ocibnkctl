@@ -100,14 +100,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	// Dependency check.
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod)")
-	}
-
 	// Apply in numbered order so each object's dependencies are in
 	// place before it lands. The BnkNetPolicy is last because it
 	// references both the iRule and the L4Route.
@@ -182,28 +174,12 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         strings.TrimSpace(netpol),
 	})
 
-	// Find FRR pod for the curl source.
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available", OK: false,
-			Got: "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
-	// Wait for FRR to learn 203.0.113.102/32 via BGP.
+	// Wait for the external bnk-edge FRR to learn 203.0.113.102/32 via BGP.
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
-		bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, "203.0.113.102") {
 			hasGW = true
@@ -221,21 +197,15 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(lastTable, 200),
 	})
 
-	// 5x curl through the Gateway TCP listener (port 8000). Expect the
-	// body to contain the marker + a non-trivial proxy_addr — proves
-	// the iRule fired and nginx parsed the PROXY header.
-	_ = r.Kubectl(ctx.Ctx, "-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--",
-		"sh", "-c", "command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1 || true")
+	// 5x curl through the Gateway TCP listener (port 8000) from the FRR netns.
+	// Expect the body to contain the marker + a non-trivial proxy_addr —
+	// proves the iRule fired and nginx parsed the PROXY header.
 	const marker = "ocibnkctl-scenario-proxy-protocol-OK"
 	const curls = 5
 	successCount := 0
 	var lastErr, lastBody string
 	for i := 1; i <= curls; i++ {
-		body, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"curl", "-sS", "--fail", "--max-time", "8",
-			"http://203.0.113.102:8000/",
-		)
+		body, err := scenarios.FRRNetnsCurl(ctx, "http://203.0.113.102:8000/")
 		if err != nil {
 			lastErr = err.Error()
 			continue

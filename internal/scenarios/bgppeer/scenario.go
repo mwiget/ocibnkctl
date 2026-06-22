@@ -1,83 +1,27 @@
-// Package bgppeer implements scenario "bgp-peer-frr": real BGP between
-// TMM's ZeBOS daemon and an FRR pod, peered over a Multus
-// NetworkAttachmentDefinition (the bridge CNI). Maps to F5 BNK how-to
-// #3 (Dynamic Routing with BGP).
+// Package bgppeer is the foundation scenario: it establishes BGP between every
+// TMM's OcNOS and the EXTERNAL FRR container (the ToR) on the shared bnk-edge
+// network. The other data-plane scenarios depend on it — they advertise Gateway
+// VIPs that the external FRR learns, and issue their curls from inside the
+// external FRR's netns (which holds those learned routes).
 //
-// Architecture on k3s + demoMode:
-//
-//	┌──────────────────────────────┐    ┌──────────────────────────┐
-//	│ TMM pod                      │    │ scn-frr pod              │
-//	│   eth0  10.244.x/32 (Calico) │    │   eth0  10.244.x/32      │
-//	│   net1  192.168.99.X         │◄──►│   net1  192.168.99.11    │
-//	│         (Multus bridge)      │    │         (Multus bridge)  │
-//	│   tmm   169.254.0.253/24     │    └──────────────────────────┘
-//	└──────────────────────────────┘
-//	             ▲
-//	             └── BGP rides net1, bypassing TMM's eth0 TCP hook.
-//
-// Why this works (where the previous attempt didn't):
-//   - Multus attaches a second interface (net1) into each pod via the
-//     bridge CNI, plumbed through the same Linux bridge on the k3s
-//     node. Pod-to-pod traffic over net1 is direct L2 — no TMM hook.
-//   - ZeBOS gets `update-source net1` and a neighbor at 192.168.99.11
-//     (FRR's hardcoded NAD IP). BGP packets exit via net1, never
-//     touching the TMM data plane.
-//   - FRR's NAD annotation pins it to 192.168.99.11; bridge-CNI is
-//     per-node, so podAffinity to `app=f5-tmm` co-locates both pods
-//     on the TMM worker (k3s agent).
+// This replaces the former in-cluster scn-frr pod: the external FRR is real,
+// permanent cluster infrastructure (created by `cluster up` via
+// cluster.EnsureEdge), so there is no per-scenario provisioning gate to skip —
+// every data-plane scenario shares the one external FRR.
 package bgppeer
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	"context"
-	"crypto/sha256"
-	"embed"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
-	"io/fs"
-	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 )
 
-//go:embed manifests/*.yaml manifests/*.yaml.tmpl
-var manifestFS embed.FS
-
 const (
 	scnName  = "bgp-peer-frr"
-	scnTitle = "Dynamic routing with BGP (how-to #3) — FRR peer over Multus NAD"
-	// Multus thick-plugin upstream manifest. Pinned + SHA-256 verified —
-	// we apply this DaemonSet to every k3s node, so a tampered manifest
-	// would land cluster-wide CNI plumbing. The SHA was computed at the
-	// time this version was pinned; update both lines together when
-	// bumping multus.
-	multusManifestURL = "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.1.4/deployments/multus-daemonset-thick.yml"
-	multusManifestSHA = "33fef64fbb67ef5d68183bad5b2aec4163dad0ebb0b63abe25343155d0d8b4be"
-	// containernetworking/plugins release. We extract just the `bridge`
-	// binary onto every k3s node — that runs as root inside the node
-	// container, so SHA verification is load-bearing. The tarball is
-	// arch-specific (k3s nodes match the host arch), so the URL +
-	// checksum are selected by the node architecture (see cniPluginsSHA).
-	cniPluginsVersion = "v1.5.1"
-	cniPluginsBaseURL = "https://github.com/containernetworking/plugins/releases/download/" +
-		cniPluginsVersion + "/cni-plugins-linux-"
+	scnTitle = "BGP peering: TMM OcNOS ⇄ external FRR (ToR)"
 )
-
-// cniPluginsSHA maps the node architecture (Kubernetes/GOARCH style) to
-// the sha256 of the matching cni-plugins-linux-<arch>-<ver>.tgz.
-var cniPluginsSHA = map[string]string{
-	"amd64": "77baa2f669980a82255ffa2f2717de823992480271ee778aa51a9c60ae89ff9b",
-	"arm64": "c2a292714d0fad98a3491ae43df8ad58354b3c0bdf5d5a3e281777967c70fcff",
-}
 
 func init() { scenarios.Register(&scenario{}) }
 
@@ -87,884 +31,131 @@ func (s *scenario) Name() string             { return scnName }
 func (s *scenario) Title() string            { return scnTitle }
 func (s *scenario) Rating() scenarios.Rating { return scenarios.Green }
 func (s *scenario) Dependencies() []string   { return nil }
+
 func (s *scenario) Description() string {
-	return strings.TrimSpace(`
-Deploys an FRR BGP peer and establishes a real BGP session with
-TMM's ZeBOS daemon, peered over a Multus NetworkAttachmentDefinition
-using the bridge CNI. The NAD path bypasses TMM's eth0 TCP hook
-entirely — BGP packets ride a Linux bridge between the two pods'
-net1 interfaces.
-
-Pipeline:
-
-  1. Install Multus (thick plugin) if not already running.
-  2. NetworkAttachmentDefinition (bnk-bgp) in default + scn-bgp
-     namespaces. Bridge CNI on a per-node Linux bridge
-     'br-bnk-bgp' with host-local IPAM in 192.168.99.0/24.
-  3. Deploy FRR with the NAD annotation. host-local IPAM hands
-     it an IP (e.g. 192.168.99.20); the scenario discovers it
-     from the pod's network-status annotation at runtime.
-     nodeAffinity to the f5-tmm-labelled node so both pods
-     end up on the same node (bridge CNI is per-node).
-  4. Apply the ZeBOS template ConfigMap with the discovered FRR
-     net1 IP as the neighbor, 'update-source net1', and
-     'redistribute kernel' so connected and Gateway-IP routes
-     get advertised. The redistribute MUST live at the router-bgp
-     scope (not inside address-family) — F5 ZeBOS silently
-     drops it from address-family ipv4.
-  5. Patch CNEInstance:
-       - spec.networkAttachments = ["bnk-bgp"]
-       - flip TMM_MAPRES_ADDL_VETHS_ON_DP to FALSE so TMM's
-         mapres doesn't grab net1 for the userspace data plane
-         and flush its kernel-side IP.
-  6. Restart TMM. Inject /config/zebos/rd0/passwd.conf into the
-     new pod (gate for bfd_watcher to imish-load the ZeBOS
-     config). Retry the inject across the rolling-update
-     overlap window.
-
-The Deployment uses RollingUpdate with maxSurge=25% — for a
-1-replica deployment that allows 2 pods briefly during rollover.
-All TMM lookups in the scenario target the newest Running pod
-(sorted by creationTimestamp) so stale exec results from the
-outgoing pod don't poison the verify step.
-
-Verification (6/6 green):
-  - Multus DaemonSet Ready
-  - FRR pod has net1 on the bnk-bgp bridge
-  - TMM pod has net1 on the bnk-bgp bridge with a kernel IP
-  - ZeBOS in TMM sees the configured neighbor
-  - BGP session Established
-  - FRR BGP table has at least one prefix learned from TMM
-
-Cleanup (standby mode only): revert everything Apply created — reset
-CNEInstance.networkAttachments to [], empty the
-f5-tmm-dynamic-routing-template, delete the scn-bgp namespace and the
-default-namespace bnk-bgp NAD, and restart TMM. Multus stays installed
-(cluster-wide). In anycast-bgp mode the scenario skips, so Cleanup is a
-no-op (the deploy path owns those resources).
-
-Relationship to bnk.tmm_dataplane_mode=anycast-bgp (the default): this
-scenario is the single-TMM, runtime-patch sibling of that persistent
-deploy mode. The deploy mode bakes the same plumbing (bnk-bgp NAD on
-net1, mapres FALSE, the cluster-wide ZeBOS template) into the
-CNEInstance for ALL TMM pods and runs its own FRR peer (the bnk-frr
-DaemonSet), so every TMM advertises its VIP /32 (anycast). Because the
-two would fight over the shared f5-tmm-dynamic-routing-template, this
-scenario now SKIPS ITSELF when the anycast-bgp deploy is active
-(detected by the bnk-frr DaemonSet) — it runs its self-contained setup
-only on a standby-mode cluster. Use the bgp-anycast scenario to verify
-an anycast-bgp deploy.
-`)
+	return "Establishes BGP between every TMM's OcNOS (AS 65000) and the external FRR " +
+		"container (bnk-edge-frr-<cluster>, AS 65001) on the shared bnk-edge L2. The deploy " +
+		"path already configures each TMM (anycast-bgp mode) to peer the external FRR; this " +
+		"scenario (re)triggers BGP redistribution on every TMM so Gateway VIPs and kernel " +
+		"routes are advertised, then verifies the external FRR sees each TMM Established. " +
+		"Replaces the former in-cluster scn-frr pod — the external FRR is a real ToR/BGP peer, " +
+		"and the data-plane scenarios curl from inside its netns."
 }
 
-func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
-	var paths []string
-	err := fs.WalkDir(manifestFS, "manifests", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		body, e := manifestFS.ReadFile(p)
-		if e != nil {
-			return e
-		}
-		base := p[len("manifests/"):]
-		out, e := scenarios.WriteManifest(ctx.PoCDir, scnName, base, string(body))
-		if e != nil {
-			return e
-		}
-		paths = append(paths, out)
-		return nil
-	})
-	return paths, err
-}
+// Manifests: none — the FRR peer is an external container created by the cluster
+// backend, not an in-cluster manifest.
+func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) { return nil, nil }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
-	r := ctx.Runner
-
-	// Under the anycast-bgp default, the deploy path already stands up the
-	// bnk-bgp NAD, an FRR peer (the bnk-frr DaemonSet), the shared ZeBOS
-	// template, and BGP peering for every TMM — and the bgp-anycast scenario
-	// verifies all of it. Running this self-contained how-to on top would
-	// overwrite the shared ZeBOS template (re-pointing TMM at this scenario's
-	// own scn-frr) and hijack the foundation BGP, which Cleanup would then
-	// orphan. So skip cleanly when anycast-bgp is active — this how-to only
-	// stands up its own peer on a standby-mode cluster.
-	if anycastDeployActive(ctx) {
-		fmt.Fprintln(ctx.Out, "      | anycast-bgp deploy detected (bnk-frr DaemonSet present) — "+
-			"BGP peering is already provided by the deploy path; skipping self-setup (see the bgp-anycast scenario).")
-		return nil
-	}
-
-	// 1. Multus install (idempotent — skip if DaemonSet already exists).
-	if err := ensureMultus(ctx); err != nil {
-		return fmt.Errorf("ensure Multus: %w", err)
-	}
-
-	// 1a. Install the bridge CNI plugin on every k3s node. The
-	// rancher/k3s node image ships Calico + a few standard plugins
-	// (host-local, loopback, portmap, tuning) but NOT bridge.
-	// Without it, the bnk-bgp NetworkAttachmentDefinition fails
-	// with "failed to find plugin 'bridge' in path [/opt/cni/bin]".
-	if err := ensureBridgeCNI(ctx); err != nil {
-		return fmt.Errorf("install bridge CNI plugin on cluster nodes: %w", err)
-	}
-
-	// 1b. Stop the node from running bnk-bgp bridge traffic through
-	// iptables, or Calico's natOutgoing MASQUERADE breaks the data plane
-	// (see disableBridgeNetfilter). Must precede any data-plane curl.
-	if err := disableBridgeNetfilter(ctx); err != nil {
-		return fmt.Errorf("disable bridge netfilter on cluster nodes: %w", err)
-	}
-
-	// 2. Namespace + NAD + FRR config + FRR Deployment.
-	for _, f := range []string{
-		"01-namespace.yaml",
-		"02-nad.yaml",
-		"03-frr-config.yaml",
-		"04-frr.yaml",
-	} {
-		body, err := manifestFS.ReadFile("manifests/" + f)
-		if err != nil {
-			return err
-		}
-		if err := r.Apply(ctx.Ctx, string(body)); err != nil {
-			return fmt.Errorf("apply %s: %w", f, err)
-		}
-	}
-
-	// 3. Wait for FRR pod Ready + discover its NAD IP. host-local
-	//    IPAM auto-assigns; we read the actual IP from the pod's
-	//    net1 interface so the ZeBOS render uses the right neighbor
-	//    address regardless of allocation order.
-	if err := r.Wait(ctx.Ctx, "scn-bgp", "Available",
-		"deployment/scn-frr", 2*time.Minute); err != nil {
-		return fmt.Errorf("FRR Deployment not Available: %w", err)
-	}
-	frrIP, err := discoverNet1(ctx, "scn-bgp", "app=scn-frr")
+	pods, err := tmmPods(ctx)
 	if err != nil {
-		return fmt.Errorf("discover FRR net1 IP: %w", err)
+		return fmt.Errorf("list f5-tmm pods: %w", err)
 	}
-	fmt.Fprintf(ctx.Out, "      | FRR net1 IP: %s\n", frrIP)
-
-	// 4. Render ZeBOS template with FRR's discovered NAD IP. Persist
-	//    the rendered file for audit.
-	zebosBody, err := renderTemplate(manifestFS, "manifests/05-zebos-template.yaml.tmpl",
-		struct{ FRRNetIP string }{FRRNetIP: frrIP})
-	if err != nil {
-		return err
+	if len(pods) == 0 {
+		return fmt.Errorf("no Running f5-tmm pods — deploy first")
 	}
-	if _, err := scenarios.WriteManifest(ctx.PoCDir, scnName,
-		"05-zebos.rendered.yaml", zebosBody); err != nil {
-		return err
-	}
-	if err := r.Apply(ctx.Ctx, zebosBody); err != nil {
-		return fmt.Errorf("apply ZeBOS ConfigMap: %w", err)
-	}
-
-	// 4. Patch CNEInstance:
-	//    - spec.networkAttachments = ["bnk-bgp"] so FLO renders the
-	//      Multus pod annotation for TMM
-	//    - flip TMM_MAPRES_ADDL_VETHS_ON_DP to FALSE so TMM's mapres
-	//      doesn't claim net1 and flush its IP. Without this, the
-	//      kernel-side net1 stays UP but loses its IPAM-assigned
-	//      address — ZeBOS can't `update-source net1` against an
-	//      IP-less interface.
-	// Do NOT include `advanced.tmm.annotations` here. Empirically, when
-	// we provide that field, FLO treats it as the authoritative annotation
-	// set and skips its own auto-injection of `k8s.v1.cni.cncf.io/networks`
-	// — so the new TMM pod comes up without the bnk-bgp NAD attached and
-	// BGP can never reach Established. A bare "managed-by" label is not
-	// worth that breakage.
-	patch := `{"spec":{
-		"networkAttachments":["bnk-bgp"],
-		"advanced":{"tmm":{"env":[
-			{"name":"TMM_CALICO_ROUTER","value":"default"},
-			{"name":"TMM_DEFAULT_MTU","value":"1500"},
-			{"name":"TMM_MAPRES_ADDL_VETHS_ON_DP","value":"FALSE"},
-			{"name":"ZEBOS_STATE","value":"legacy"}
-		]}}
-	}}`
-	if err := r.Kubectl(ctx.Ctx, "patch", "cneinstance", "bnk-instance",
-		"-n", "default", "--type=merge", "-p", patch); err != nil {
-		return fmt.Errorf("patch CNEInstance: %w", err)
-	}
-
-	// 5. Restart TMM so the new pod picks up both the Multus NAD
-	//    attachment and the freshly-applied ZeBOS ConfigMap.
-	//
-	//    Single rollout only — a second `kubectl rollout restart`
-	//    here triggers a template update that's NOT driven by a
-	//    CNEInstance change, and FLO doesn't re-inject the
-	//    network-attachment annotation on that codepath. The new
-	//    TMM pod then has no net1, BGP can't bind, and the rest
-	//    of the scenario is doomed.
-	if err := r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
-		"daemonset/f5-tmm"); err != nil {
-		return fmt.Errorf("rollout restart f5-tmm: %w", err)
-	}
-	if err := r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "status",
-		"daemonset/f5-tmm", "--timeout=5m"); err != nil {
-		return fmt.Errorf("f5-tmm rollout did not complete: %w", err)
-	}
-
-	// 5b. Wait for FLO to actually attach the NAD on the freshly-rolled
-	//     pod. The rollout completing means k8s Deployment reached
-	//     Available; FLO's `k8s.v1.cni.cncf.io/networks` injection +
-	//     Multus's IPAM happen on the next pod the controller renders,
-	//     which can lag rollout completion by a beat. Poll the network-
-	//     status annotation until bnk-bgp shows up (or we give up).
-	//     Without this wait, verify can race past Apply and see a pod
-	//     with no net1 even though the next pod over will have it.
-	deadline := time.Now().Add(2 * time.Minute)
-	for time.Now().Before(deadline) {
-		tmm, err := newestTMMPod(ctx)
-		if err == nil {
-			if ip, err := podBnkBgpIP(ctx, "default", tmm); err == nil && strings.HasPrefix(ip, "192.168.99.") {
-				fmt.Fprintf(ctx.Out, "      | TMM net1 attached: %s on %s\n", ip, tmm)
-				break
-			}
+	// Each TMM already peers the external FRR (configured by deploy in
+	// anycast-bgp mode). imish auth (passwd.conf) + (re)trigger redistribution
+	// on every TMM so its kernel/connected routes and any Gateway VIPs enter
+	// the BGP table — OcNOS XP-6.6.0 only redistributes when the statement is
+	// re-issued at runtime.
+	for _, p := range pods {
+		if err := injectPasswdConf(ctx, p); err != nil {
+			return fmt.Errorf("inject passwd.conf on %s: %w", p, err)
 		}
-		select {
-		case <-ctx.Ctx.Done():
-			break
-		case <-time.After(5 * time.Second):
-		}
+		triggerRedistribution(ctx, p)
 	}
-
-	// 6. Inject passwd.conf into the new TMM pod. Retry loop re-fetches
-	//    the Running pod name each iteration so a brief container-not-
-	//    found window during rollover doesn't fail the apply.
-	if err := injectPasswdConf(ctx); err != nil {
-		return fmt.Errorf("inject passwd.conf: %w", err)
-	}
-
+	fmt.Fprintf(ctx.Out, "      | triggered BGP redistribution on %d TMM(s); external FRR = %s\n",
+		len(pods), scenarios.EdgeFRRName(ctx))
 	return nil
 }
 
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
-	r := ctx.Runner
 	res := scenarios.Result{}
 
-	// Anycast-bgp default: Apply was a no-op (the deploy path owns BGP), so
-	// there's nothing this scenario set up to verify. Skip cleanly and point
-	// at the scenario that does verify the anycast deploy.
-	if anycastDeployActive(ctx) {
-		res.Status = "skipped"
-		res.Summary = "anycast-bgp deploy is active (bnk-frr DaemonSet present) — BGP peering is " +
-			"provided by the deploy path; the bgp-anycast scenario verifies it. This how-to runs only in standby mode."
-		return res
+	pods, _ := tmmPods(ctx)
+	want := len(pods)
+	if want == 0 {
+		want = 1
 	}
 
-	// FRR pod name + IP.
-	frrPod, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if err != nil || strings.TrimSpace(frrPod) == "" {
-		res.Status = "failed"
-		res.Summary = "scn-frr pod not found"
-		res.Details = errString(err)
-		return res
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
-	// 1. Multus DaemonSet healthy.
-	multus, _ := r.KubectlCapture(ctx.Ctx, "-n", "kube-system", "get",
-		"daemonset/kube-multus-ds",
-		"-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}")
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "Multus DaemonSet Ready",
-		OK:          strings.Contains(multus, "/") && !strings.HasPrefix(multus, "0/"),
-		Got:         oneLine(multus, 50),
-	})
-
-	// 2. FRR pod has a net1 interface with an IP in the NAD range.
-	//    Same source-of-truth as the TMM check below: Multus annotation,
-	//    not an exec into the container.
-	frrNet1IP, _ := podBnkBgpIP(ctx, "scn-bgp", frrPod)
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "FRR pod has net1 on the bnk-bgp bridge (192.168.99.0/24)",
-		OK:          strings.HasPrefix(frrNet1IP, "192.168.99."),
-		Got:         frrNet1IP,
-	})
-
-	// Always target the newest TMM pod — Deployment RollingUpdate
-	// can leave the old pod Running for a while after we patch
-	// CNEInstance, and `deploy/f5-tmm` resolves non-deterministically
-	// to either one.
-	tmmPod, err := newestTMMPod(ctx)
-	if err != nil {
-		res.Status = "failed"
-		res.Summary = "no Running TMM pod"
-		res.Details = err.Error()
-		return res
-	}
-
-	// 3. TMM pod has a net1 interface in the NAD range — read from the
-	//    canonical Multus annotation `k8s.v1.cni.cncf.io/network-status`
-	//    rather than exec-ing into a TMM container. The annotation is
-	//    set by Multus when the pod attaches to the NAD, so it works
-	//    independent of what's installed inside any container image,
-	//    and survives mapres-style kernel-IP shenanigans (mapres can
-	//    flush the kernel inet but the annotation stays the source of
-	//    truth for what was assigned).
-	//
-	//    Retry: after a clean+redeploy the CNEInstance patch triggers
-	//    a TMM rollout; multus runs after IPAM, so the annotation
-	//    appears a few seconds AFTER the pod hits Running. Re-resolve
-	//    newest TMM each iteration so we don't pin to a pod rolling away.
-	var tmmNet1IP string
-	tmmHasNet1 := false
-	for i := 0; i < 24; i++ {
-		if p, err := newestTMMPod(ctx); err == nil {
-			tmmPod = p
+	// Poll the external FRR until every TMM neighbor is Established AND the
+	// redistributed routes appear in FRR's BGP RIB (the session is functional,
+	// not just up).
+	var summary, rib string
+	var got int
+	var routesOK bool
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		if out, err := scenarios.FRRVtysh(ctx, "show ip bgp summary"); err == nil {
+			summary = out
+			got = countEstablished(out, scenarios.EdgePrefix(ctx))
 		}
-		ip, err := podBnkBgpIP(ctx, "default", tmmPod)
-		if err == nil && strings.HasPrefix(ip, "192.168.99.") {
-			tmmNet1IP = ip
-			tmmHasNet1 = true
+		if out, err := scenarios.FRRVtysh(ctx, "show ip bgp"); err == nil {
+			rib = out
+			routesOK = strings.Contains(rib, "192.168.") || strings.Contains(rib, "203.0.113.")
+		}
+		if got >= want && routesOK {
+			break
+		}
+		if time.Now().After(deadline) {
 			break
 		}
 		select {
 		case <-ctx.Ctx.Done():
-			break
+			res.Status = "failed"
+			res.Summary = "context cancelled waiting for BGP"
+			return res
 		case <-time.After(5 * time.Second):
 		}
 	}
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "TMM pod has net1 on the bnk-bgp bridge",
-		OK:          tmmHasNet1,
-		Got:         tmmNet1IP,
-	})
 
-	// 4. ZeBOS in TMM sees the configured neighbor (any 192.168.99.x).
-	//    Retry to give bfd_watcher time to imish-load after restart.
-	//    Re-resolve the newest pod each iteration in case rollout
-	//    completes mid-loop and the previously-newest is gone.
-	var zebos string
-	tmmHasNeighbor := false
-	for i := 0; i < 12; i++ {
-		if p, err := newestTMMPod(ctx); err == nil {
-			tmmPod = p
-		}
-		zebos, _ = r.KubectlCapture(ctx.Ctx, "-n", "default", "exec",
-			tmmPod, "-c", "f5-tmm-routing", "--",
-			"imish", "-e", "show ip bgp summary")
-		if strings.Contains(zebos, "192.168.99.") {
-			tmmHasNeighbor = true
-			break
-		}
-		select {
-		case <-ctx.Ctx.Done():
-			break
-		case <-time.After(5 * time.Second):
-		}
-	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "ZeBOS in TMM sees neighbor on bnk-bgp bridge",
-		OK:          tmmHasNeighbor,
-		Got:         oneLine(zebos, 200),
+		Description: fmt.Sprintf("external FRR (%s) shows all %d TMM neighbor(s) Established", scenarios.EdgeFRRIP(ctx), want),
+		OK:          got >= want,
+		Got:         fmt.Sprintf("%d/%d established; %s", got, want, oneLine(summary, 140)),
 	})
-
-	// 5. BGP session reaches Established. FRR's `show bgp summary`
-	//    shows an Up/Down TIMER ("00:02:13") in the State column when
-	//    Established, not the literal word "Established"; so the
-	//    robust check is "no transient state name in the neighbor row".
-	//    `show bgp summary json` would also work but we'd need to
-	//    pipe through jq. Substring check on the transient states is
-	//    cheap and reliable.
-	// Cold start (clean → redeploy) needs a generous window. Even with
-	// the second TMM rollout baked into Apply, observed convergence
-	// can run 3-6 minutes (rollout #2 ~1m, ZeBOS init ~30s, BGP
-	// connect-retry timers with backoff up to ~2-3min). 8 minutes
-	// covers worst-case without being excessive on the happy path
-	// (the loop exits as soon as Established is detected).
-	deadline := time.Now().Add(8 * time.Minute)
-	var lastSummary string
-	established := false
-	for time.Now().Before(deadline) {
-		out, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--", "vtysh", "-c", "show bgp summary")
-		lastSummary = out
-		if isFRRBGPEstablished(out) {
-			established = true
-			break
-		}
-		select {
-		case <-ctx.Ctx.Done():
-			break
-		case <-time.After(5 * time.Second):
-		}
-	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "BGP session Established between FRR and TMM/ZeBOS",
-		OK:          established,
-		Got:         oneLine(lastSummary, 250),
-	})
-
-	// 6. FRR BGP table has at least one prefix learned from TMM
-	//    (redistribute connected → at minimum the 192.168.99.0/24
-	//    NAD subnet). The explicit Gateway prefix 203.0.113.100/32
-	//    only shows up after http-routing-e2e has run.
-	bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-		frrPod, "-c", "frr", "--", "vtysh", "-c", "show bgp ipv4 unicast")
-	hasAnyPrefix := strings.Contains(bgpTable, "192.168.99.") ||
-		strings.Contains(bgpTable, "203.0.113.")
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "FRR BGP table has at least one prefix learned from TMM",
-		OK:          hasAnyPrefix,
-		Got:         oneLine(bgpTable, 250),
+		Description: "external FRR learned routes from TMM (BGP RIB non-empty)",
+		OK:          routesOK,
+		Got:         oneLine(rib, 160),
 	})
 
 	if res.AllPassed() {
 		res.Status = "ok"
-		res.Summary = "BGP Established over Multus NAD; routes exchanged TMM ↔ FRR"
+		res.Summary = fmt.Sprintf("%d TMM(s) Established with external FRR; routes learned", want)
 	} else {
 		res.Status = "failed"
-		var failed []string
-		for _, a := range res.Assertions {
-			if !a.OK {
-				failed = append(failed, a.Description)
-			}
-		}
-		res.Summary = "failed: " + strings.Join(failed, "; ")
-		res.Details = "BGP summary:\n" + lastSummary + "\n\nBGP table:\n" + bgpTable +
-			"\n\nZeBOS summary:\n" + zebos
+		res.Summary = "BGP not fully established / no routes learned (see assertions)"
 	}
 	return res
 }
 
-func (s *scenario) Cleanup(ctx *scenarios.Context) error {
-	r := ctx.Runner
-	// Anycast-bgp default: Apply created nothing (the deploy path owns the
-	// BGP plumbing), so there's nothing to clean up — and we must NOT touch
-	// the foundation's resources (the default bnk-bgp NAD, the CNEInstance
-	// networkAttachments, the shared ZeBOS template).
-	if anycastDeployActive(ctx) {
-		return nil
-	}
-	// Standby mode: Apply owned the full BGP setup, so revert it all. (None
-	// of these is foundation-owned in standby — the deploy path installs no
-	// bnk-bgp NAD / ZeBOS / networkAttachments there.)
-	// 1. Remove the NAD from CNEInstance so FLO drops the Multus annotation
-	//    on the next TMM restart.
-	_ = r.Kubectl(ctx.Ctx, "patch", "cneinstance", "bnk-instance",
-		"-n", "default", "--type=merge",
-		"-p", `{"spec":{"networkAttachments":[]}}`)
-	// 2. Empty the ZeBOS template so bgpd has no peer config next time.
-	_ = r.Apply(ctx.Ctx, `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: f5-tmm-dynamic-routing-template
-  namespace: default
-data:
-  ZebOS.conf: ""
-`)
-	// 3. Drop scn-bgp namespace (also removes FRR + scoped NAD).
-	_ = r.Kubectl(ctx.Ctx, "delete", "namespace", "scn-bgp", "--ignore-not-found")
-	// 4. Drop the default-namespace NAD this scenario created.
-	_ = r.Kubectl(ctx.Ctx, "-n", "default", "delete", "net-attach-def",
-		"bnk-bgp", "--ignore-not-found")
-	// 5. Restart TMM to apply the empty ZeBOS config + drop the Multus
-	//    annotation.
-	_ = r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
-		"daemonset/f5-tmm")
-	return nil
-}
+// Cleanup: nothing to do — the external FRR is shared cluster infrastructure
+// (owned by the cluster backend), not scenario-owned.
+func (s *scenario) Cleanup(ctx *scenarios.Context) error { return nil }
 
-// anycastDeployActive reports whether the cluster is running the default
-// anycast-bgp data plane, detected by the bnk-frr DaemonSet the deploy path
-// installs (deploy.RenderFRRPeer). When true, the foundation already owns the
-// bnk-bgp NAD, the shared ZeBOS template, and per-TMM BGP peering — so this
-// self-contained how-to must not run (it would clobber that shared state),
-// and the bgp-anycast scenario verifies the anycast deploy instead. This is
-// the inverse of the check bgp-anycast uses to skip when NOT in anycast mode.
-func anycastDeployActive(ctx *scenarios.Context) bool {
-	out, err := ctx.Runner.KubectlCapture(ctx.Ctx, "-n", "default", "get",
-		"daemonset", "bnk-frr", "-o", "jsonpath={.metadata.name}")
-	return err == nil && strings.TrimSpace(out) == "bnk-frr"
-}
-
-// discoverNet1 looks up the IPv4 address of the pod's net1 interface
-// (the Multus NAD attachment). Format from the pod's status.metadata
-// annotation `k8s.v1.cni.cncf.io/network-status` is JSON; we just
-// inspect inside the pod with `ip` for simplicity. Selector targets
-// a single Deployment so callers don't pass a pod name.
-func discoverNet1(ctx *scenarios.Context, namespace, labelSelector string) (string, error) {
-	r := ctx.Runner
-	podName, err := r.KubectlCapture(ctx.Ctx, "-n", namespace, "get", "pod",
-		"-l", labelSelector,
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if err != nil || strings.TrimSpace(podName) == "" {
-		return "", fmt.Errorf("no Running pod for %s in %s: %w", labelSelector, namespace, err)
-	}
-	podName = strings.TrimSpace(podName)
-	// network-status annotation is the canonical, language-agnostic
-	// source — we read it via jsonpath instead of exec-ing into the
-	// container, which avoids needing `ip` binary in the image.
-	netStatus, err := r.KubectlCapture(ctx.Ctx, "-n", namespace, "get", "pod",
-		podName,
-		"-o", `jsonpath={.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}`)
-	if err != nil {
-		return "", err
-	}
-	// network-status is a JSON array — parse properly to avoid
-	// whitespace-formatting brittleness.
-	var entries []struct {
-		Name string   `json:"name"`
-		IPs  []string `json:"ips"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(netStatus)), &entries); err != nil {
-		return "", fmt.Errorf("parse network-status: %w (raw: %s)", err, oneLine(netStatus, 200))
-	}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name, "bnk-bgp") && !strings.HasSuffix(e.Name, "/bnk-bgp") {
-			continue
-		}
-		for _, ip := range e.IPs {
-			if slash := strings.Index(ip, "/"); slash > 0 {
-				ip = ip[:slash]
-			}
-			if !strings.Contains(ip, ":") && ip != "" {
-				return ip, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("bnk-bgp entry not found in network-status: %q", oneLine(netStatus, 300))
-}
-
-// podBnkBgpIP returns the IPv4 address Multus assigned for the
-// bnk-bgp NAD attachment on a specific pod (by name), reading the
-// k8s.v1.cni.cncf.io/network-status annotation. Used by verify
-// when the caller already knows the pod name (e.g. newest TMM).
-// Empty string + error if the annotation hasn't appeared yet or
-// the pod has no bnk-bgp entry.
-func podBnkBgpIP(ctx *scenarios.Context, namespace, podName string) (string, error) {
-	r := ctx.Runner
-	netStatus, err := r.KubectlCapture(ctx.Ctx, "-n", namespace, "get", "pod",
-		podName,
-		"-o", `jsonpath={.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}`)
-	if err != nil {
-		return "", err
-	}
-	netStatus = strings.TrimSpace(netStatus)
-	if netStatus == "" {
-		return "", fmt.Errorf("no network-status annotation yet on %s/%s", namespace, podName)
-	}
-	var entries []struct {
-		Name string   `json:"name"`
-		IPs  []string `json:"ips"`
-	}
-	if err := json.Unmarshal([]byte(netStatus), &entries); err != nil {
-		return "", fmt.Errorf("parse network-status: %w", err)
-	}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name, "bnk-bgp") && !strings.HasSuffix(e.Name, "/bnk-bgp") {
-			continue
-		}
-		for _, ip := range e.IPs {
-			if slash := strings.Index(ip, "/"); slash > 0 {
-				ip = ip[:slash]
-			}
-			if !strings.Contains(ip, ":") && ip != "" {
-				return ip, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("bnk-bgp entry not in network-status: %q", oneLine(netStatus, 200))
-}
-
-// ensureBridgeCNI downloads the containernetworking/plugins release
-// tarball host-side, extracts just the `bridge` binary, and `docker cp`s
-// it into each node's /opt/cni/bin/bridge. Idempotent — skips nodes
-// where the binary is already present.
-//
-// Why we don't bake this into `cluster up`: the bridge plugin
-// is only needed when a scenario uses a bridge-CNI-backed NAD,
-// which is the bgp-peer-frr scenario's choice. Other deployments
-// of ocibnkctl that never run BGP scenarios don't need it.
-// downloadAndVerify fetches url over HTTPS, asserts that the body's
-// SHA-256 matches wantHex, and returns the body bytes. Used for the
-// pinned multus manifest (and any future privileged-payload download
-// path). Returns a wrapped error if the SHA mismatches so the caller
-// can surface the operator-actionable "tampered upstream?" cue.
-func downloadAndVerify(ctx context.Context, url, wantHex string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// tmmPods returns the names of all Running f5-tmm pods (one per worker).
+func tmmPods(ctx *scenarios.Context) ([]string, error) {
+	out, err := ctx.Runner.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pod",
+		"-l", "app=f5-tmm", "--field-selector=status.phase=Running",
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256(body)
-	gotHex := hex.EncodeToString(sum[:])
-	if gotHex != wantHex {
-		return nil, fmt.Errorf("integrity check failed for %s: got sha256=%s want %s — refusing to apply (upstream tampered or version pin needs an update)",
-			url, gotHex, wantHex)
-	}
-	return body, nil
+	return strings.Fields(out), nil
 }
 
-func ensureBridgeCNI(ctx *scenarios.Context) error {
+// injectPasswdConf writes the one-line passwd.conf into a TMM pod's
+// f5-tmm-routing container so imish auth works. Retries briefly.
+func injectPasswdConf(ctx *scenarios.Context, pod string) error {
 	r := ctx.Runner
-	out, _ := r.KubectlCapture(ctx.Ctx, "get", "nodes",
-		"-o", "jsonpath={range .items[*]}{.metadata.name}\n{end}")
-	nodes := strings.Fields(out)
-	if len(nodes) == 0 {
-		return fmt.Errorf("no cluster nodes found")
-	}
-	// Select the CNI plugins tarball by node architecture — k3s nodes
-	// match the host arch, so an amd64 binary on an arm64 node (Apple
-	// Silicon / arm64 Linux) would fail with "exec format error".
-	archOut, _ := r.KubectlCapture(ctx.Ctx, "get", "nodes",
-		"-o", "jsonpath={.items[0].status.nodeInfo.architecture}")
-	arch := strings.TrimSpace(archOut)
-	sha, ok := cniPluginsSHA[arch]
-	if !ok {
-		return fmt.Errorf("unsupported node architecture %q for the bridge CNI plugin (have: amd64, arm64)", arch)
-	}
-	url := cniPluginsBaseURL + arch + "-" + cniPluginsVersion + ".tgz"
-
-	// Fetch + SHA-verify the CNI plugins tarball host-side, extract just
-	// the `bridge` binary, and `docker cp` it into each node's
-	// /opt/cni/bin. Doing the download + extraction on the host (in Go)
-	// rather than inside the node container means we don't depend on the
-	// node image shipping curl/wget/tar — the minimal rancher/k3s image
-	// has no curl, which broke the old in-node `curl … | tar` approach.
-	// SHA verification stays load-bearing: this binary runs as root
-	// inside every node, so a tampered download would land arbitrary
-	// root code on the cluster.
-	tgz, err := downloadAndVerify(ctx.Ctx, url, sha)
-	if err != nil {
-		return fmt.Errorf("fetch CNI plugins (%s): %w", arch, err)
-	}
-	bridgeBin, err := extractBridge(tgz)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp("", "bridge-cni-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(bridgeBin); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
-		return err
-	}
-
-	for _, n := range nodes {
-		fmt.Fprintf(ctx.Out, "      | bridge CNI on %s ... ", n)
-		// Skip nodes that already have it (idempotent re-runs).
-		if exec.CommandContext(ctx.Ctx, "docker", "exec", n, "test", "-x", "/opt/cni/bin/bridge").Run() == nil {
-			fmt.Fprintln(ctx.Out, "present")
-			continue
-		}
-		// docker cp the host-extracted binary in. `docker exec` is used
-		// throughout this scenario because the nodes are docker
-		// containers reachable from the host; podman would need
-		// `podman cp/exec` (a pre-existing limitation).
-		if cpOut, err := exec.CommandContext(ctx.Ctx, "docker", "cp",
-			tmp.Name(), n+":/opt/cni/bin/bridge").CombinedOutput(); err != nil {
-			fmt.Fprintln(ctx.Out, "ERROR")
-			return fmt.Errorf("docker cp bridge to %s: %w (output: %s)", n, err, strings.TrimSpace(string(cpOut)))
-		}
-		// docker cp doesn't reliably preserve mode — ensure +x.
-		if chOut, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
-			"chmod", "0755", "/opt/cni/bin/bridge").CombinedOutput(); err != nil {
-			fmt.Fprintln(ctx.Out, "ERROR")
-			return fmt.Errorf("chmod bridge on %s: %w (output: %s)", n, err, strings.TrimSpace(string(chOut)))
-		}
-		fmt.Fprintln(ctx.Out, "installed")
-	}
-	_ = r
-	return nil
-}
-
-// disableBridgeNetfilter sets net.bridge.bridge-nf-call-iptables=0 on every
-// k3s node so packets crossing the bnk-bgp Multus bridge bypass the node's
-// iptables. Whether this matters depends on the host, not the OS: it's gated
-// entirely on whether br_netfilter is loaded.
-//
-//   - Docker Desktop (linuxkit VM): br_netfilter is loaded and the sysctl
-//     defaults to 1, so the NAD bridge IS subject to iptables — this is the
-//     shape the fix targets.
-//   - Native-Linux docker: the k3s node container can't load the host kernel's
-//     br_netfilter (no /lib/modules/$(uname -r) inside the image), so the
-//     sysctl never appears and the NAD bridge is never handed to iptables in
-//     the first place — nothing to disable, so we skip cleanly. Writing
-//     unconditionally there errors ("nonexistent directory") and would abort
-//     the whole scenario.
-//
-// (The kind predecessor did not subject the NAD bridge to it.) With it on,
-// FRR↔TMM data-plane traffic
-// is run through Calico's `natOutgoing` MASQUERADE: FRR's net1 source
-// (192.168.99.x, inside Calico's default 192.168.0.0/16 pool) gets SNAT'd to
-// the node address on the way to a Gateway VIP (203.0.113.x, OUTSIDE the pool),
-// so TMM can't return the SYN-ACK symmetrically over net1 and every data-plane
-// curl times out. (BGP itself survives because peer↔peer is net1↔net1, both
-// inside the pool, so natOutgoing doesn't fire — which is why the control plane
-// looks healthy while the data plane is dead.) Calico uses veth, not a Linux
-// bridge, so flipping this off only affects the NAD bridge — Service /
-// NetworkPolicy enforcement via Calico's own veth iptables hooks is unaffected.
-// Idempotent; applied to both nodes since the bridge is per-node.
-func disableBridgeNetfilter(ctx *scenarios.Context) error {
-	out, _ := ctx.Runner.KubectlCapture(ctx.Ctx, "get", "nodes",
-		"-o", "jsonpath={range .items[*]}{.metadata.name}\n{end}")
-	nodes := strings.Fields(out)
-	if len(nodes) == 0 {
-		return fmt.Errorf("no cluster nodes found")
-	}
-	const sysctl = "/proc/sys/net/bridge/bridge-nf-call-iptables"
-	for _, n := range nodes {
-		fmt.Fprintf(ctx.Out, "      | bridge-nf-call-iptables=0 on %s ... ", n)
-		// Load br_netfilter best-effort (it's already up on Docker Desktop;
-		// the modprobe is a no-op there and fails harmlessly on native Linux
-		// where the host module isn't reachable from the container). Then
-		// set 0 only if the sysctl actually exists — if it doesn't, the NAD
-		// bridge isn't subject to iptables at all, so there's nothing to do.
-		_ = exec.CommandContext(ctx.Ctx, "docker", "exec", n,
-			"modprobe", "br_netfilter").Run()
-		o, err := exec.CommandContext(ctx.Ctx, "docker", "exec", n,
-			"sh", "-c", "if [ -e "+sysctl+" ]; then echo 0 > "+sysctl+" && echo set; else echo absent; fi").CombinedOutput()
-		if err != nil {
-			fmt.Fprintln(ctx.Out, "ERROR")
-			return fmt.Errorf("set bridge-nf-call-iptables=0 on %s: %w (output: %s)",
-				n, err, strings.TrimSpace(string(o)))
-		}
-		if strings.TrimSpace(string(o)) == "absent" {
-			fmt.Fprintln(ctx.Out, "absent — br_netfilter not loaded, NAD bridge bypasses iptables")
-		} else {
-			fmt.Fprintln(ctx.Out, "set")
-		}
-	}
-	return nil
-}
-
-// extractBridge gunzips + untars the CNI plugins release tarball and
-// returns the `bridge` binary's bytes. The release stores plugins at
-// top level (e.g. "./bridge").
-func extractBridge(tgz []byte) ([]byte, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(tgz))
-	if err != nil {
-		return nil, err
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimPrefix(hdr.Name, "./") == "bridge" {
-			return io.ReadAll(tr)
-		}
-	}
-	return nil, fmt.Errorf("`bridge` binary not found in CNI plugins tarball")
-}
-
-// ensureMultus installs the upstream Multus thick-plugin DaemonSet
-// (if missing) and patches its memory limit upward from the upstream
-// default of 50Mi to 500Mi (request 200Mi).
-//
-// The 50Mi default OOMKills under sustained CNI churn — repeated
-// scenario apply/clean cycles or scaling the cluster past a handful
-// of pods on the worker tips it over within minutes. On this shape that
-// looks like CrashLoopBackOff or "failed to send CNI request:
-// Post 'http://dummy/cni': EOF" sandbox-create errors. 500Mi
-// comfortably holds through full scenario suites; the request stays
-// modest so it doesn't push the worker into scheduling pressure.
-//
-// Patching is idempotent — the JSON-patch is safe to apply against
-// either the upstream defaults or our already-bumped values.
-func ensureMultus(ctx *scenarios.Context) error {
-	r := ctx.Runner
-	out, _ := r.KubectlCapture(ctx.Ctx, "-n", "kube-system", "get",
-		"daemonset/kube-multus-ds",
-		"-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}")
-	alreadyInstalled := strings.Contains(out, "/") &&
-		!strings.HasPrefix(strings.TrimSpace(out), "0/")
-	if alreadyInstalled {
-		fmt.Fprintln(ctx.Out, "      | Multus already installed — skipping install")
-	} else {
-		fmt.Fprintln(ctx.Out, "      | installing Multus thick plugin ...")
-		body, err := downloadAndVerify(ctx.Ctx, multusManifestURL, multusManifestSHA)
-		if err != nil {
-			return fmt.Errorf("multus manifest: %w", err)
-		}
-		if err := r.Apply(ctx.Ctx, string(body)); err != nil {
-			return err
-		}
-	}
-
-	// Bump memory limits — upstream defaults OOMKill under CNI churn.
-	fmt.Fprintln(ctx.Out, "      | patching Multus memory limits 50Mi → 500Mi (request 200Mi)")
-	patch := `[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"500Mi"},` +
-		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"200Mi"}]`
-	if err := r.Kubectl(ctx.Ctx, "-n", "kube-system", "patch",
-		"daemonset/kube-multus-ds", "--type=json", "-p", patch); err != nil {
-		fmt.Fprintf(ctx.Out, "      | WARN: memory-limit patch failed: %v (continuing — Multus may OOM under load)\n", err)
-	}
-
-	return r.Kubectl(ctx.Ctx, "-n", "kube-system", "rollout", "status",
-		"daemonset/kube-multus-ds", "--timeout=3m")
-}
-
-// newestTMMPod returns the name of the most-recently-created Running
-// TMM pod. During a Deployment rolling update there can be two pods
-// simultaneously (old still serving while new starts up) — picking
-// `items[0]` is non-deterministic; sorting by creationTimestamp ASC
-// and taking the last entry always returns the new pod, which is
-// what every step that depends on the post-patch config needs.
-func newestTMMPod(ctx *scenarios.Context) (string, error) {
-	r := ctx.Runner
-	out, err := r.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pod",
-		"-l", "app=f5-tmm",
-		"--field-selector=status.phase=Running",
-		"--sort-by=.metadata.creationTimestamp",
-		"-o", "jsonpath={.items[-1:].metadata.name}")
-	out = strings.TrimSpace(out)
-	if err != nil || out == "" {
-		return "", fmt.Errorf("no Running f5-tmm pod: %w (out=%q)", err, out)
-	}
-	return out, nil
-}
-
-// injectPasswdConf writes the one-line passwd.conf into the newest
-// TMM pod's f5-tmm-routing container so bfd_watcher's imish-load can
-// succeed. Retries up to 90s, re-fetching the newest Running pod
-// each attempt to survive rolling-update overlap windows.
-func injectPasswdConf(ctx *scenarios.Context) error {
-	r := ctx.Runner
-	var injectErr error
-	for i := 0; i < 18; i++ {
-		tmmPod, err := newestTMMPod(ctx)
-		if err != nil {
-			injectErr = err
-		} else {
-			injectErr = r.Kubectl(ctx.Ctx, "-n", "default", "exec",
-				tmmPod, "-c", "f5-tmm-routing", "--",
-				"sh", "-c", "echo 'enable password 0 zebos' > /config/zebos/rd0/passwd.conf")
-			if injectErr == nil {
-				return nil
-			}
+	var err error
+	for i := 0; i < 6; i++ {
+		err = r.Kubectl(ctx.Ctx, "-n", "default", "exec", pod, "-c", "f5-tmm-routing", "--",
+			"sh", "-c", "echo 'enable password 0 zebos' > /config/zebos/rd0/passwd.conf")
+		if err == nil {
+			return nil
 		}
 		select {
 		case <-ctx.Ctx.Done():
@@ -972,70 +163,61 @@ func injectPasswdConf(ctx *scenarios.Context) error {
 		case <-time.After(5 * time.Second):
 		}
 	}
-	return injectErr
+	return err
 }
 
-// renderTemplate is a small wrapper around text/template that reads
-// from the embedded FS and returns the substituted string.
-func renderTemplate(fsys embed.FS, path string, data any) (string, error) {
-	raw, err := fsys.ReadFile(path)
-	if err != nil {
-		return "", err
+// triggerRedistribution re-issues the BGP redistribute statements over imish so
+// OcNOS XP-6.6.0 (re-)runs its redistribution scan at runtime (it doesn't
+// redistribute from the startup config). Best-effort + retried.
+func triggerRedistribution(ctx *scenarios.Context, pod string) {
+	r := ctx.Runner
+	for i := 0; i < 3; i++ {
+		_ = r.Kubectl(ctx.Ctx, "-n", "default", "exec", pod, "-c", "f5-tmm-routing", "--",
+			"imish",
+			"-e", "configure terminal",
+			"-e", "router bgp 65000",
+			"-e", "address-family ipv4 unicast",
+			"-e", "redistribute kernel route-map RMALL",
+			"-e", "redistribute connected route-map RMALL",
+			"-e", "end")
+		select {
+		case <-ctx.Ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
 	}
-	t, err := template.New(path).Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, data); err != nil {
-		return "", err
-	}
-	return b.String(), nil
 }
 
-// errString returns "" for nil err, otherwise a short message.
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return oneLine(err.Error(), 200)
-}
-
-// isFRRBGPEstablished returns true when FRR's `show bgp summary`
-// output indicates at least one neighbor is in the Established
-// state. FRR displays the Up/Down timer (e.g. "00:02:13") in the
-// State column for Established sessions, and the transient state
-// name ("Idle", "Connect", "Active", "OpenSent", "OpenConfirm")
-// otherwise. We detect a non-zero MsgRcvd column AND no transient
-// state in the neighbor row containing a 192.168.99.x peer.
-func isFRRBGPEstablished(summary string) bool {
+// countEstablished counts the bnk-edge (192.168.<octet>.x) BGP neighbor rows in
+// FRR's `show ip bgp summary` that are Established (FRR shows an Up/Down timer
+// like 00:02:13 in the State column; transient states show a name instead).
+func countEstablished(summary, prefix string) int {
+	n := 0
 	for _, line := range strings.Split(summary, "\n") {
-		if !strings.Contains(line, "192.168.99.") {
+		if !strings.Contains(line, prefix) {
 			continue
 		}
-		// Reject transient states.
-		for _, transient := range []string{
-			"Idle", "Connect", "Active", "OpenSent", "OpenConfirm",
-		} {
-			if strings.Contains(line, transient) {
-				return false
+		transient := false
+		for _, t := range []string{"Idle", "Connect", "Active", "OpenSent", "OpenConfirm"} {
+			if strings.Contains(line, t) {
+				transient = true
+				break
 			}
 		}
-		// Established rows contain a timer like 00:02:13.
-		// Look for at least one colon-separated time token.
-		fields := strings.Fields(line)
-		for _, f := range fields {
+		if transient {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
 			if strings.Count(f, ":") == 2 && !strings.HasPrefix(f, "192.") {
-				return true
+				n++
+				break
 			}
 		}
 	}
-	return false
+	return n
 }
 
-// oneLine collapses multi-line text into one line, truncated to n
-// runes, so it fits in an Assertion.Got field without blowing up
-// JSON readability.
+// oneLine collapses whitespace and truncates for compact assertion output.
 func oneLine(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) <= n {
@@ -1043,6 +225,3 @@ func oneLine(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
-
-// Silence unused-import warnings.
-var _ = context.Background

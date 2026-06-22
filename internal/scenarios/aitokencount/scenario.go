@@ -178,29 +178,11 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(annValue, 200),
 	})
 
-	// Find FRR pod for the curl source (the curl traverses the NAD
-	// bridge into TMM exactly as http-routing-e2e does).
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available",
-			OK:          false,
-			Got:         "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
-	// Wait for FRR to learn 203.0.113.103/32 via BGP.
+	// Wait for the external bnk-edge FRR to learn 203.0.113.103/32 via BGP.
 	deadline := time.Now().Add(2 * time.Minute)
 	gwLearned := false
 	for time.Now().Before(deadline) {
-		bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		if strings.Contains(bgpTable, "203.0.113.103") {
 			gwLearned = true
 			break
@@ -217,22 +199,17 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         fmt.Sprintf("learned=%v", gwLearned),
 	})
 
-	// Send a few curls through the Gateway with distinct Authorization
-	// tokens. Then scrape TMM logs for the iRule's TOKEN(...) log
-	// lines — these prove the data-plane counting fired and the
+	// Send a few curls through the Gateway from the FRR netns with distinct
+	// Authorization tokens. Then scrape TMM logs for the iRule's TOKEN(...)
+	// log lines — these prove the data-plane counting fired and the
 	// per-user / per-model / global cumulative counters incremented.
-	_ = r.Kubectl(ctx.Ctx, "-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--",
-		"sh", "-c", "command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1 || true")
 	const curls = 3
 	successBodies := 0
 	for i := 0; i < curls; i++ {
-		body, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"curl", "-sS", "--fail", "--max-time", "8",
+		body, err := scenarios.FRRNetnsCurl(ctx, "http://203.0.113.103:8000/v1/chat/completions",
 			"-H", "Authorization: Bearer ocibnkctl-test-user",
 			"-H", "Host: tokencount.ocibnkctl.local",
 			"-d", `{"model":"gpt-stub","messages":[{"role":"user","content":"ping"}]}`,
-			"http://203.0.113.103:8000/v1/chat/completions",
 		)
 		if err == nil && strings.Contains(body, "ocibnkctl-scenario-tokencount-OK") {
 			successBodies++

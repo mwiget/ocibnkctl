@@ -96,12 +96,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod in scn-bgp)")
-	}
 	for _, f := range []string{
 		"01-namespace.yaml",
 		"02-bnkgateway.yaml",

@@ -14,6 +14,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -140,12 +143,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod)")
-	}
 	for _, f := range []string{
 		"01-namespace.yaml",
 		"02-bnkgateway.yaml",
@@ -197,72 +194,32 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         strings.TrimSpace(rstate),
 	})
 
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available", OK: false,
-			Got: "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
-	hasGW, lastTable := waitBGP(ctx, frrPod, gwAddr)
+	// External bnk-edge FRR is the BGP peer + grpcurl vantage. Wait for the
+	// L7 Gateway VIP to land in its BGP table.
+	hasGW, lastTable := waitBGP(ctx, gwAddr)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: fmt.Sprintf("FRR BGP table has %s/32 advertised by TMM", gwAddr),
 		OK:          hasGW,
 		Got:         oneLine(lastTable, 200),
 	})
 
-	// Install grpcurl in the FRR pod with SHA verification. We chain
-	// curl → sha256sum -c → tar in a single sh -c so a checksum
-	// mismatch aborts before the binary lands. Idempotent: skip the
-	// download if /tmp/grpcurl is already present. The asset is chosen for
-	// the node's architecture (the FRR pod runs the node/host arch).
-	grpcurlURL, grpcurlSHA, archOK := grpcurlDownload()
-	if !archOK {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "grpcurl available for node architecture",
-			OK:          false,
-			Got:         "unsupported GOARCH " + runtime.GOARCH,
-		})
-		return res
-	}
-	// Idempotent, but guard on the binary actually *running* — not just
-	// being present — so a /tmp/grpcurl left from an earlier run on a
-	// different arch (wrong exec format) is replaced rather than reused.
-	installScript := `set -e
-if /tmp/grpcurl --version >/dev/null 2>&1; then echo present; exit 0; fi
-command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1
-cd /tmp
-curl -fsSL -o grpcurl.tgz ` + grpcurlURL + `
-echo '` + grpcurlSHA + `  grpcurl.tgz' | sha256sum -c -
-tar xzf grpcurl.tgz grpcurl
-chmod +x grpcurl
-rm -f grpcurl.tgz
-echo installed`
-	out, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-		frrPod, "-c", "frr", "--", "sh", "-c", installScript)
+	// Download grpcurl on the host (SHA-256 verified); it's bind-mounted into
+	// the netshoot run in the external FRR's netns for each gRPC call.
+	grpcurlBin, derr := ensureGrpcurlHost(ctx)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "grpcurl installed in FRR pod (SHA-256 verified)",
-		OK:          err == nil,
-		Got:         oneLine(out, 200),
+		Description: "grpcurl downloaded on host (SHA-256 verified)",
+		OK:          derr == nil,
+		Got:         grpcurlGot(grpcurlBin, derr),
 	})
-	if err != nil {
+	if derr != nil {
 		return finalize(res)
 	}
 
-	// Reflection-list via the Gateway. Reported as informational: BNK
-	// 2.3.0's HTTP listener + standard HTTP/json profile chain
-	// RST_STREAMs cleartext gRPC. The Got string carries either the
-	// service list or the RST_STREAM message so operators can confirm
-	// the failure mode without re-running by hand.
-	listOut, listErr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-		frrPod, "-c", "frr", "--",
-		"/tmp/grpcurl", "-plaintext", "-max-time", "10",
+	// Reflection-list via the L7 Gateway from the FRR netns. Reported as
+	// informational: BNK 2.3.0's HTTP listener + standard HTTP/json profile
+	// chain RST_STREAMs cleartext gRPC. The Got string carries either the
+	// service list or the RST_STREAM message.
+	listOut, listErr := grpcurlNetns(ctx, grpcurlBin, "-plaintext", "-max-time", "10",
 		gwAddr+":"+gwPort, "list")
 	listGot := oneLine(listOut, 200)
 	if listErr != nil {
@@ -272,23 +229,6 @@ echo installed`
 		Description: "grpcurl list via Gateway (informational, RST_STREAM expected)",
 		OK:          true,
 		Got:         listGot,
-	})
-
-	// Direct backend call from FRR via cluster DNS — proves the
-	// backend itself is healthy and grpcurl works. Anchor for the
-	// "data path is the issue, not the workload" narrative.
-	directOut, directErr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-		frrPod, "-c", "frr", "--",
-		"/tmp/grpcurl", "-plaintext", "-max-time", "10",
-		"grpcbin.scn-grpc.svc.cluster.local:9000", "list")
-	directGot := oneLine(directOut, 200)
-	if directErr != nil {
-		directGot = directGot + " err=" + oneLine(directErr.Error(), 200)
-	}
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "grpcurl list direct to backend Service returns grpcbin.GRPCBin (proves backend healthy)",
-		OK:          directErr == nil && strings.Contains(directOut, "grpcbin.GRPCBin"),
-		Got:         directGot,
 	})
 
 	// ---- L4Route (TCP) data-plane path: the green workaround ----
@@ -314,7 +254,7 @@ echo installed`
 		Got:         strings.TrimSpace(l4state),
 	})
 
-	hasL4, l4Table := waitBGP(ctx, frrPod, l4Addr)
+	hasL4, l4Table := waitBGP(ctx, l4Addr)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: fmt.Sprintf("FRR BGP table has %s/32 (L4 Gateway) advertised by TMM", l4Addr),
 		OK:          hasL4,
@@ -324,7 +264,7 @@ echo installed`
 	// grpcurl reflection-list through the L4 Gateway — the green
 	// assertion. Retry to absorb BGP propagation + data-plane
 	// programming lag for the freshly-advertised L4 IP.
-	l4List, l4Err := grpcurlRetry(ctx, frrPod, "-plaintext", "-max-time", "10",
+	l4List, l4Err := grpcurlRetry(ctx, grpcurlBin, "-plaintext", "-max-time", "10",
 		l4Addr+":"+l4Port, "list")
 	l4Got := oneLine(l4List, 200)
 	if l4Err != nil {
@@ -338,7 +278,7 @@ echo installed`
 
 	// A real unary call over the L4 path — proves it's not just a TCP
 	// connect but full HTTP/2 request/response carried intact.
-	l4Unary, l4UErr := grpcurlRetry(ctx, frrPod, "-plaintext", "-max-time", "10",
+	l4Unary, l4UErr := grpcurlRetry(ctx, grpcurlBin, "-plaintext", "-max-time", "10",
 		"-d", "{}", l4Addr+":"+l4Port, "grpcbin.GRPCBin/Index")
 	l4UGot := oneLine(l4Unary, 200)
 	if l4UErr != nil {
@@ -359,16 +299,13 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	return nil
 }
 
-// waitBGP polls FRR's BGP table (up to 2 min) for a /32 advertised by
-// TMM, returning whether it appeared and the last table seen.
-func waitBGP(ctx *scenarios.Context, frrPod, addr string) (bool, string) {
-	r := ctx.Runner
+// waitBGP polls the external FRR's BGP table (up to 2 min) for a /32 advertised
+// by TMM, returning whether it appeared and the last table seen.
+func waitBGP(ctx *scenarios.Context, addr string) (bool, string) {
 	deadline := time.Now().Add(2 * time.Minute)
 	var last string
 	for time.Now().Before(deadline) {
-		t, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		t, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		last = t
 		if strings.Contains(t, addr) {
 			return true, last
@@ -382,17 +319,24 @@ func waitBGP(ctx *scenarios.Context, frrPod, addr string) (bool, string) {
 	return false, last
 }
 
-// grpcurlRetry runs grpcurl in the FRR pod, retrying (up to 90s) until
-// it exits 0 — absorbing BGP propagation + data-plane programming lag
-// for a freshly-advertised Gateway IP. Returns the last output + error.
-func grpcurlRetry(ctx *scenarios.Context, frrPod string, args ...string) (string, error) {
-	r := ctx.Runner
+// grpcurlNetns runs the host-downloaded grpcurl from inside the external FRR's
+// netns (an ephemeral netshoot with the binary bind-mounted), so it reaches the
+// Gateway VIP via FRR's BGP-learned route.
+func grpcurlNetns(ctx *scenarios.Context, hostBin string, args ...string) (string, error) {
+	return scenarios.FRRNetnsRun(ctx,
+		[]string{"-v", hostBin + ":/grpcurl:ro"},
+		append([]string{"/grpcurl"}, args...)...)
+}
+
+// grpcurlRetry runs grpcurl in the FRR netns, retrying (up to 90s) until it
+// exits 0 — absorbing BGP propagation + data-plane programming lag for a
+// freshly-advertised Gateway IP. Returns the last output + error.
+func grpcurlRetry(ctx *scenarios.Context, hostBin string, args ...string) (string, error) {
 	deadline := time.Now().Add(90 * time.Second)
-	base := []string{"-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--", "/tmp/grpcurl"}
 	var out string
 	var err error
 	for {
-		out, err = r.KubectlCapture(ctx.Ctx, append(append([]string{}, base...), args...)...)
+		out, err = grpcurlNetns(ctx, hostBin, args...)
 		if err == nil || time.Now().After(deadline) {
 			return out, err
 		}
@@ -402,6 +346,47 @@ func grpcurlRetry(ctx *scenarios.Context, frrPod string, args ...string) (string
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// grpcurlGot formats the host-download assertion's Got field.
+func grpcurlGot(bin string, err error) string {
+	if err != nil {
+		return oneLine(err.Error(), 200)
+	}
+	return bin
+}
+
+// ensureGrpcurlHost downloads + SHA-256-verifies + extracts the pinned grpcurl
+// for the host arch into <PoCDir>/artifacts/bin/grpcurl (idempotent — skips if
+// already present and runnable). Returns the host path to the binary. It's
+// bind-mounted into the FRR netns for gRPC calls. The host has curl/sha256sum/
+// tar (dev machine); we chain them in one sh -c so a checksum mismatch aborts
+// before the binary lands.
+func ensureGrpcurlHost(ctx *scenarios.Context) (string, error) {
+	url, sha, ok := grpcurlDownload()
+	if !ok {
+		return "", fmt.Errorf("unsupported GOARCH %s", runtime.GOARCH)
+	}
+	binDir := filepath.Join(ctx.PoCDir, "artifacts", "bin")
+	bin := filepath.Join(binDir, "grpcurl")
+	if out, err := exec.CommandContext(ctx.Ctx, bin, "--version").CombinedOutput(); err == nil {
+		_ = out
+		return bin, nil
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return "", err
+	}
+	script := `set -e
+cd "` + binDir + `"
+curl -fsSL -o grpcurl.tgz "` + url + `"
+echo "` + sha + `  grpcurl.tgz" | sha256sum -c -
+tar xzf grpcurl.tgz grpcurl
+chmod +x grpcurl
+rm -f grpcurl.tgz`
+	if out, err := exec.CommandContext(ctx.Ctx, "sh", "-c", script).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("download grpcurl: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return bin, nil
 }
 
 func finalize(res scenarios.Result) scenarios.Result {

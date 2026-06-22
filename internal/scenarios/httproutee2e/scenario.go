@@ -14,12 +14,12 @@
 //
 // Pipeline (Apply):
 //
-//	1. GatewayClass + F5BnkGateway IP pool
-//	2. nginx Deployment+Service (2 replicas, marker body)
-//	3. Gateway with static spec.addresses=203.0.113.100
-//	4. HTTPRoute (host=ocibnkctl.local, path=/, → nginx)
-//	5. Wait for FRR's BGP table to include 203.0.113.100/32
-//	   (proof TMM is now advertising it after the Gateway apply)
+//  1. GatewayClass + F5BnkGateway IP pool
+//  2. nginx Deployment+Service (2 replicas, marker body)
+//  3. Gateway with static spec.addresses=203.0.113.100
+//  4. HTTPRoute (host=ocibnkctl.local, path=/, → nginx)
+//  5. Wait for FRR's BGP table to include 203.0.113.100/32
+//     (proof TMM is now advertising it after the Gateway apply)
 //
 // Verification:
 //   - control plane (GatewayClass + Gateway Programmed + HTTPRoute
@@ -112,14 +112,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 
-	// Check the dependency is in place before touching anything.
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod in scn-bgp namespace)")
-	}
-
 	// Apply static manifests in order. GatewayClass is idempotent;
 	// namespace must exist before namespace-scoped objects.
 	for _, f := range []string{
@@ -175,28 +167,15 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         strings.TrimSpace(out),
 	})
 
-	// Wait for FRR's BGP table to include 203.0.113.100/32 — proof
-	// that TMM started advertising it after Gateway+HTTPRoute apply.
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available", OK: false,
-			Got: "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
+	// Wait for the external bnk-edge FRR's BGP table to include
+	// 203.0.113.100/32 — proof that TMM started advertising it after
+	// Gateway+HTTPRoute apply. The FRR is permanent cluster infrastructure
+	// (cluster up), shared by every scenario — no per-scenario scn-frr pod.
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
-		bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, "203.0.113.100") {
 			hasGW = true
@@ -214,31 +193,22 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(lastTable, 200),
 	})
 
-	// Also confirm the kernel route is installed (BGP→FIB transition).
-	frrKernelRoute, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-		frrPod, "-c", "frr", "--",
-		"ip", "route", "show", "203.0.113.100")
+	// Also confirm the kernel route is installed on the FRR (BGP→FIB).
+	frrKernelRoute, _ := scenarios.FRRExec(ctx, "ip", "route", "show", "203.0.113.100")
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "FRR kernel route 203.0.113.100/32 installed via net1",
 		OK:          strings.Contains(frrKernelRoute, "net1"),
 		Got:         oneLine(frrKernelRoute, 150),
 	})
 
-	// 5 consecutive curls from inside FRR through the Gateway IP.
+	// 5 consecutive curls from the FRR netns through the Gateway IP.
 	const marker = "ocibnkctl-scenario-httproute-e2e-OK"
 	const curls = 5
 	successCount := 0
 	var lastErr, lastBody string
-	// Ensure curl is present in the FRR image (alpine-ish base).
-	_ = r.Kubectl(ctx.Ctx, "-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--",
-		"sh", "-c", "command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1 || true")
 	for i := 1; i <= curls; i++ {
-		body, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"curl", "-sS", "--fail", "--max-time", "8",
-			"-H", "Host: ocibnkctl.local",
-			"http://203.0.113.100/",
-		)
+		body, err := scenarios.FRRNetnsCurl(ctx, "http://203.0.113.100/",
+			"-H", "Host: ocibnkctl.local")
 		if err != nil {
 			lastErr = err.Error()
 			continue

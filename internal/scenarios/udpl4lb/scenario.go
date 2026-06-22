@@ -75,12 +75,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod)")
-	}
 	for _, f := range []string{
 		"01-namespace.yaml",
 		"02-bnkgateway.yaml",
@@ -129,26 +123,13 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         strings.TrimSpace(rstate),
 	})
 
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available", OK: false,
-			Got: "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
+	// The external bnk-edge FRR (cluster up) is the BGP peer + data-plane
+	// vantage — no per-scenario scn-frr pod.
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
-		bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, gwAddr) {
 			hasGW = true
@@ -166,27 +147,15 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(lastTable, 200),
 	})
 
-	// Install socat in the FRR pod for the UDP probe. Idempotent.
-	if err := r.Kubectl(ctx.Ctx, "-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--",
-		"sh", "-c", "command -v socat >/dev/null 2>&1 || apk add --no-cache socat >/dev/null 2>&1"); err != nil {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "socat available in FRR pod", OK: false, Got: err.Error(),
-		})
-		return finalize(res)
-	}
-
-	// Send a single UDP probe; expect the marker in the response.
-	// `-t 3` makes socat give up after 3s of idle.
+	// Send UDP probes via socat from the FRR netns (netshoot carries socat);
+	// expect the marker in the response. `-t 3` makes socat give up after 3s.
 	const marker = "ocibnkctl-scenario-udp-lb-OK"
 	const probes = 5
 	successCount := 0
 	var lastBody string
 	for i := 0; i < probes; i++ {
-		body, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"sh", "-c",
-			"printf probe | socat -t 3 - UDP4:"+gwAddr+":"+gwPort,
-		)
+		body, err := scenarios.FRRNetnsRun(ctx, nil,
+			"sh", "-c", "printf probe | socat -t 3 - UDP4:"+gwAddr+":"+gwPort)
 		if err != nil {
 			lastBody = err.Error()
 			continue

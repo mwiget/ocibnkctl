@@ -14,12 +14,12 @@
 //
 // Pipeline:
 //
-//   1. scn-extres namespace + F5BnkGateway IP pool for .101
-//   2. ext-backend Deployment (nginx) with the bnk-bgp NAD on net1
-//   3. Gateway with static addresses=[203.0.113.101] +
-//      HTTPRoute backendRef → Pool
-//   4. Discover ext-backend's NAD IP; render the Pool CR with that
-//      IP as the single member
+//  1. scn-extres namespace + F5BnkGateway IP pool for .101
+//  2. ext-backend Deployment (nginx) with the bnk-bgp NAD on net1
+//  3. Gateway with static addresses=[203.0.113.101] +
+//     HTTPRoute backendRef → Pool
+//  4. Discover ext-backend's NAD IP; render the Pool CR with that
+//     IP as the single member
 //
 // Verification:
 //   - Gateway Programmed, HTTPRoute Accepted, ext-backend Available
@@ -111,14 +111,6 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
-
-	// Dependency check.
-	if _, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}"); err != nil {
-		return fmt.Errorf("dependency missing: run `ocibnkctl scenario run bgp-peer-frr` first (no Running scn-frr pod)")
-	}
 
 	// 1. Namespace + F5BnkGateway IP pool + backend.
 	for _, f := range []string{
@@ -228,29 +220,12 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(memberCount, 200),
 	})
 
-	// FRR pod available for the curl source.
-	frrPod, ferr := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
-		"-l", "app=scn-frr",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if ferr != nil || strings.TrimSpace(frrPod) == "" {
-		res.Assertions = append(res.Assertions, scenarios.Assertion{
-			Description: "scn-bgp/scn-frr pod available",
-			OK:          false,
-			Got:         "missing (bgp-peer-frr not running?)",
-		})
-		return finalize(res)
-	}
-	frrPod = strings.TrimSpace(frrPod)
-
-	// Wait for FRR to learn 203.0.113.101/32 via BGP.
+	// Wait for the external bnk-edge FRR to learn 203.0.113.101/32 via BGP.
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastTable string
 	hasGW := false
 	for time.Now().Before(deadline) {
-		bgpTable, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"vtysh", "-c", "show bgp ipv4 unicast")
+		bgpTable, _ := scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
 		lastTable = bgpTable
 		if strings.Contains(bgpTable, "203.0.113.101") {
 			hasGW = true
@@ -268,20 +243,14 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         oneLine(lastTable, 200),
 	})
 
-	// 5x curl from inside FRR. apk-add curl in case it isn't already.
-	_ = r.Kubectl(ctx.Ctx, "-n", "scn-bgp", "exec", frrPod, "-c", "frr", "--",
-		"sh", "-c", "command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1 || true")
+	// 5x curl from the FRR netns.
 	const marker = "ocibnkctl-scenario-extres-pool-OK"
 	const curls = 5
 	successCount := 0
 	var lastErr, lastBody string
 	for i := 1; i <= curls; i++ {
-		body, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "exec",
-			frrPod, "-c", "frr", "--",
-			"curl", "-sS", "--fail", "--max-time", "8",
-			"-H", "Host: extres.ocibnkctl.local",
-			"http://203.0.113.101/",
-		)
+		body, err := scenarios.FRRNetnsCurl(ctx, "http://203.0.113.101/",
+			"-H", "Host: extres.ocibnkctl.local")
 		if err != nil {
 			lastErr = err.Error()
 			continue

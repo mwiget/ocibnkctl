@@ -90,6 +90,19 @@ func FRRNetnsCurl(ctx *Context, url string, extraCurlArgs ...string) (string, er
 	return out.String(), nil
 }
 
+// FRRNetnsRun runs an arbitrary command in an ephemeral netshoot joined to the
+// external FRR's network namespace — the general form of FRRNetnsCurl, for
+// data-plane tools other than curl (socat for UDP, a bind-mounted grpcurl,
+// etc.). extraRunArgs are inserted before the image (e.g. "-v host:ctr:ro"
+// mounts). Returns combined stdout+stderr so callers can inspect tool output.
+func FRRNetnsRun(ctx *Context, extraRunArgs []string, cmd ...string) (string, error) {
+	args := []string{"run", "--rm", "--network", "container:" + EdgeFRRName(ctx)}
+	args = append(args, extraRunArgs...)
+	args = append(args, edgeToolsImage)
+	args = append(args, cmd...)
+	return runtimeCapture(ctx, args...)
+}
+
 func oneLineEdge(s string, n int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 	if len(s) > n {
