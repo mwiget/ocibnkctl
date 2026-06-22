@@ -10,9 +10,12 @@ metadata:
 # by just shipping a copy here).
 #
 # Both NAD instances reference the same Linux bridge `br-bnk-bgp`
-# on the kind node, so traffic between them and the TMM net1 is
-# straight L2. The bridge CNI uses host-local IPAM scoped to the
-# NAD name, so allocations don't collide across namespaces.
+# on the node, so traffic between this backend and the TMM net1 is
+# straight L2. IPAM is whereabouts (cluster-wide), matching the
+# foundation-owned bnk-bgp NAD in `default`: a single shared store on
+# br-bnk-bgp hands ext-backend and the TMM DaemonSet pods unique
+# addresses with no collision — host-local (per-node, per-NAD,
+# independent) could not guarantee that across the shared bridge.
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
@@ -28,9 +31,9 @@ spec:
       "isGateway": false,
       "hairpinMode": true,
       "ipam": {
-        "type": "host-local",
-        "subnet": "192.168.99.0/24",
-        "rangeStart": "192.168.99.20",
-        "rangeEnd": "192.168.99.250"
+        "type": "whereabouts",
+        "range": "192.168.99.0/24",
+        "range_start": "192.168.99.20",
+        "range_end": "192.168.99.250"
       }
     }

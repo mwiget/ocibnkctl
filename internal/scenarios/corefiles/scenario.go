@@ -141,9 +141,9 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	// the change landed even if the kubelet hasn't finished
 	// rotating pods.
 	_ = r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
-		"deployment/f5-tmm")
+		"daemonset/f5-tmm")
 	if err := r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "status",
-		"deployment/f5-tmm", "--timeout=3m"); err != nil {
+		"daemonset/f5-tmm", "--timeout=3m"); err != nil {
 		fmt.Fprintf(ctx.Out, "      | WARN: f5-tmm rollout still in progress after 3m: %v (continuing — verify reads the Deployment template directly)\n", err)
 	}
 	return nil
@@ -200,7 +200,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	// spec template — works whether or not the new TMM pod has
 	// finished rolling out yet.
 	tmpl, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get",
-		"deployment/f5-tmm",
+		"daemonset/f5-tmm",
 		"-o", "jsonpath={range .spec.template.spec.volumes[*]}{.name},{end}")
 	tmpl = strings.TrimSpace(tmpl)
 	hasCrashVolume := strings.Contains(tmpl, "kernel-cores") ||

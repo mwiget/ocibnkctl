@@ -282,11 +282,11 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	//    TMM pod then has no net1, BGP can't bind, and the rest
 	//    of the scenario is doomed.
 	if err := r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
-		"deployment/f5-tmm"); err != nil {
+		"daemonset/f5-tmm"); err != nil {
 		return fmt.Errorf("rollout restart f5-tmm: %w", err)
 	}
 	if err := r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "status",
-		"deployment/f5-tmm", "--timeout=5m"); err != nil {
+		"daemonset/f5-tmm", "--timeout=5m"); err != nil {
 		return fmt.Errorf("f5-tmm rollout did not complete: %w", err)
 	}
 
@@ -508,29 +508,22 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	// 1. Remove the NAD from CNEInstance so FLO drops the Multus
-	//    annotation on the next TMM restart.
-	_ = r.Kubectl(ctx.Ctx, "patch", "cneinstance", "bnk-instance",
-		"-n", "default", "--type=merge",
-		"-p", `{"spec":{"networkAttachments":[]}}`)
-	// 2. Empty the ZeBOS template so bgpd has no peer config next time.
-	_ = r.Apply(ctx.Ctx, `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: f5-tmm-dynamic-routing-template
-  namespace: default
-data:
-  ZebOS.conf: ""
-`)
-	// 3. Drop scn-bgp namespace (also removes FRR + scoped NAD).
+	// Cleanup only removes SCENARIO-LOCAL resources. Under the wholeCluster
+	// anycast-bgp default, the bnk-bgp NAD in `default`, the CNEInstance
+	// networkAttachments=[bnk-bgp], and the f5-tmm-dynamic-routing-template
+	// ZeBOS ConfigMap are all FOUNDATION-owned (the deploy path stands them
+	// up so every DaemonSet TMM peers BGP by default) — so we must NOT reset
+	// networkAttachments, empty the ZeBOS template, or delete the default
+	// NAD here, or cleanup would tear down the baseline data plane. Dropping
+	// the scn-bgp namespace removes this scenario's own FRR + its scoped NAD.
+	//
+	// NOTE: this scenario's Apply still overwrites the shared ZeBOS template
+	// to point at its own scn-frr peer; reconciling that with the foundation
+	// FRR under anycast-default needs live-cluster verification (see the
+	// migration notes) — Cleanup is kept non-destructive in the meantime.
 	_ = r.Kubectl(ctx.Ctx, "delete", "namespace", "scn-bgp", "--ignore-not-found")
-	// 4. Drop the default-namespace NAD.
-	_ = r.Kubectl(ctx.Ctx, "-n", "default", "delete", "net-attach-def",
-		"bnk-bgp", "--ignore-not-found")
-	// 5. Restart TMM to apply the empty ZeBOS config + drop the Multus
-	//    annotation.
 	_ = r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
-		"deployment/f5-tmm")
+		"daemonset/f5-tmm")
 	return nil
 }
 
