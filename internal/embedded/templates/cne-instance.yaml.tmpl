@@ -113,8 +113,14 @@ spec:
       #         `update-source net1` for its BGP session.
       - name: "TMM_MAPRES_ADDL_VETHS_ON_DP"
         value: "{{.MapresOnDP}}"
+      # OcNOS (IP Infusion) routing daemon: with ZEBOS_STATE=ocnos FLO swaps
+      # the f5-tmm-routing container from f5dr-img (ZeBOS) to ocnos-img
+      # (verified live: ocnos-img:v0.23.0-0.3.1). Matches tmmlitectl so the
+      # two tools share one routing stack. The OcNOS BGP config is delivered
+      # via the f5-tmm-dynamic-routing-template ConfigMap (see
+      # RenderAnycastZebosConfigMap) and peers the external bnk-edge FRR.
       - name: "ZEBOS_STATE"
-        value: legacy
+        value: ocnos
       # Cap TMM's mbuf/buffer pool to 768 x 2MB = 1.5GiB instead of letting
       # the generic-socket driver auto-size to ~fill its cgroup memory limit.
       # FLO hard-pins the f5-tmm container to 2Gi (the f5-tmm-pod-manager

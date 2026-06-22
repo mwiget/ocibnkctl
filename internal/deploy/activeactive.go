@@ -59,6 +59,13 @@ const (
 	BGPSubnet    = "192.168.99.0/24"
 	BGPIPAMStart = "192.168.99.20"
 	BGPIPAMEnd   = "192.168.99.250"
+	// BGPWhereaboutsStart is the start of the TMM net1 whereabouts pool on the
+	// shared bnk-edge L2. It sits ABOVE the edge fabric's pinned addresses
+	// (external FRR .41, origin .50, worker uplinks .60-.159) so a TMM net1
+	// can never collide with them. The host-local BGPIPAMStart (.20) is for
+	// the standby-mode bgp-peer-frr scenario's own isolated bridge, where
+	// there's no edge fabric to dodge.
+	BGPWhereaboutsStart = "192.168.99.160"
 	// BGPRoutingTemplateCM is the cluster-wide ConfigMap FLO renders into
 	// every TMM pod's ZeBOS config (one per CNEInstance, shared by all TMM
 	// pods). A single shared template still yields a unique router-id per
@@ -135,28 +142,26 @@ spec:
 `, name, namespace, name, bridge, subnet, rangeStart, rangeEnd)
 }
 
-// RenderAnycastZebosConfigMap renders the cluster-wide ZeBOS routing
-// template ConfigMap for the anycast-bgp path. It generalizes the
-// bgp-peer-frr scenario's 05-zebos-template: every TMM pod peers with
-// the FRR router at peerIP over net1 and advertises its VIP /32 over
-// BGP.
+// RenderAnycastZebosConfigMap renders the cluster-wide OcNOS routing
+// template ConfigMap for the anycast-bgp path. Every TMM pod peers the
+// external bnk-edge FRR at peerIP over net1 and advertises its routes
+// (the connected net1 /24 + the Gateway VIP /32s FLO installs as kernel
+// routes) over BGP.
 //
 // router-id is the literal token %%POD_IP%% — FLO expands it per pod, so
-// this single shared ConfigMap yields a UNIQUE router-id per TMM pod
-// (the linchpin that lets N pods form distinct sessions for anycast).
+// this single shared ConfigMap yields a UNIQUE router-id per TMM pod (the
+// linchpin that lets N pods form distinct sessions for anycast).
 //
-// redistribute kernel + connected: the Gateway VIP /32 that FLO installs
-// as a kernel route (route type "K") is picked up by `redistribute
-// kernel`; net1's connected subnet (type "C") by `redistribute
-// connected`. ZeBOS treats K and C as distinct origins, so both lines
-// are needed, and both MUST sit at router-bgp scope — F5 ZeBOS silently
-// drops them from `address-family ipv4`.
+// OcNOS XP-6.6.0 (ZEBOS_STATE=ocnos / ocnos-img) refuses to inject
+// redistributed routes into BGP unless the redistribute statement is
+// qualified by a route-map; RMALL is an unconditional permit (no match =
+// permit all). Without it OcNOS silently advertises 0 prefixes. We
+// redistribute kernel (Gateway VIP /32s), connected (net1's subnet) and
+// static, all at router-bgp scope.
 //
-// vip is optional. When non-empty a `network <vip>/32` statement is
-// added (advertised only if the route is present in the RIB); when empty
-// the path relies entirely on `redistribute kernel` to advertise the
-// Gateway VIP that FLO installs — the preferred, lower-coupling default
-// (mirrors how http-routing-e2e reaches Gateways).
+// vip is optional. When non-empty a `network <vip>/32` statement is added
+// (advertised only if the route is in the RIB); when empty the path relies
+// on `redistribute kernel` to advertise the Gateway VIPs FLO installs.
 func RenderAnycastZebosConfigMap(namespace, peerIP, vip string) string {
 	var networkStmt string
 	if vip != "" {
@@ -169,13 +174,16 @@ metadata:
   namespace: %s
 data:
   ZebOS.conf: |
+    route-map RMALL permit 10
+    !
     router bgp %d
       bgp router-id %%%%POD_IP%%%%
       bgp log-neighbor-changes
       bgp graceful-restart restart-time 120
       no bgp default ipv4-unicast
-      redistribute kernel
-      redistribute connected
+      redistribute kernel route-map RMALL
+      redistribute connected route-map RMALL
+      redistribute static route-map RMALL
 %s      !
       neighbor %s remote-as %d
       neighbor %s update-source net1

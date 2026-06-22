@@ -184,6 +184,34 @@ spec:
 		BGPSubnet, tmmLabelVal, FRRImage)
 }
 
+// TriggerOcNOSRedistribute re-issues the redistribute statements on every
+// Running TMM pod's OcNOS daemon. OcNOS XP-6.6.0 only injects redistributed
+// routes into BGP when the statement is (re-)issued at runtime, so after the
+// routing ConfigMap is applied + TMM rolled, this nudges every pod to actually
+// advertise its connected net1 subnet + the Gateway VIP /32s to the external
+// FRR. Best-effort per pod (returns the last error).
+func TriggerOcNOSRedistribute(ctx context.Context, r *Runner) error {
+	pods, err := RunningTMMPods(ctx, r)
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for _, pod := range pods {
+		if e := r.Kubectl(ctx, "-n", "default", "exec", pod,
+			"-c", "f5-tmm-routing", "--",
+			"imish",
+			"-e", "configure terminal",
+			"-e", fmt.Sprintf("router bgp %d", BGPTMMAS),
+			"-e", "address-family ipv4 unicast",
+			"-e", "redistribute kernel route-map RMALL",
+			"-e", "redistribute connected route-map RMALL",
+			"-e", "end"); e != nil {
+			lastErr = e
+		}
+	}
+	return lastErr
+}
+
 // RunningTMMPods returns the names of all Running TMM pods, sorted by
 // creation time. The anycast-bgp path must act on every TMM pod (inject
 // passwd.conf, verify a session) — not just the newest — because each

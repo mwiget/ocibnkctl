@@ -51,7 +51,7 @@ func EnsureWhereabouts(ctx context.Context, r *Runner) error {
 // collide on the shared bnk-edge L2. Same name/bridge/subnet as RenderBGPNAD
 // (the L2 shape is unchanged) — only the IPAM backend differs.
 func RenderBGPNADWhereabouts(namespace string) string {
-	return renderWhereaboutsBridgeNAD(BGPNADName, namespace, BGPBridge, BGPSubnet, BGPIPAMStart, BGPIPAMEnd)
+	return renderWhereaboutsBridgeNAD(BGPNADName, namespace, BGPBridge, BGPSubnet, BGPWhereaboutsStart, BGPIPAMEnd)
 }
 
 // renderWhereaboutsBridgeNAD renders a bridge-CNI NetworkAttachmentDefinition

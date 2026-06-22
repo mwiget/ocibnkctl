@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/version"
@@ -390,14 +391,14 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
 		}
 	case p.BNK.IsAnycastBGP():
-		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + whereabouts + bridge CNI + bnk-bgp NAD + FRR peer ...")
+		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + whereabouts + bridge CNI + bnk-bgp NAD ...")
 		if err := deploy.EnsureMultus(ctx, r); err != nil {
 			return fmt.Errorf("anycast-bgp: ensure multus: %w", err)
 		}
 		// Cluster-wide IPAM: under wholeCluster TMM is a DaemonSet (one pod
 		// per worker) all attaching the single bnk-bgp NAD, so its IPAM must
 		// allocate from one shared store — whereabouts — to give each pod a
-		// unique net1 without per-node host-local collisions on the edge L2.
+		// unique net1 without collisions on the shared bnk-edge L2.
 		if err := deploy.EnsureWhereabouts(ctx, r); err != nil {
 			return fmt.Errorf("anycast-bgp: ensure whereabouts: %w", err)
 		}
@@ -409,19 +410,12 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		// Calico's natOutgoing MASQUERADE breaks the data plane (see the
 		// scenario's disableBridgeNetfilter rationale). Docker-only.
 		disableBridgeNetfilter(ctx, p.Cluster.Provider, nodes, out)
-		// TMM's NAD (whereabouts .20+) and FRR's static-IP NAD (.2), both on
-		// br-bnk-bgp.
+		// TMM's net1 NAD (whereabouts, .160-.250) on br-bnk-bgp — which
+		// `cluster up` already enslaved onto the shared bnk-edge L2 alongside
+		// the external FRR (.41) and origin (.50). No in-cluster FRR: the BGP
+		// peer is the external bnk-edge FRR container.
 		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default")); err != nil {
 			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
-		}
-		if err := r.Apply(ctx, deploy.RenderFRRStaticNAD("default")); err != nil {
-			return fmt.Errorf("anycast-bgp: apply FRR NAD: %w", err)
-		}
-		// FRR peer (one per app=f5-tmm node). Deployed now so it's
-		// converging while TMM comes up.
-		k, v := p.BNK.TMMLabel()
-		if err := r.Apply(ctx, deploy.RenderFRRPeer("default", k, v)); err != nil {
-			return fmt.Errorf("anycast-bgp: apply FRR peer: %w", err)
 		}
 	}
 
@@ -540,28 +534,27 @@ spec:
 			fmt.Fprintf(out, "      %d TMM(s) active; each serves its own node's ingress\n", n)
 		}
 	case p.BNK.IsAnycastBGP():
-		// Each TMM peers with its node-local FRR over net1 and advertises
-		// its VIP /32 over BGP (anycast). Apply the cluster-wide ZeBOS
-		// template (one neighbor = FRR's static IP, valid for every TMM
-		// pod; router-id is the per-pod %%POD_IP%% token FLO expands), then
-		// roll TMM ONCE so it loads the config, and inject passwd.conf into
-		// every Running TMM pod (each runs its own ZeBOS session).
+		// Every TMM peers the EXTERNAL bnk-edge FRR (created by `cluster up`,
+		// at EdgeFRRIP on the shared L2) over net1 and advertises its routes
+		// over BGP. Apply the cluster-wide OcNOS template (one neighbor = the
+		// external FRR; router-id is the per-pod %%POD_IP%% token FLO expands),
+		// roll TMM once so it loads the config, inject passwd.conf (imish
+		// auth), then re-trigger redistribution (OcNOS only advertises once the
+		// redistribute statement is re-issued at runtime).
 		n := p.Cluster.Workers()
-		fmt.Fprintf(out, "[6/6] Anycast-BGP: ZeBOS template (neighbor %s) + roll %d TMM(s) + passwd.conf ...\n",
-			deploy.BGPPeerIP, n)
+		peerIP := cluster.EdgeFRRIP(p.Cluster.EdgeNet())
+		fmt.Fprintf(out, "[6/6] Anycast-BGP: OcNOS template (neighbor %s) + roll %d TMM(s) + passwd.conf + redistribute ...\n",
+			peerIP, n)
 		waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
 		// vip="" → advertise via `redistribute kernel` (FLO installs the
 		// Gateway VIP /32 as a kernel route once a workload Gateway exists).
-		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default", deploy.BGPPeerIP, "")); err != nil {
-			fmt.Fprintf(out, "      WARN: apply ZeBOS ConfigMap: %v (TMMs won't peer)\n", err)
+		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default", peerIP, "")); err != nil {
+			fmt.Fprintf(out, "      WARN: apply OcNOS ConfigMap: %v (TMMs won't peer)\n", err)
 		} else {
 			// One rollout restart so TMM reloads the routing template it now
 			// mounts. Safe to re-run: FLO bakes the bnk-bgp NAD annotation
 			// into the f5-tmm DaemonSet's pod template (from
-			// CNEInstance.spec.networkAttachments), so restarted pods keep
-			// net1 — unlike the bgp-peer-frr scenario's runtime-patch flow,
-			// where the NAD isn't in the base spec and a bare restart drops
-			// it (verified on a 2-node cluster, 2026-06-15).
+			// CNEInstance.spec.networkAttachments), so restarted pods keep net1.
 			if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "daemonset/f5-tmm"); err != nil {
 				fmt.Fprintf(out, "      WARN: rollout restart f5-tmm: %v\n", err)
 			}
@@ -575,14 +568,13 @@ spec:
 			}
 			waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
 			if err := deploy.InjectPasswdConfAll(ctx, r); err != nil {
-				fmt.Fprintf(out, "      WARN: inject passwd.conf: %v (ZeBOS may not load until injected)\n", err)
-			} else {
-				// Each TMM peers with its node-local FRR and advertises its
-				// connected/kernel routes; the Gateway VIP /32 appears once a
-				// workload Gateway exists (redistribute kernel picks it up).
-				fmt.Fprintf(out, "      %d TMM(s) peering with FRR at %s; each advertises its VIP /32 over BGP (anycast model)\n",
-					n, deploy.BGPPeerIP)
+				fmt.Fprintf(out, "      WARN: inject passwd.conf: %v (OcNOS may not load until injected)\n", err)
 			}
+			if err := deploy.TriggerOcNOSRedistribute(ctx, r); err != nil {
+				fmt.Fprintf(out, "      WARN: trigger redistribute: %v (routes may not advertise until re-issued)\n", err)
+			}
+			fmt.Fprintf(out, "      %d TMM(s) peering external FRR %s over OcNOS; each advertises its routes over BGP (anycast model)\n",
+				n, peerIP)
 		}
 	}
 
