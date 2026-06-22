@@ -282,14 +282,19 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         fmt.Sprintf("%d/%d", successBodies, curls),
 	})
 
-	// Scrape TMM logs for the semantic-cache iRule's events.
-	tmm, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pod",
+	// Scrape ALL TMM logs for the semantic-cache iRule's events — anycast/ECMP
+	// routes the curl to any of the N wholeCluster TMMs, so the iRule fires on
+	// whichever one handled it; scraping only items[0] is a coin-flip.
+	tmmList, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "get", "pods",
 		"-l", "app=f5-tmm",
 		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	tmm = strings.TrimSpace(tmm)
-	tmmLogs, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm,
-		"-c", "f5-tmm", "--since=60s")
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+	var tmmLogsB strings.Builder
+	for _, tmm := range strings.Fields(tmmList) {
+		s, _ := r.KubectlCapture(ctx.Ctx, "-n", "default", "logs", tmm, "-c", "f5-tmm", "--since=60s")
+		tmmLogsB.WriteString(s)
+	}
+	tmmLogs := tmmLogsB.String()
 	hasIRule := strings.Contains(tmmLogs, "scn-semcache-gateway-scn-semcache-semantic-cache") &&
 		strings.Contains(tmmLogs, "Client initialized with modelcache_server=") &&
 		strings.Contains(tmmLogs, "SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered")
