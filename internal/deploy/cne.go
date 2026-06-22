@@ -23,10 +23,6 @@ type CNEInputs struct {
 	// The small-host profile sets it false to shed TMM's observer sidecar
 	// (see poc.BNK.MetricSubsystemEnabled).
 	MetricSubsystem bool
-	// TMMReplicas is CNEInstance.spec.tmmReplicas — how many TMM pods FLO
-	// runs as a Deployment (the demo-mode "TMM as N replicas" path). It
-	// tracks cluster.tmm_nodes so each TMM lands on its own labelled node.
-	TMMReplicas int
 	// NetworkAttachments is CNEInstance.spec.networkAttachments — the
 	// Multus NAD(s) FLO attaches to every TMM pod. Empty in the default
 	// demo shape; selfip-dag sets it to the DAG bridge NAD so mapres can
@@ -52,7 +48,6 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 		TMMNodeLabelKey: k,
 		TMMNodeLabelVal: v,
 		MetricSubsystem: p.BNK.MetricSubsystemEnabled(),
-		TMMReplicas:     p.Cluster.Workers(),
 		MapresOnDP:      "TRUE",
 	}
 	// Dispatch NAD + mapres by data-plane mode:

@@ -223,7 +223,14 @@ func (b BNK) DataplaneMode() string {
 	if b.ActiveActive {
 		return DataplaneSelfIPDAG
 	}
-	return DataplaneStandby
+	// Default in the wholeCluster/DaemonSet architecture: anycast-bgp. Every
+	// per-worker TMM gets a net1 (whereabouts IPAM) on the bnk-bgp NAD and
+	// advertises its VIP /32 over its own BGP session — the natural scale-out
+	// as the TMM worker count grows. It also guarantees a non-empty
+	// networkAttachments, which wholeCluster needs (empty + wholeCluster
+	// tripped a FLO nil-map panic on BNK 2.3). Set tmm_dataplane_mode:
+	// standby explicitly to opt out (single-TMM, no NAD).
+	return DataplaneAnycastBGP
 }
 
 // IsSelfIPDAG reports whether the effective data-plane mode is the

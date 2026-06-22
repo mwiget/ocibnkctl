@@ -7,37 +7,37 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
-func TestRenderCNEInstance_TMMReplicasTracksNodes(t *testing.T) {
-	cases := []struct {
-		nodes int
-		want  string
-	}{
-		{0, "tmmReplicas: 1"}, // unset → defaults to 1
-		{1, "tmmReplicas: 1"},
-		{3, "tmmReplicas: 3"},
-	}
-	for _, c := range cases {
-		p := &poc.PoC{Cluster: poc.Cluster{TMMNodes: c.nodes}}
+func TestRenderCNEInstance_WholeClusterDaemonSet(t *testing.T) {
+	// Under wholeCluster, FLO runs TMM as a DaemonSet — one pod per labelled
+	// worker — so the render must declare wholeCluster: true and carry NO
+	// tmmReplicas (the pod count tracks the node label, not a replica field),
+	// regardless of cluster.tmm_nodes.
+	for _, nodes := range []int{0, 1, 3} {
+		p := &poc.PoC{Cluster: poc.Cluster{TMMNodes: nodes}}
 		got, err := RenderCNEInstance(p)
 		if err != nil {
-			t.Fatalf("nodes %d: %v", c.nodes, err)
+			t.Fatalf("nodes %d: %v", nodes, err)
 		}
-		if !strings.Contains(got, c.want) {
-			t.Errorf("nodes %d: want %q in render", c.nodes, c.want)
+		if !strings.Contains(got, "wholeCluster: true") {
+			t.Errorf("nodes %d: want wholeCluster: true in render:\n%s", nodes, got)
+		}
+		if strings.Contains(got, "tmmReplicas:") {
+			t.Errorf("nodes %d: render must not contain a tmmReplicas field under wholeCluster:\n%s", nodes, got)
 		}
 	}
 }
 
-func TestRenderCNEInstance_ActiveActiveNetworkAttachments(t *testing.T) {
-	// Default (active/active off): no networkAttachments block at all.
-	off, err := RenderCNEInstance(&poc.PoC{})
+func TestRenderCNEInstance_NetworkAttachmentsByMode(t *testing.T) {
+	// Explicit standby: no networkAttachments block at all (mapres grabs the
+	// pod's own net, no NAD).
+	sb, err := RenderCNEInstance(&poc.PoC{BNK: poc.BNK{TMMDataplaneMode: poc.DataplaneStandby}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(off, "networkAttachments") {
-		t.Errorf("default render should not contain networkAttachments:\n%s", off)
+	if strings.Contains(sb, "networkAttachments:") {
+		t.Errorf("standby render should not contain a networkAttachments field:\n%s", sb)
 	}
-	// On: the DAG NAD is injected.
+	// Legacy active/active bool aliases selfip-dag: the DAG NAD is injected.
 	on, err := RenderCNEInstance(&poc.PoC{BNK: poc.BNK{ActiveActive: true}})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestRenderCNEInstance_DataplaneMode(t *testing.T) {
 		wantNAD    string // "" → no networkAttachments block
 		wantMapres string
 	}{
-		{"standby default", poc.BNK{}, "", `value: "TRUE"`},
+		{"default is anycast-bgp", poc.BNK{}, BGPNADName, `value: "FALSE"`},
 		{"explicit standby", poc.BNK{TMMDataplaneMode: poc.DataplaneStandby}, "", `value: "TRUE"`},
 		{"selfip-dag", poc.BNK{TMMDataplaneMode: poc.DataplaneSelfIPDAG}, DAGNADName, `value: "TRUE"`},
 		{"legacy bool == selfip-dag", poc.BNK{ActiveActive: true}, DAGNADName, `value: "TRUE"`},
@@ -71,7 +71,7 @@ func TestRenderCNEInstance_DataplaneMode(t *testing.T) {
 				t.Fatal(err)
 			}
 			if c.wantNAD == "" {
-				if strings.Contains(got, "networkAttachments") {
+				if strings.Contains(got, "networkAttachments:") {
 					t.Errorf("want no networkAttachments block:\n%s", got)
 				}
 			} else if !strings.Contains(got, "- "+c.wantNAD) {

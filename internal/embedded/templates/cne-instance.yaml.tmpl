@@ -8,21 +8,20 @@ spec:
     gatewayAPI: true
     type: BNK
   manifestVersion: "{{.ManifestVersion}}"
-  # Demo-mode TMM scheduling triple: wholeCluster=false +
-  # dpu.enabled=false + tmmReplicas activates the supported "TMM as
-  # a Deployment with N replicas" code path. The CRD description on
-  # tmmReplicas spells it out: "When WholeCluster and DPU are both
-  # false, this defines how many replicas of TMM should be deployed."
-  # Other combinations land in branches that crash FLO's f5tmm_daemon
-  # set.go reconciler with "assignment to entry in nil map" on BNK
-  # 2.3 / FLO v2.21.13.
-  wholeCluster: false
-  # gatewayAPI=true requires either wholeCluster=true OR a non-empty
-  # watchNamespaces. Since wholeCluster=true + dpu=false trips the
-  # FLO panic, we declare `All` to keep cluster-wide watch behaviour
-  # without the broken combination.
-  watchNamespaces:
-    - All
+  # wholeCluster=true runs TMM as a DaemonSet — one pod per node carrying
+  # the TMM label (app=f5-tmm). This is the F5-standard mode (f5-bnk-udf,
+  # dpubnkctl, and the BF3 installs all use it); scaling out is purely a
+  # matter of how many workers carry the label — there is no tmmReplicas.
+  # f5-bnk-udf proves this works WITHOUT a DPU (demoMode=true, dpu
+  # disabled), so dpu stays disabled here.
+  #
+  # gatewayAPI=true is satisfied by wholeCluster=true (no watchNamespaces
+  # needed). A non-empty networkAttachments is always supplied below (the
+  # bnk-bgp whereabouts NAD) — both because every DaemonSet TMM needs a
+  # net1 on the shared edge L2, and because empty networkAttachments +
+  # wholeCluster tripped a FLO "assignment to entry in nil map" panic in
+  # f5tmm_daemonset.go on BNK 2.3 / FLO v2.21.13.
+  wholeCluster: true
   dpu:
     enabled: false
 {{- if .NetworkAttachments}}
@@ -36,12 +35,11 @@ spec:
   - {{.}}
 {{- end}}
 {{- end}}
-  # One TMM pod per labelled node (cluster.tmm_nodes). FLO runs them as a
-  # Deployment in demo mode; the default k8s scheduler soft-spreads the
-  # replicas one-per-node across the app=f5-tmm nodes. N active TMMs each
-  # serve the traffic that lands on their own node — transparent cross-
-  # node throughput fan-out of one VIP needs DPU/SR-IOV (not demo mode).
-  tmmReplicas: {{.TMMReplicas}}
+  # No replica field under wholeCluster: FLO runs TMM as a DaemonSet, so the
+  # pod count equals the number of app=f5-tmm-labelled worker nodes
+  # (cluster.tmm_nodes). Each per-node TMM serves the traffic that lands on
+  # its own node — transparent cross-node fan-out of one VIP needs
+  # DPU/SR-IOV (not demo mode).
   storageClassName: standard
   telemetry:
     loggingSubsystem:

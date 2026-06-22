@@ -28,8 +28,12 @@ func TestValidateGood(t *testing.T) {
 	if !r.Valid() {
 		t.Fatalf("good PoC failed: %v", r.Errors)
 	}
-	if len(r.Warnings) != 0 {
-		t.Fatalf("good PoC had warnings: %v", r.Warnings)
+	// The default data-plane mode is now anycast-bgp (the wholeCluster
+	// scale-out shape), which always carries the single-host ECMP caveat as
+	// an informational warning. Assert that is the ONLY warning a clean PoC
+	// produces — no other rule fired.
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "anycast-bgp") {
+		t.Fatalf("good PoC warnings = %v, want exactly the anycast-bgp caveat", r.Warnings)
 	}
 }
 
@@ -186,7 +190,7 @@ func TestDataplaneMode(t *testing.T) {
 		wantBGP    bool
 		wantAA     bool
 	}{
-		{"default standby", false, "", DataplaneStandby, false, false, false},
+		{"default is anycast-bgp", false, "", DataplaneAnycastBGP, false, true, true},
 		{"explicit standby", false, DataplaneStandby, DataplaneStandby, false, false, false},
 		{"legacy bool aliases selfip-dag", true, "", DataplaneSelfIPDAG, true, false, true},
 		{"explicit selfip-dag", false, DataplaneSelfIPDAG, DataplaneSelfIPDAG, true, false, true},

@@ -390,9 +390,16 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
 		}
 	case p.BNK.IsAnycastBGP():
-		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + bridge CNI + bnk-bgp NAD + FRR peer ...")
+		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + whereabouts + bridge CNI + bnk-bgp NAD + FRR peer ...")
 		if err := deploy.EnsureMultus(ctx, r); err != nil {
 			return fmt.Errorf("anycast-bgp: ensure multus: %w", err)
+		}
+		// Cluster-wide IPAM: under wholeCluster TMM is a DaemonSet (one pod
+		// per worker) all attaching the single bnk-bgp NAD, so its IPAM must
+		// allocate from one shared store — whereabouts — to give each pod a
+		// unique net1 without per-node host-local collisions on the edge L2.
+		if err := deploy.EnsureWhereabouts(ctx, r); err != nil {
+			return fmt.Errorf("anycast-bgp: ensure whereabouts: %w", err)
 		}
 		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
 			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
@@ -402,9 +409,9 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		// Calico's natOutgoing MASQUERADE breaks the data plane (see the
 		// scenario's disableBridgeNetfilter rationale). Docker-only.
 		disableBridgeNetfilter(ctx, p.Cluster.Provider, nodes, out)
-		// TMM's NAD (host-local .20+) and FRR's static-IP NAD (.2), both on
+		// TMM's NAD (whereabouts .20+) and FRR's static-IP NAD (.2), both on
 		// br-bnk-bgp.
-		if err := r.Apply(ctx, deploy.RenderBGPNAD("default")); err != nil {
+		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default")); err != nil {
 			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
 		}
 		if err := r.Apply(ctx, deploy.RenderFRRStaticNAD("default")); err != nil {
@@ -504,43 +511,17 @@ spec:
 	}
 	fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
 
-	// 5. Patch the f5-tmm Deployment rollout strategy.
+	// 5. TMM rollout strategy.
 	//
-	// FLO ships the Deployment with RollingUpdate (maxSurge/maxUnavailable
-	// 25%), which on the k3s worker runs two TMM pods on one node during
-	// rollover — wasteful and prone to wedging Multus on veth churn.
-	//
-	//   - Single TMM (no HA goal): Recreate — terminate the old pod, then
-	//     create the new one. No co-location, simplest.
-	//   - Multiple TMMs: RollingUpdate, maxUnavailable=1, maxSurge=0 — roll
-	//     ONE TMM at a time so N-1 stay serving across a reconfig. maxSurge
-	//     MUST be 0: there's exactly one app=f5-tmm node per TMM, so a surge
-	//     pod would either stay Pending (no free node) or stack two TMMs on
-	//     one node fighting over net1 — the very churn Recreate avoided.
-	//     With surge 0 the freed node is reused, one pod at a time (the
-	//     scheduler's default same-ReplicaSet soft-spread keeps the new pod
-	//     on the node just vacated).
-	//
-	// FLO does not reconcile the strategy back (verified, BNK 2.3); the
-	// CNE/F5Tmm schema exposes no strategy knob, so a direct patch is the
-	// only lever. Replacing the whole /spec/strategy works from any prior
-	// state (Recreate has no rollingUpdate subfield to remove).
-	strategyDesc := "Recreate"
-	strategyPatch := `[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]`
-	if p.Cluster.Workers() > 1 {
-		strategyDesc = "RollingUpdate (maxUnavailable=1, maxSurge=0)"
-		strategyPatch = `[{"op":"replace","path":"/spec/strategy","value":` +
-			`{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":1,"maxSurge":0}}}]`
-	}
-	fmt.Fprintf(out, "[5/5] Patching f5-tmm Deployment strategy=%s ...\n", strategyDesc)
-	if err := r.Kubectl(ctx, "-n", "default", "patch", "deployment", "f5-tmm",
-		"--type=json", "-p", strategyPatch); err != nil {
-		// Best-effort: a missing Deployment (rare race) or an
-		// already-set strategy (idempotency) just makes noise.
-		fmt.Fprintf(out, "      WARN: strategy patch failed: %v (continuing — scenarios still work, just blunter TMM rollovers)\n", err)
-	} else {
-		fmt.Fprintf(out, "      strategy=%s\n", strategyDesc)
-	}
+	// Under wholeCluster, FLO runs TMM as a DaemonSet, not a Deployment. A
+	// DaemonSet's default updateStrategy is already RollingUpdate with
+	// maxUnavailable=1 — i.e. it rolls ONE TMM pod at a time so the other
+	// N-1 keep serving across a reconfig, which is exactly the behaviour the
+	// old Deployment-strategy patch hand-crafted (and there's one pod per
+	// app=f5-tmm node, so there's no surge/co-location risk to design
+	// around). So there's nothing to patch here — the desired rollout
+	// shape is the DaemonSet default.
+	fmt.Fprintln(out, "[5/5] TMM rollout: DaemonSet default (RollingUpdate maxUnavailable=1) — no patch needed.")
 
 	// 6. All-active data-plane finalize. Done last because it needs the
 	// rolled TMM pods up with net1 attached.
@@ -576,20 +557,20 @@ spec:
 		} else {
 			// One rollout restart so TMM reloads the routing template it now
 			// mounts. Safe to re-run: FLO bakes the bnk-bgp NAD annotation
-			// into the f5-tmm Deployment's pod template (from
+			// into the f5-tmm DaemonSet's pod template (from
 			// CNEInstance.spec.networkAttachments), so restarted pods keep
 			// net1 — unlike the bgp-peer-frr scenario's runtime-patch flow,
 			// where the NAD isn't in the base spec and a bare restart drops
 			// it (verified on a 2-node cluster, 2026-06-15).
-			if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "deployment/f5-tmm"); err != nil {
+			if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "daemonset/f5-tmm"); err != nil {
 				fmt.Fprintf(out, "      WARN: rollout restart f5-tmm: %v\n", err)
 			}
-			// TMM pods roll one-at-a-time (maxUnavailable=1/maxSurge=0) and
+			// TMM pods roll one-at-a-time (DaemonSet maxUnavailable=1) and
 			// each heavy pod takes a few minutes, so the status timeout must
 			// scale with the node count or it spuriously trips on N>1.
 			rolloutTimeout := time.Duration(4*(n+1)) * time.Minute
 			if err := r.Kubectl(ctx, "-n", "default", "rollout", "status",
-				"deployment/f5-tmm", "--timeout="+rolloutTimeout.String()); err != nil {
+				"daemonset/f5-tmm", "--timeout="+rolloutTimeout.String()); err != nil {
 				fmt.Fprintf(out, "      WARN: f5-tmm rollout did not complete in %s: %v\n", rolloutTimeout, err)
 			}
 			waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
