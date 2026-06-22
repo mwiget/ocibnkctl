@@ -121,6 +121,30 @@ func (k *K3s) rt() string {
 // wrong answer, so dnsArgs warns when it fires.
 var publicFallbackResolvers = []string{"1.1.1.1", "8.8.8.8"}
 
+// tailscaleCGNAT is Tailscale's 100.64.0.0/10 CGNAT range. Tailscale's MagicDNS
+// resolver (100.100.100.100) lands here; we never pin it onto the nodes — see
+// usableNodeResolver.
+var _, tailscaleCGNAT, _ = net.ParseCIDR("100.64.0.0/10")
+
+// usableNodeResolver reports whether a host nameserver IP is safe to pin onto a
+// k3s node container as a `--dns` forwarder. We keep only routable IPv4 ISP
+// resolvers and reject:
+//   - IPv6 — the k3s nodes/pods here are IPv4-only, so an IPv6 forwarder is
+//     unreachable from the container netns and just adds latency/timeouts.
+//   - the Tailscale MagicDNS resolver (100.64.0.0/10) — Tailscale advertises
+//     100.100.100.100 as a host resolver, but from a container it forwards
+//     GLOBAL queries to the tailnet's admin-configured upstreams (often a home
+//     LAN gateway like 192.168.0.1, or 1.1.1.1), which on a server host are
+//     unreachable/blocked. Docker's embedded DNS round-robins the pinned
+//     forwarders, so whenever it hits this one a lookup stalls — the
+//     intermittent DNS timeouts that break CoreDNS forwarding + license
+//     registration. (A Tailscale `~.` override-all-DNS config makes the host
+//     route everything through it, which is why the host itself can still be
+//     fine while containers flake.)
+func usableNodeResolver(ip net.IP) bool {
+	return ip != nil && !ip.IsLoopback() && ip.To4() != nil && !tailscaleCGNAT.Contains(ip)
+}
+
 func hostResolvers() (servers []string, fellBackToPublic bool) {
 	// Host resolv.conf already usable → trust the runtime default.
 	if ns := nonLoopbackNameservers("/etc/resolv.conf"); len(ns) > 0 {
@@ -136,8 +160,10 @@ func hostResolvers() (servers []string, fellBackToPublic bool) {
 	return publicFallbackResolvers, true
 }
 
-// nonLoopbackNameservers parses a resolv.conf and returns its non-loopback
-// nameserver IPs in file order. A missing/unreadable file yields nil.
+// nonLoopbackNameservers parses a resolv.conf and returns the nameserver IPs
+// that are safe to pin onto a node (routable IPv4 ISP resolvers, in file
+// order; see usableNodeResolver), skipping loopback, IPv6 and the Tailscale
+// MagicDNS resolver. A missing/unreadable file yields nil.
 func nonLoopbackNameservers(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -149,7 +175,7 @@ func nonLoopbackNameservers(path string) []string {
 		if len(fields) < 2 || fields[0] != "nameserver" {
 			continue
 		}
-		if ip := net.ParseIP(fields[1]); ip != nil && !ip.IsLoopback() {
+		if usableNodeResolver(net.ParseIP(fields[1])) {
 			out = append(out, fields[1])
 		}
 	}
