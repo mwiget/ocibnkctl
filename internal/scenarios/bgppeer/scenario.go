@@ -60,8 +60,8 @@ const (
 	// would land cluster-wide CNI plumbing. The SHA was computed at the
 	// time this version was pinned; update both lines together when
 	// bumping multus.
-	multusManifestURL  = "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.1.4/deployments/multus-daemonset-thick.yml"
-	multusManifestSHA  = "33fef64fbb67ef5d68183bad5b2aec4163dad0ebb0b63abe25343155d0d8b4be"
+	multusManifestURL = "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.1.4/deployments/multus-daemonset-thick.yml"
+	multusManifestSHA = "33fef64fbb67ef5d68183bad5b2aec4163dad0ebb0b63abe25343155d0d8b4be"
 	// containernetworking/plugins release. We extract just the `bridge`
 	// binary onto every k3s node — that runs as root inside the node
 	// container, so SHA verification is load-bearing. The tarball is
@@ -136,21 +136,24 @@ Verification (6/6 green):
   - BGP session Established
   - FRR BGP table has at least one prefix learned from TMM
 
-Cleanup: revert CNEInstance.spec.networkAttachments to [], empty
-the f5-tmm-dynamic-routing-template ConfigMap, restart TMM,
-delete the scn-bgp namespace + default-namespace NAD. Multus
-stays installed (it's cluster-wide; reverting it would impact
-other workloads). TMM env vars revert via the original
-http-routing CNEInstance template if you re-run e2e.
+Cleanup (standby mode only): revert everything Apply created — reset
+CNEInstance.networkAttachments to [], empty the
+f5-tmm-dynamic-routing-template, delete the scn-bgp namespace and the
+default-namespace bnk-bgp NAD, and restart TMM. Multus stays installed
+(cluster-wide). In anycast-bgp mode the scenario skips, so Cleanup is a
+no-op (the deploy path owns those resources).
 
-Relationship to bnk.tmm_dataplane_mode=anycast-bgp: this scenario is
-the single-TMM, runtime-patch sibling of that persistent deploy mode.
-The deploy mode bakes the same plumbing (bnk-bgp NAD on net1, mapres
-FALSE, the cluster-wide ZeBOS template) into the CNEInstance for ALL
-TMM pods and runs its own FRR peer as a DaemonSet on the TMM nodes,
-so every TMM advertises its VIP /32 (anycast). Run this scenario
-against a standby deploy, not an anycast-bgp one — on the latter both
-would fight over the f5-tmm-dynamic-routing-template ConfigMap.
+Relationship to bnk.tmm_dataplane_mode=anycast-bgp (the default): this
+scenario is the single-TMM, runtime-patch sibling of that persistent
+deploy mode. The deploy mode bakes the same plumbing (bnk-bgp NAD on
+net1, mapres FALSE, the cluster-wide ZeBOS template) into the
+CNEInstance for ALL TMM pods and runs its own FRR peer (the bnk-frr
+DaemonSet), so every TMM advertises its VIP /32 (anycast). Because the
+two would fight over the shared f5-tmm-dynamic-routing-template, this
+scenario now SKIPS ITSELF when the anycast-bgp deploy is active
+(detected by the bnk-frr DaemonSet) — it runs its self-contained setup
+only on a standby-mode cluster. Use the bgp-anycast scenario to verify
+an anycast-bgp deploy.
 `)
 }
 
@@ -177,6 +180,20 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
+
+	// Under the anycast-bgp default, the deploy path already stands up the
+	// bnk-bgp NAD, an FRR peer (the bnk-frr DaemonSet), the shared ZeBOS
+	// template, and BGP peering for every TMM — and the bgp-anycast scenario
+	// verifies all of it. Running this self-contained how-to on top would
+	// overwrite the shared ZeBOS template (re-pointing TMM at this scenario's
+	// own scn-frr) and hijack the foundation BGP, which Cleanup would then
+	// orphan. So skip cleanly when anycast-bgp is active — this how-to only
+	// stands up its own peer on a standby-mode cluster.
+	if anycastDeployActive(ctx) {
+		fmt.Fprintln(ctx.Out, "      | anycast-bgp deploy detected (bnk-frr DaemonSet present) — "+
+			"BGP peering is already provided by the deploy path; skipping self-setup (see the bgp-anycast scenario).")
+		return nil
+	}
 
 	// 1. Multus install (idempotent — skip if DaemonSet already exists).
 	if err := ensureMultus(ctx); err != nil {
@@ -327,6 +344,16 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	r := ctx.Runner
 	res := scenarios.Result{}
+
+	// Anycast-bgp default: Apply was a no-op (the deploy path owns BGP), so
+	// there's nothing this scenario set up to verify. Skip cleanly and point
+	// at the scenario that does verify the anycast deploy.
+	if anycastDeployActive(ctx) {
+		res.Status = "skipped"
+		res.Summary = "anycast-bgp deploy is active (bnk-frr DaemonSet present) — BGP peering is " +
+			"provided by the deploy path; the bgp-anycast scenario verifies it. This how-to runs only in standby mode."
+		return res
+	}
 
 	// FRR pod name + IP.
 	frrPod, err := r.KubectlCapture(ctx.Ctx, "-n", "scn-bgp", "get", "pod",
@@ -508,23 +535,53 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	r := ctx.Runner
-	// Cleanup only removes SCENARIO-LOCAL resources. Under the wholeCluster
-	// anycast-bgp default, the bnk-bgp NAD in `default`, the CNEInstance
-	// networkAttachments=[bnk-bgp], and the f5-tmm-dynamic-routing-template
-	// ZeBOS ConfigMap are all FOUNDATION-owned (the deploy path stands them
-	// up so every DaemonSet TMM peers BGP by default) — so we must NOT reset
-	// networkAttachments, empty the ZeBOS template, or delete the default
-	// NAD here, or cleanup would tear down the baseline data plane. Dropping
-	// the scn-bgp namespace removes this scenario's own FRR + its scoped NAD.
-	//
-	// NOTE: this scenario's Apply still overwrites the shared ZeBOS template
-	// to point at its own scn-frr peer; reconciling that with the foundation
-	// FRR under anycast-default needs live-cluster verification (see the
-	// migration notes) — Cleanup is kept non-destructive in the meantime.
+	// Anycast-bgp default: Apply created nothing (the deploy path owns the
+	// BGP plumbing), so there's nothing to clean up — and we must NOT touch
+	// the foundation's resources (the default bnk-bgp NAD, the CNEInstance
+	// networkAttachments, the shared ZeBOS template).
+	if anycastDeployActive(ctx) {
+		return nil
+	}
+	// Standby mode: Apply owned the full BGP setup, so revert it all. (None
+	// of these is foundation-owned in standby — the deploy path installs no
+	// bnk-bgp NAD / ZeBOS / networkAttachments there.)
+	// 1. Remove the NAD from CNEInstance so FLO drops the Multus annotation
+	//    on the next TMM restart.
+	_ = r.Kubectl(ctx.Ctx, "patch", "cneinstance", "bnk-instance",
+		"-n", "default", "--type=merge",
+		"-p", `{"spec":{"networkAttachments":[]}}`)
+	// 2. Empty the ZeBOS template so bgpd has no peer config next time.
+	_ = r.Apply(ctx.Ctx, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: f5-tmm-dynamic-routing-template
+  namespace: default
+data:
+  ZebOS.conf: ""
+`)
+	// 3. Drop scn-bgp namespace (also removes FRR + scoped NAD).
 	_ = r.Kubectl(ctx.Ctx, "delete", "namespace", "scn-bgp", "--ignore-not-found")
+	// 4. Drop the default-namespace NAD this scenario created.
+	_ = r.Kubectl(ctx.Ctx, "-n", "default", "delete", "net-attach-def",
+		"bnk-bgp", "--ignore-not-found")
+	// 5. Restart TMM to apply the empty ZeBOS config + drop the Multus
+	//    annotation.
 	_ = r.Kubectl(ctx.Ctx, "-n", "default", "rollout", "restart",
 		"daemonset/f5-tmm")
 	return nil
+}
+
+// anycastDeployActive reports whether the cluster is running the default
+// anycast-bgp data plane, detected by the bnk-frr DaemonSet the deploy path
+// installs (deploy.RenderFRRPeer). When true, the foundation already owns the
+// bnk-bgp NAD, the shared ZeBOS template, and per-TMM BGP peering — so this
+// self-contained how-to must not run (it would clobber that shared state),
+// and the bgp-anycast scenario verifies the anycast deploy instead. This is
+// the inverse of the check bgp-anycast uses to skip when NOT in anycast mode.
+func anycastDeployActive(ctx *scenarios.Context) bool {
+	out, err := ctx.Runner.KubectlCapture(ctx.Ctx, "-n", "default", "get",
+		"daemonset", "bnk-frr", "-o", "jsonpath={.metadata.name}")
+	return err == nil && strings.TrimSpace(out) == "bnk-frr"
 }
 
 // discoverNet1 looks up the IPv4 address of the pod's net1 interface
