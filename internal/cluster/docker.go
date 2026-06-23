@@ -19,6 +19,19 @@ func (d *DockerCLI) cmd(ctx context.Context, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, string(d.Runtime), args...)
 }
 
+// capture runs a runtime command and returns its trimmed stdout.
+func (d *DockerCLI) capture(ctx context.Context, args ...string) (string, error) {
+	c := d.cmd(ctx, args...)
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	if err := c.Run(); err != nil {
+		return "", fmt.Errorf("%s %s: %w (%s)", d.Runtime,
+			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // NetworkExists returns true iff a docker network named `name` is
 // already known to the runtime. Uses `network ls --filter name=^X$` so
 // "not found" is an empty result line rather than an error — avoids

@@ -74,6 +74,15 @@ type Cluster struct {
 	// with the real upstream as a fallback, and bind-mounts it into every node.
 	// Opt-in: unset → today's direct-pull behaviour, no change.
 	RegistryCache RegistryCache `yaml:"registry_cache,omitempty"`
+	// TEEMSRelay opts this cluster into the host-side TEEMS egress relay — a
+	// workaround for hosts where FORWARDED pod egress is lossy but host-
+	// originated egress is fine (e.g. a Hetzner box that drops a fraction of
+	// NAT'd/forwarded TCP). The CWC's license POST to F5's TEEMS backend is the
+	// only thing that breaks under that loss, and the CWC ignores HTTPS_PROXY,
+	// so `cluster up` runs a host-netns socat relay that re-originates the TEEMS
+	// connection from the host stack + DNATs the cluster's forwarded TEEMS
+	// traffic onto it. `destroy` removes it. Opt-in: unset → egress unchanged.
+	TEEMSRelay bool `yaml:"teems_relay,omitempty"`
 }
 
 // RegistryCache configures the optional local pull-through cache wiring.

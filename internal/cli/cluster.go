@@ -293,6 +293,16 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		return fmt.Errorf("edge fabric: %w", err)
 	}
 
+	// Optional TEEMS egress relay — for hosts where forwarded pod egress is
+	// lossy (the CWC's license POST is the only casualty; it ignores HTTPS_PROXY,
+	// so we transparently re-originate its TEEMS dial through the host stack).
+	if p.Cluster.TEEMSRelay {
+		fmt.Fprintln(out, "      teems-relay: forwarded-egress workaround for the CWC license POST ...")
+		if err := dc.EnsureTEEMSRelay(ctx, p.Cluster.Name); err != nil {
+			return fmt.Errorf("teems relay: %w", err)
+		}
+	}
+
 	// 6. bnk-forge auto-registration (best-effort).
 	fmt.Fprintln(out, "[6/6] bnk-forge registration ...")
 	if f.skipBNKForge || !p.BNKForge.Enabled {

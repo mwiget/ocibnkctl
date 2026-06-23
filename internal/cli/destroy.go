@@ -114,6 +114,11 @@ func runDestroy(ctx context.Context, out io.Writer, f *destroyFlags) error {
 		if err := dc.RemoveEdge(ctx, p.Cluster.Name); err != nil {
 			fmt.Fprintf(out, "      WARN: %v\n", err)
 		}
+		// TEEMS egress relay containers + DNAT rules (no-op if it was never
+		// enabled — there's nothing tagged with this cluster's comment).
+		if err := dc.RemoveTEEMSRelay(ctx, p.Cluster.Name); err != nil {
+			fmt.Fprintf(out, "      WARN: %v\n", err)
+		}
 		for _, n := range []string{p.Networks.Internal.Name, p.Networks.External.Name} {
 			if n == "" {
 				continue
