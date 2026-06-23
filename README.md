@@ -23,6 +23,37 @@ Aimed at low-spec corporate laptops where dpubnkctl's bare-metal +
 DPU pipeline is overkill. Same poc.yaml-driven, resume-safe shape;
 much shorter pipeline.
 
+## Contents
+
+- [Demo](#demo)
+- [What this tool does](#what-this-tool-does)
+- [Pinned versions](#pinned-versions)
+- [Minimum host resources](#minimum-host-resources)
+  - [Why 10 cores is the floor (and why it's tight)](#why-10-cores-is-the-floor-and-why-its-tight)
+  - [What the cluster actually uses](#what-the-cluster-actually-uses)
+  - [Shrinking the footprint — `ocibnkctl deploy shrink` (auto on tight hosts)](#shrinking-the-footprint--ocibnkctl-deploy-shrink-auto-on-tight-hosts)
+  - [Small-host (4-core Raspberry Pi) profile — `host_profile: small`](#small-host-4-core-raspberry-pi-profile--host_profile-small)
+  - [Symptom when the floor is too low](#symptom-when-the-floor-is-too-low)
+  - [Disk](#disk)
+- [bnk-forge integration](#bnk-forge-integration)
+- [Download](#download)
+- [Requirements](#requirements)
+- [Cluster backend (native k3s)](#cluster-backend-native-k3s)
+- [Quick start](#quick-start)
+- [Per-phase invocation](#per-phase-invocation)
+- [Agentic workflow](#agentic-workflow)
+  - [The `AGENTS.md` guide](#the-agentsmd-guide)
+- [Repo layout (the binary itself)](#repo-layout-the-binary-itself)
+- [Repo layout (a PoC created by `ocibnkctl init`)](#repo-layout-a-poc-created-by-ocibnkctl-init)
+  - [Cluster access — the `~/.kube/config` lifecycle](#cluster-access--the-kubeconfig-lifecycle)
+  - [Browse the cluster with k9s](#browse-the-cluster-with-k9s)
+- [Scaling TMM nodes](#scaling-tmm-nodes)
+- [Network topology](#network-topology)
+- [Scenarios — testing F5 how-tos against the running cluster](#scenarios--testing-f5-how-tos-against-the-running-cluster)
+- [Reference run report](#reference-run-report)
+- [Testing](#testing)
+- [Design references](#design-references)
+
 ## Demo
 
 [![Watch the demo on YouTube](https://img.youtube.com/vi/uUyO17K6r5M/hqdefault.jpg)](https://youtu.be/uUyO17K6r5M)
