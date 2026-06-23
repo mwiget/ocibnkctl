@@ -168,18 +168,16 @@ func injectPasswdConf(ctx *scenarios.Context, pod string) error {
 
 // triggerRedistribution re-issues the BGP redistribute statements over imish so
 // OcNOS XP-6.6.0 (re-)runs its redistribution scan at runtime (it doesn't
-// redistribute from the startup config). Best-effort + retried.
+// redistribute from the startup config). Goes through `imish -f <script>`, not
+// repeated `imish -e` flags — each `-e` runs in exec mode and never enters
+// router-bgp config context, so the redistribute is a no-op; a -f script keeps
+// config-mode context across lines. Best-effort + retried.
 func triggerRedistribution(ctx *scenarios.Context, pod string) {
 	r := ctx.Runner
+	const shCmd = `printf 'configure terminal\nrouter bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`
 	for i := 0; i < 3; i++ {
 		_ = r.Kubectl(ctx.Ctx, "-n", "default", "exec", pod, "-c", "f5-tmm-routing", "--",
-			"imish",
-			"-e", "configure terminal",
-			"-e", "router bgp 65000",
-			"-e", "address-family ipv4 unicast",
-			"-e", "redistribute kernel route-map RMALL",
-			"-e", "redistribute connected route-map RMALL",
-			"-e", "end")
+			"sh", "-c", shCmd)
 		select {
 		case <-ctx.Ctx.Done():
 			return

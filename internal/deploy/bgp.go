@@ -190,22 +190,26 @@ spec:
 // routing ConfigMap is applied + TMM rolled, this nudges every pod to actually
 // advertise its connected net1 subnet + the Gateway VIP /32s to the external
 // FRR. Best-effort per pod (returns the last error).
+//
+// The commands go through `imish -f <script>`, NOT repeated `imish -e` flags:
+// each `-e` runs as an independent command in exec mode, so it never enters
+// router-bgp config context and the redistribute is a no-op (imish prints
+// "% Error in processing command"). A -f script keeps config-mode context
+// across lines, so the statement is actually re-issued and OcNOS rescans the
+// kernel RIB. Terminated with `exit`s (OcNOS rejects `end` in this path).
 func TriggerOcNOSRedistribute(ctx context.Context, r *Runner) error {
 	pods, err := RunningTMMPods(ctx, r)
 	if err != nil {
 		return err
 	}
+	shCmd := fmt.Sprintf(
+		`printf 'configure terminal\nrouter bgp %d\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`,
+		BGPTMMAS)
 	var lastErr error
 	for _, pod := range pods {
 		if e := r.Kubectl(ctx, "-n", "default", "exec", pod,
 			"-c", "f5-tmm-routing", "--",
-			"imish",
-			"-e", "configure terminal",
-			"-e", fmt.Sprintf("router bgp %d", BGPTMMAS),
-			"-e", "address-family ipv4 unicast",
-			"-e", "redistribute kernel route-map RMALL",
-			"-e", "redistribute connected route-map RMALL",
-			"-e", "end"); e != nil {
+			"sh", "-c", shCmd); e != nil {
 			lastErr = e
 		}
 	}
