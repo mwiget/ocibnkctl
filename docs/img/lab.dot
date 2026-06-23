@@ -1,0 +1,94 @@
+digraph ocibnkctl_lab {
+  rankdir=LR;
+  splines=ortho;
+  nodesep=0.6;
+  ranksep=2.4;
+  bgcolor="white";
+  fontname="DejaVu Sans"; fontsize=24; labelloc="t";
+  label=<<b>ocibnkctl lab — stock BNK 2.3.0 (FLO + wholeCluster DaemonSet, OcNOS BGP)</b><br/><font point-size="15">3 k3s nodes (1 server + 2 agents) · full FLO/CNE control plane on the server · one TMM per agent (DaemonSet) · external FRR/origin on bnk-edge · edge_octet 95</font>>;
+  node [shape=box, style="filled,rounded", fontname="DejaVu Sans", fontsize=15];
+  edge [fontname="DejaVu Sans", fontsize=13];
+
+  /* ===== networks: thin BOLD vertical lines (the L2 bus), label at the bottom ===== */
+  lbus  [shape=box, fixedsize=true, width=0.30, height=7.0, style=filled, fillcolor="#3a7bd5", color="#3a7bd5", label=""];
+  llab  [shape=plaintext, fontsize=15,
+         label=<<b>cluster docker net</b><br/>k3s-mwtest · 172.18.0.0/16<br/>kube API + Calico pod net>];
+  rbus  [shape=box, fixedsize=true, width=0.30, height=7.0, style=filled, fillcolor="#2e9e2e", color="#2e9e2e", label=""];
+  rlab  [shape=plaintext, fontsize=15,
+         label=<<b>bnk-edge-mwtest</b><br/>192.168.95.0/24 · external L2<br/>(server NOT attached)>];
+
+  /* ===== k3s NODES (boxes) with their PODS inside ===== */
+  server [fillcolor="#eeeeee", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td colspan="2"><b>k3s-mwtest-server-0</b> &#183; <font color="#a00000">CONTROL node (tainted NoSchedule)</font></td></tr>
+      <tr><td colspan="2" bgcolor="#ffffff"><b>k8s control plane:</b> kube-apiserver &#183; calico-kube-controllers &#183; coredns &#183; cert-manager</td></tr>
+      <tr><td colspan="2" bgcolor="#dbe9ff"><b>f5-operators:</b> FLO (lifecycle operator) &#8594; reconciles CNEInstance &#8594; F5Tmm &#8594; the TMM DaemonSet</td></tr>
+      <tr><td colspan="2" bgcolor="#dbe9ff"><b>f5-cne-core:</b> CWC (license/CPCL) &#183; DSSM (db+sentinel) &#183; rabbit &#183; ipam-ctlr &#183; csrc &#183; crd-conversion &#183; observer/otel</td></tr>
+      <tr><td colspan="2" bgcolor="#dbe9ff"><b>default ns:</b> f5-cne-controller &#183; f5-afm &#183; f5-downloader &#183; License + CNEInstance CRs</td></tr>
+      <tr><td port="eth0" bgcolor="#cfe8ff"><b>eth0</b> 172.18.0.2</td><td><font color="#777777">control plane reaches TMM over the cluster pod net; not on bnk-edge</font></td></tr>
+    </table>>];
+
+  agent0 [fillcolor="#fff3c4", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td colspan="2"><b>k3s-mwtest-agent-0</b> &#183; <font color="#15803d">WORKER node</font> &#183; label app=f5-tmm</td></tr>
+      <tr><td colspan="2" bgcolor="#ffffff"><b>f5-tmm pod</b> (DaemonSet, 5/5): f5-tmm &#183; f5-tmm-routing <i>(OcNOS/BGP AS65000)</i> &#183; f5-tmm-tmrouted &#183; blobd &#183; <b>debug</b> <i>(F5 sidecar)</i><br/><font color="#15803d"><b>net1</b> 192.168.95.160</font> &#8594; plugged into br-bnk-bgp (whereabouts IPAM)</td></tr>
+      <tr><td colspan="2" bgcolor="#eafbe7"><b>br-bnk-bgp</b> (Linux bridge): bridges the pod's net1 + the eth1 uplink</td></tr>
+      <tr><td port="eth0" bgcolor="#cfe8ff"><b>eth0</b> Calico pod net</td><td port="eth1" bgcolor="#d6f5d6"><b>eth1</b> &#8594; bnk-edge uplink</td></tr>
+    </table>>];
+
+  agent1 [fillcolor="#fff3c4", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td colspan="2"><b>k3s-mwtest-agent-1</b> &#183; <font color="#15803d">WORKER node</font> &#183; label app=f5-tmm</td></tr>
+      <tr><td colspan="2" bgcolor="#ffffff"><b>f5-tmm pod</b> (DaemonSet, 5/5): f5-tmm &#183; f5-tmm-routing <i>(OcNOS/BGP AS65000)</i> &#183; f5-tmm-tmrouted &#183; blobd &#183; <b>debug</b> <i>(F5 sidecar)</i><br/><font color="#15803d"><b>net1</b> 192.168.95.161</font> &#8594; plugged into br-bnk-bgp (whereabouts IPAM)</td></tr>
+      <tr><td colspan="2" bgcolor="#eafbe7"><b>br-bnk-bgp</b> (Linux bridge): bridges the pod's net1 + the eth1 uplink</td></tr>
+      <tr><td port="eth0" bgcolor="#cfe8ff"><b>eth0</b> Calico pod net</td><td port="eth1" bgcolor="#d6f5d6"><b>eth1</b> &#8594; bnk-edge uplink</td></tr>
+    </table>>];
+
+  /* ===== external docker containers on bnk-edge (NOT k8s pods) ===== */
+  frr [fillcolor="#ffd9b3", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td port="ip" bgcolor="#d6f5d6"><b>bnk-edge-frr-mwtest</b> &#183; 192.168.95.41</td></tr>
+      <tr><td>external container &#183; FRR BGP peer / ToR &#183; <b>AS 65001</b> &#183; listen-range 192.168.95.0/24<br/>the single BGP peer + curl vantage for every scenario</td></tr>
+    </table>>];
+
+  origin [fillcolor="#ffd9f0", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td port="ip" bgcolor="#d6f5d6"><b>bnk-edge-origin-mwtest</b> &#183; 192.168.95.50</td></tr>
+      <tr><td>external container &#183; upstream / egress dest (198.51.x /32 reachable only via TMM)</td></tr>
+    </table>>];
+
+  /* ===== host-side license egress workaround (NOT a k8s pod) ===== */
+  relay [fillcolor="#f0e0ff", label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
+      <tr><td><b>teems-relay-mwtest</b> &#183; host-netns socat (poc.yaml cluster.teems_relay)</td></tr>
+      <tr><td><font color="#777777">re-originates the CWC&#8217;s license POST to F5 TEEMS from the host stack;<br/>DNAT redirects the cluster&#8217;s forwarded TEEMS:443 onto it &#8212; only needed where<br/>forwarded pod egress is lossy (host-originated is fine)</font></td></tr>
+    </table>>];
+
+  /* middle column order: server, agents, then externals */
+  { rank=same; server; agent0; agent1; frr; origin; }
+  edge [style=invis];
+  server -> agent0 -> agent1 -> frr -> origin;
+
+  /* bus lines + their labels */
+  { rank=same; lbus; llab; }
+  llab -> lbus [style=invis];
+  { rank=same; rbus; rlab; }
+  rlab -> rbus [style=invis];
+
+  /* ===== cluster-net (left bus) — one eth0 link per node, terminating ON eth0 ===== */
+  edge [style=solid, color="#3a7bd5", dir=none, penwidth=1.8];
+  lbus:e -> server:eth0:w;
+  lbus:e -> agent0:eth0:w;
+  lbus:e -> agent1:eth0:w;
+
+  /* CWC license egress goes out via the host relay (dashed, purple) */
+  edge [style=dashed, color="#8a4fd0", dir=forward, penwidth=1.6, constraint=false];
+  server:eth0:e -> relay [label="license POST\n(TEEMS, re-originated)"];
+
+  /* ===== bnk-edge (right bus) — ONE uplink per agent + the externals ===== */
+  edge [style=solid, color="#2e9e2e", dir=none, penwidth=1.8];
+  agent0:eth1:e -> rbus:w;
+  agent1:eth1:e -> rbus:w;
+  frr:ip:e -> rbus:w;
+  origin:ip:e -> rbus:w;
+}

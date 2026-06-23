@@ -30,7 +30,7 @@ much shorter pipeline.
 ▶ **[Watch the ~3-minute demo on YouTube](https://youtu.be/uUyO17K6r5M)** — a real,
 **live Claude Code session on a local model** drives `ocibnkctl` end to end:
 scaffold the PoC → deploy F5 BIG-IP Next 2.3.0 → inspect every pod → diagnose a
-stuck pod → run the scenario suite (12/12 green) → bnk-forge auto-registration
+stuck pod → run the scenario suite (13/13 green) → bnk-forge auto-registration
 with live Traffic Flow → teardown. The whole production pipeline (headless
 asciinema capture, Kokoro voiceover, playwright slides + bnk-forge UI shots,
 ffmpeg assembly) is in [`docs/video/live-session/`](docs/video/live-session/).
@@ -723,7 +723,7 @@ they compare to production BNK and the `tmmlite` model — see
 |---|---|---|
 | `standby` (default) | none / `TRUE` | BNK's stock HA shape — one TMM active, the rest standby. |
 | `selfip-dag` | bridge NAD / `TRUE` | Multus + bridge CNI + a bridge NAD on every TMM (mapres grabs `net1` as interface `1.1`), then an `F5SPKVlan` with one self-IP per TMM plus a `pod_hash` stateless DAG — each TMM owns a self-IP and is **active**. The only mode that needs no upstream router. |
-| `anycast-bgp` | `bnk-bgp` NAD / `FALSE` | Every per-node TMM runs mapres `FALSE` (keeps `net1`'s kernel IP) and advertises the **same VIP `/32`** over its own ZeBOS/BGP session to a co-located FRR peer, so an upstream router ECMP-load-balances across the TMM pods (anycast). Builds on the `bgp-peer-frr` scenario. |
+| `anycast-bgp` | `bnk-bgp` NAD / `FALSE` | Every per-node TMM runs mapres `FALSE` (keeps `net1`'s kernel IP) and advertises the **same VIP `/32`** over its own OcNOS/BGP session to the shared external `bnk-edge` FRR peer, so the FRR ECMP-load-balances across the TMM pods (anycast). Builds on the `bgp-peer-frr` scenario. |
 
 The legacy `bnk.tmm_active_active: true` is a back-compat alias for
 `tmm_dataplane_mode: selfip-dag` (a `validate` warning nudges you to the
@@ -751,108 +751,62 @@ multi-host deployment, out of scope for the single-host demo.
 
 ## Network topology
 
-The shape after a full `e2e` plus `bgp-peer-frr` (everything the
-other scenarios build on) — the substance here (Calico, the Multus
-NAD bridge, ZeBOS/BGP) is backend-agnostic. One docker bridge on the
-host (the k3s cluster's own, `k3s-<poc>`); two k3s node containers
-(`k3s-<poc>-server-0` = control-plane + worker, `k3s-<poc>-agent-0` =
-TMM worker); a Multus-managed Linux bridge inside the worker carries
-BGP traffic between TMM and the FRR helper pod. Scenario backends are
-plain Calico pods — the Gateway IPs they serve get plumbed via BGP, so
-the backends don't need to be on the NAD themselves. (Illustrative node
-names below are shortened for the diagram.)
+The shape after a full `e2e` (the substance — Calico, the Multus `bnk-bgp`
+NAD, OcNOS/BGP, the shared edge fabric — is backend-agnostic). A realistic
+three-node lab: a **control node** (`k3s-<poc>-server-0`, tainted `NoSchedule`)
+carrying the entire stock BNK control plane — **FLO** (`f5-operators`), the
+**CWC / CNE core** (license/CPCL, DSSM, rabbit, ipam-ctlr, csrc, observer …) and
+the `CNEInstance` + `License` CRs — plus **N worker nodes**
+(`k3s-<poc>-agent-*`, labelled `app=f5-tmm`), each running **one TMM pod** as a
+FLO **wholeCluster DaemonSet**, so the data plane scales with the worker count.
+
+The workers are dual-homed onto a shared **`bnk-edge`** docker L2
+(`192.168.<edge_octet>.0/24`, default octet 99): each worker's `eth1` uplink is
+enslaved into the in-node `br-bnk-bgp` bridge the `bnk-bgp` NAD references, so
+every TMM's `net1` (a unique address from a cluster-wide **whereabouts** pool,
+`.160–.250`) shares one broadcast domain with the **external FRR** (`.41`,
+AS 65001, BGP listen-range over the /24) and the **origin** upstream (`.50`),
+which run as their own docker containers. The control node is deliberately left
+**off** `bnk-edge`. Each TMM's `f5-tmm-routing` runs **OcNOS** (AS 65000), peers
+that one FRR, and advertises its `net1` connected subnet + each Gateway VIP
+`/32`; FRR installs them as kernel routes, so a curl from the FRR netns reaches
+any Gateway VIP through TMM — the single BGP peer + curl vantage every scenario
+shares (no per-scenario in-cluster FRR pod).
+
+![ocibnkctl lab topology](docs/img/lab.png)
+
+> Regenerate (graphviz): `dot -Tpng -Gdpi=120 docs/img/lab.dot -o docs/img/lab.png`
+> — or without a host install:
+> `docker run --rm -v "$PWD/docs/img:/data" -w /data nshine/dot dot -Tpng -Gdpi=120 lab.dot -o lab.png`
+
+**BGP.** TMM/OcNOS (AS 65000) ⇄ external FRR (AS 65001, listen-range
+`192.168.<octet>.0/24`, peer-group `from-tmm`). OcNOS XP-6.6.0 only injects a
+route into BGP when `redistribute kernel route-map RMALL` is re-issued at
+runtime, so the deploy and every FRR-vantage scenario nudge it via `imish -f`
+once a VIP exists. Advertised (example, octet 95):
 
 ```
-+----------------------------------------------------------------------------+
-| HOST  (Linux or macOS Docker Desktop)                                      |
-|                                                                            |
-|   docker bridge: k3s   172.20.0.0/16                                       |
-|       |                                                                    |
-+-------|--------------------------------------------------------------------+
-        |
-+-------+--------------+   +-------------------------------------------------+
-| smoke-control-plane  |   | smoke-worker  (k3s node container)              |
-| (k3s node container) |   | label: app=f5-tmm                               |
-| eth0 172.20.0.2      |   | eth0 172.20.0.3                                 |
-|                      |   |                                                 |
-| pods:                |   |  +-------------------------------------------+  |
-|   Calico  Multus     |   |  | TMM pod        ns=default  app=f5-tmm     |  |
-|   FLO     CWC        |   |  | 6 containers:                             |  |
-|   cert-manager       |   |  |   f5-tmm                                  |  |
-|   ...                |   |  |   f5-tmm-routing  (= ZeBOS)               |  |
-+----------------------+   |  |   debug  blobd  toda-observer  ipsec      |  |
-                           |  | Interfaces:                               |  |
-                           |  |   net1   192.168.99.X/24  Multus NAD      |  |
-                           |  |          (BGP source, no eth0 hook)       |  |
-                           |  |   eth0   10.244.x.x/32   Calico (kube-API |  |
-                           |  |          + ZeBOS bgpd kernel listener)    |  |
-                           |  |   xeth0  no IP    Calico veth #2, TMM     |  |
-                           |  |          userspace raw frames             |  |
-                           |  |   tmm    169.254.0.253/24  virtio, pod    |  |
-                           |  |          default route to TMM DP          |  |
-                           |  |   tunl0  DOWN     Calico IPIP placeholder |  |
-                           |  +-------------------------------------------+  |
-                           |  +-------------------------------------------+  |
-                           |  | FRR pod        ns=scn-bgp  app=scn-frr    |  |
-                           |  | 1 container:   frr (zebra + bgpd)         |  |
-                           |  |   net1   192.168.99.Y/24  Multus NAD      |  |
-                           |  |          (BGP peer + curl source)         |  |
-                           |  |   eth0   10.244.x.x/32   Calico           |  |
-                           |  +-------------------------------------------+  |
-                           |             ^                                   |
-                           |             |  BGP TCP/179 + scenario curls     |
-                           |             v  over br-bnk-bgp, L2              |
-                           |  +========================================+     |
-                           |  ||  br-bnk-bgp   Linux bridge in node    ||    |
-                           |  ||  netns, created by the bridge-CNI     ||    |
-                           |  ||  plugin via NAD name=bnk-bgp ;        ||    |
-                           |  ||  host-local IPAM 192.168.99.20-250    ||    |
-                           |  ||  on /24                               ||    |
-                           |  +========================================+     |
-                           |                                                 |
-                           |  +-------------------------------------------+  |
-                           |  | scenario backends  (plain Calico pods —   |  |
-                           |  | no NAD attachment, no node pinning)       |  |
-                           |  |   nginx        ns=scn-httproute-e2e       |  |
-                           |  |   pp-backend   ns=scn-proxy               |  |
-                           |  |   ext-backend  ns=scn-extres   (Pool      |  |
-                           |  |     member references its Calico podIP)   |  |
-                           |  +-------------------------------------------+  |
-                           |                                                 |
-                           |  DaemonSets in node netns:                      |
-                           |    Calico-node     Multus thick                 |
-                           |    f5-coremond (if how-to #4 ran)               |
-                           +-------------------------------------------------+
-
-BGP session:
-  TMM/ZeBOS  AS 65000  =======  net1 <-> net1, L2 over br-bnk-bgp  =======>  FRR  AS 65001
-                                                                             listen-range
-                                                                             192.168.99.0/24
-                                                                             peer-group
-                                                                             from-tmm
-
-  TMM ZeBOS advertises (redistribute kernel, at router-bgp scope —
-  silently dropped if placed inside address-family ipv4):
-    192.168.99.0/24      (net1 connected)
-    203.0.113.100/32     Gateway scn-gateway        (http-routing-e2e)
-    203.0.113.101/32     Gateway scn-extres-gw      (external-resource-pool)
-    203.0.113.102/32     Gateway scn-proxy-gw       (proxy-protocol-l4)
-
-  FRR installs each /32 as a kernel route:
-    203.0.113.100/32 via 192.168.99.X dev net1 proto bgp
-  so any client in the FRR pod can curl the Gateway addresses
-  end-to-end via the NAD bridge, completely bypassing TMM's eth0
-  TCP hook. This is what http-routing-e2e and external-resource-pool
-  rely on for their data-plane assertions.
+192.168.95.0/24      net1 connected
+203.0.113.100/32     Gateway scn-gateway        (http-routing-e2e)
+203.0.113.101/32     Gateway scn-extres-gw      (external-resource-pool)
+203.0.113.106/32     Gateway scn-tcp-lb-gw      (tcp-l4-loadbalance)
+…one /32 per scenario Gateway, installed by FRR as a kernel route via net1
 ```
 
-Key knob: `CNEInstance.spec.advanced.tmm.env TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE`
-is set by `bgp-peer-frr`. With this `TRUE` (TMM's default for
-demoMode), `mapres` grabs `net1` for the userspace data plane and
-flushes its kernel IP — ZeBOS then has nothing to source-bind
-to. Flipping it `FALSE` lets `net1` stay a normal Linux interface
-with its NAD-assigned IP so the kernel TCP stack handles BGP
-traffic ordinarily.
+**License egress.** The CWC POSTs to F5's TEEMS/CPCL backend to license the
+cluster. On hosts where *forwarded* pod egress is lossy (while host-originated
+egress is fine), that multi-RTT TLS POST never completes and the CWC ignores
+`HTTPS_PROXY`. Set `cluster.teems_relay: true` and `cluster up` runs a host-netns
+`socat` relay that re-originates the connection from the host stack + DNATs the
+cluster's forwarded TEEMS traffic onto it (TLS/SNI/cert pass through intact).
+Off by default — healthy hosts need nothing.
+
+**Key knob.** `CNEInstance.spec.advanced.tmm.env TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE`
+(set by the anycast-bgp deploy). With the demo default `TRUE`, `mapres` grabs
+`net1` for the userspace data plane and flushes its kernel IP, so OcNOS has
+nothing to source-bind to. `FALSE` keeps `net1` a normal Linux interface with its
+NAD IP, so the kernel stack carries BGP traffic ordinarily.
+
 
 ## Scenarios — testing F5 how-tos against the running cluster
 
@@ -862,195 +816,81 @@ exercises a slice of BNK functionality end-to-end: render manifests
 into `artifacts/scenarios/<name>/`, apply them, assert reconciled
 state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
-> **Validated on native k3s.** A clean run — fresh cluster → `e2e`
-> deploy → `scenario run --all` — passes **12/12 green, 0 failed** on the
-> k3s backend (measured 2026-06-06 on a 10-core MacBook M4 / Docker
-> Desktop, 8m47s; full parity with the kind predecessor). The ratings
-> below hold as measured; the wall times are indicative — the
-> authoritative current timings are in the checked-in
-> [reference report](#reference-run-report). Getting there took five
-> k3s-specific fixes (a `standard` StorageClass, a `/var/run`→`/run`
-> symlink for Multus netns, host-side `docker cp` of the bridge CNI,
-> arch-aware plugin selection, and `bridge-nf-call-iptables=0` so the
-> bnk-bgp NAD bridge bypasses Calico's `natOutgoing` SNAT — without it
-> every through-TMM data-plane curl times out while the control plane
-> stays green) — all in `cluster up` / the scenarios now.
+> **Validated on native k3s — 13/13 green.** A clean run — fresh cluster →
+> `e2e` deploy → `scenario run --all` — passes **13/13 green, 0 failed** on the
+> migrated architecture (wholeCluster DaemonSet TMM + OcNOS BGP peering the
+> external `bnk-edge` FRR). Measured 2026-06-22 on a Linux host (`edge_octet`
+> 95). The data-plane scenarios reach Gateway VIPs by curling from the external
+> FRR's netns over BGP-learned routes — TMM's eth0 TCP hook is bypassed
+> entirely. (One non-green scenario, `fic-dynamic-ip`, is amber by design — see
+> below; `scenario run --all` skips it.)
 
 ```bash
-ocibnkctl scenario list                            # all known scenarios + rating
-ocibnkctl scenario run http-routing --poc ./demo   # apply + verify + report
-ocibnkctl scenario run http-routing --dry-run      # render manifests only
-ocibnkctl scenario clean http-routing              # delete what was applied
+ocibnkctl scenario list                            # all scenarios + rating + deps
+ocibnkctl scenario run --all --poc ./demo          # every green scenario, in dep order
+ocibnkctl scenario run http-routing-e2e --poc ./demo   # one: apply + verify + report
+ocibnkctl scenario run http-routing-e2e --dry-run      # render manifests only
+ocibnkctl scenario clean http-routing-e2e          # delete what was applied
 ```
 
-Rating is a stable hint about what's testable in the 2-node / demo-TMM
-shape:
+Rating is a stable hint about what's testable in this demo-TMM shape:
 
 | Rating | Meaning |
 |---|---|
-| green | fully testable here |
-| amber | partially testable — control-plane verifies, data-plane plumbing missing |
-| red   | requires real DPUs / BGP peers / etc.; listed for discoverability, never executed |
+| 🟢 green | fully testable here; runs in `--all` |
+| 🟡 amber | partially testable — control-plane verifies, a data-plane/BNK gap remains |
+| 🔴 red   | needs real DPUs / bondable NICs / upstream BIG-IP; listed for discoverability, never executed |
 
-Scoring of the [F5 BNK how-tos index](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/):
+**Status of every scenario** (`ocibnkctl scenario list`; all 🟢 pass a clean
+`scenario run --all`):
 
-| # | How-to | Rating | Scenario | Wall time |
+| # | Scenario | Rating | Depends on | What it validates |
 |---|---|---|---|---|
-| 1 | [Restrict access to sensitive data](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-admin-access-api.html) | 🟢 | [`cwc-admin-access`](internal/scenarios/cwcadminaccess) | 9s |
-| 2 | [Components needing cluster-wide access](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-whole-cluster.html) | 🟢 | [`cluster-wide-watch`](internal/scenarios/clusterwidewatch) | 4s |
-| 3 | [Set up dynamic routing with BGP](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-zebos-config.html) | 🟢 | [`bgp-peer-frr`](internal/scenarios/bgppeer) | 3m19s |
-| 4 | [Set up core file collection](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-coremond.html) | 🟢 | [`core-file-collection`](internal/scenarios/corefiles) | 3m01s |
-| 6 | [Configure Token Counting and Enforcement](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-token-counting-and-enforcement.html) | 🟢 | [`ai-token-counting`](internal/scenarios/aitokencount) | 25s |
-| 7 | [Semantic AI Model Caching](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/ai-related-features/ai-semantic-caching.html) (sub-article of [AI Traffic Optimization](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/ai-related-features/index.html)) | 🟢 | [`ai-semantic-cache`](internal/scenarios/aisemcache) | 22s |
-| 8 | [HTTP traffic steering with Gateway API HTTPRoute](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/Configure-HTTP-traffic-steering-with-Gateway-API-HTTPRoute.html) | 🟢 | [`http-routing-e2e`](internal/scenarios/httproutee2e) | 21s |
-| 9 | [Proxy Protocol iRule support for L4 routes](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/proxy-protocol.html) | 🟢 | [`proxy-protocol-l4`](internal/scenarios/proxyprotocol) | 24s |
-| 10 | [Load Balance Traffic to External Resources](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-external-resource-load-balancing.html) | 🟢 | [`external-resource-pool`](internal/scenarios/extrespool) | 14s |
+| 1 | [`cwc-admin-access`](internal/scenarios/cwcadminaccess) | 🟢 | — | how-to #1 — CWC admin API gated by mTLS + bearer token (auth 200; unauth + bogus-token rejected) |
+| 2 | [`cluster-wide-watch`](internal/scenarios/clusterwidewatch) | 🟢 | — | how-to #2 — `wholeCluster: true`; one controller reconciles a Gateway+HTTPRoute in a brand-new namespace |
+| 3 | [`bgp-peer-frr`](internal/scenarios/bgppeer) | 🟢 | — | how-to #3 — TMM **OcNOS** (AS 65000) ⇄ external `bnk-edge` FRR (AS 65001) Established; routes learned |
+| 3 | [`bgp-anycast`](internal/scenarios/bgpanycast) | 🟢 | bgp-peer-frr | how-to #3 (all-active) — every TMM advertises its VIP /32 over the shared FRR; ECMP fan-out |
+| 4 | [`core-file-collection`](internal/scenarios/corefiles) | 🟢 | — | how-to #4 — `CNEInstance.spec.coreCollection.enabled` + CoreMond DaemonSet on hostPath |
+| 6 | [`ai-token-counting`](internal/scenarios/aitokencount) | 🟢 | bgp-peer-frr | how-to #6 — Gateway annotation reconciled; TMM data-plane `TOKEN(...)` counters fire |
+| 7 | [`ai-semantic-cache`](internal/scenarios/aisemcache) | 🟢 | bgp-peer-frr | how-to #7 — semantic-cache iRule fires (`CLIENT_ACCEPTED` + `HTTP_REQUEST`) on every request |
+| 8 | [`http-routing-e2e`](internal/scenarios/httproutee2e) | 🟢 | bgp-peer-frr | how-to #8 — Gateway+HTTPRoute; 5/5 end-to-end curls via the BGP-advertised VIP through TMM |
+| 9 | [`proxy-protocol-l4`](internal/scenarios/proxyprotocol) | 🟢 | bgp-peer-frr | how-to #9 — `F5BigCneIrule` PROXY-v1 on an L4Route; backend echoes the parsed client IP |
+| 10 | [`external-resource-pool`](internal/scenarios/extrespool) | 🟢 | bgp-peer-frr | how-to #10 — BNK `Pool` CR as an HTTPRoute backendRef (off-cluster member by IP) |
+| — | [`tcp-l4-loadbalance`](internal/scenarios/tcpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=TCP, weighted backends — 20/20 curls, 70/30 split observed across A/B |
+| — | [`udp-l4-loadbalance`](internal/scenarios/udpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=UDP — socat echo backend reached through the VIP |
+| — | [`grpc-loadbalance`](internal/scenarios/grpcroute) | 🟢 | bgp-peer-frr | `GRPCRoute` control plane + an `L4Route` (TCP) data plane — `grpcurl` list/unary through the L4 Gateway |
+| — | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) | 🟡 | bgp-peer-frr | use-case (FIC for Gateway API) — control plane only; see note |
 
-Plus four scenarios drawn from the BNK Use-Cases / CRD pages rather
-than the how-tos index:
+How-to #s map to the [F5 BNK how-tos index](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/);
+the bottom four come from the Use-Cases / CRD pages. **#5** (DOCA Offloads on DPU),
+**#11** (Active-Standby NIC bonding), **#12** (TMOS DNS / CIS) are omitted — they need
+DPU silicon, bondable physical NICs, and an upstream BIG-IP GTM respectively, none of
+which this shape provides.
 
-| Use-case | Rating | Scenario |
-|---|---|---|
-| [Dynamic IP address allocation (FIC for Gateway API)](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/use-cases/bnk-ficforgatewayapi.html) | 🟡 | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) |
-| TCP load balancer ([`L4Route`](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/bnk-gateway-api-l4route.html) protocol=TCP, weighted backends) | 🟢 | [`tcp-l4-loadbalance`](internal/scenarios/tcpl4lb) |
-| UDP load balancer ([`L4Route`](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/bnk-gateway-api-l4route.html) protocol=UDP, socat echo) | 🟢 | [`udp-l4-loadbalance`](internal/scenarios/udpl4lb) |
-| gRPC routing ([`GRPCRoute`](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/bnk-gateway-api-grpcroute.html), grpcbin backend, grpcurl client) | 🟡 | [`grpc-loadbalance`](internal/scenarios/grpcroute) |
+How the green data-plane scenarios prove the path: each creates a Gateway whose VIP
+`/32` becomes a kernel route on every TMM, re-issues OcNOS `redistribute kernel`
+(`imish -f`) so XP-6.6.0 advertises it, and curls/`grpcurl`/`socat`s the VIP **from the
+external FRR's network namespace** — which has the BGP-learned route. Path: FRR netns →
+BGP route → `net1` → `br-bnk-bgp` (shared L2) → TMM net1 → Gateway listener → backend.
 
-`fic-dynamic-ip` (🟡): manifest-side configuration applies cleanly
-(F5BnkGateway, Gateway w/ infrastructure.parametersRef, HTTPRoute)
-but Gateway never reaches Programmed=True. f5-cne-controller logs
-"No IPAM found for Gateway" — the F5BnkGateway pool isn't auto-
-converted into IPAM/IPAMRange CRs in this BNK 2.3.0 demo
-deployment. The scenario asserts the control-plane state and
-surfaces the AddressNotAssigned condition as informational.
+`fic-dynamic-ip` (🟡): the manifests (F5BnkGateway, a Gateway with
+`infrastructure.parametersRef`, HTTPRoute) apply cleanly, but the Gateway never reaches
+`Programmed=True` — `f5-cne-controller` logs "No IPAM found for Gateway": the F5BnkGateway
+pool isn't auto-converted into IPAM/IPAMRange CRs in this BNK 2.3.0 demo deployment. The
+scenario asserts the control-plane state and surfaces `AddressNotAssigned` as informational.
 
-`grpc-loadbalance` (🟡): GRPCRoute reconciles, Gateway reaches
-Programmed=True, BGP route propagates, grpcurl installs SHA-
-verified, and a direct grpcurl-to-backend Service call lists
-all gRPC services successfully. But cleartext gRPC traffic
-through the Gateway returns RST_STREAM(INTERNAL_ERROR) — TMM's
-standard HTTP/json/httprouter profile chain (visible in audit
-logs) breaks gRPC framing. Investigation confirmed TMM
-unconditionally applies `profile-http` + `profile-json` +
-`profile-httprouter` to all listener types (HTTP and HTTPS),
-corrupting HTTP/2 binary frames regardless of TLS termination.
-Setting `appProtocol: kubernetes.io/h2c` on the Service, switching
-to an HTTPS listener on port 443 with TLS, and adding `profile-sbi`
-(all verified via TMM audit logs) did not change the outcome. This
-is a BNK 2.3.0 FLO limitation. Fix needs either a "raw HTTP/2
-passthrough" mode for GRPCRoute listeners, or a BNK profile
-override path not yet exposed through the Gateway API CRDs.
+`grpc-loadbalance` (🟢): cleartext gRPC through an HTTP Gateway returns
+`RST_STREAM(INTERNAL_ERROR)` — TMM unconditionally applies its `profile-http` /
+`profile-json` / `profile-httprouter` chain to HTTP listeners, corrupting HTTP/2 frames
+(a BNK 2.3.0 FLO limitation). So the scenario validates the **GRPCRoute control plane**
+(reconciles + Programmed) and routes the gRPC **data plane over an `L4Route` (TCP)**
+Gateway, where `grpcurl` list + unary succeed end-to-end through TMM.
 
-Wall times measured on a fresh `e2e` (cluster destroy + redeploy)
-running 2026-05-21 on a Linux laptop. The two TMM-restarting
-scenarios (`bgp-peer-frr` + `core-file-collection`) dominate at
-~3 minutes each; the others are tens of seconds because they
-either don't touch TMM or piggyback on the bridge already up.
-`ocibnkctl scenario run --all` runs every green-rated scenario
-in topo-sorted dependency order, writing an aggregate
-`reports/<stamp>/run.{json,md}` summary alongside the per-scenario
-JSONs.
+`ocibnkctl scenario run --all` runs every green scenario in topo-sorted dependency
+order (the data-plane ones depend on `bgp-peer-frr` for the BGP session), writing an
+aggregate `reports/<stamp>/run-<poc>-<stamp>.{json,md}` summary alongside the
+per-scenario JSONs. Ratings are assigned only after a scenario is built and run.
 
-Cluster bring-up itself (`ocibnkctl e2e`) is **~5m10s**:
-validate 0s · cluster-up 31s · deploy-prereqs 20s · deploy-flo
-23s · deploy-cne 3m56s (includes waiting on `bnk-gatewayclass`
-to reach `Accepted=True` — required to keep first-run scenario
-Gateways from being marked-for-deletion by the controller).
-
-How-tos **#5** ([DOCA Offloads on DPU](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/traffic-offload.html)),
-**#11** ([Static Active-Standby Interface Bonding](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-static-active-standby-bonding.html)),
-and **#12** ([TMOS DNS Service Integration with CIS](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-tmos-dns-service-integration-with-container-ingress-services.html))
-are omitted from the table because they require resources this
-shape can't provide: DPU silicon (#5), bondable physical NICs (#11),
-and a real upstream BIG-IP GTM box (#12). They remain valid BNK
-features outside the ocibnkctl shape.
-
-Ratings are assigned only after a scenario is built and run.
-Implemented scenarios that pan out land as 🟢; ones that
-hit a real architectural barrier on k3s+demoMode get 🟡
-with the gap documented in the scenario's `Description()`.
-Empty cell = scenario not yet built.
-
-`bgp-peer-frr` (green) deploys a real BGP session between an FRR
-pod and TMM's ZeBOS daemon, peered over a Multus
-NetworkAttachmentDefinition (bridge CNI) on a per-node Linux
-bridge. The NAD path bypasses TMM's eth0 TCP hook entirely —
-BGP rides net1 in both pods, exchanging prefixes via the bridge.
-Six assertions pass: Multus DaemonSet Ready, both pods have net1
-in the 192.168.99.0/24 NAD range, ZeBOS sees the neighbor, BGP
-session Established, and FRR's BGP table has at least one prefix
-learned from TMM (via `redistribute kernel`).
-
-`http-routing-e2e` (green) — depends on `bgp-peer-frr` for the
-NAD plumbing. Applies a GatewayClass + Gateway (static
-spec.addresses=203.0.113.100) + HTTPRoute + nginx backend.
-TMM's ZeBOS (via `redistribute kernel`) advertises 203.0.113.100/32
-into BGP; FRR installs the kernel route via net1; the verify
-step execs 5 curls from inside the FRR pod, which already has
-the route. All 6 assertions pass including the 5×curl. Path:
-FRR socket → FRR kernel route → net1 → bnk-bgp bridge → TMM net1
-→ Gateway listener → nginx. TMM's eth0 TCP hook is completely
-bypassed.
-
-Reproduce manually:
-
-```bash
-kubectl -n scn-bgp exec deploy/scn-frr -c frr -- \
-  curl -sS -H 'Host: ocibnkctl.local' http://203.0.113.100/
-# → ocibnkctl-scenario-httproute-e2e-OK
-```
-
-`external-resource-pool` (green) — demonstrates how-to #10 (load
-balance to non-Service backends) via the BNK `Pool` CR. HTTPRoute
-`backendRefs` points at a `Pool {group:k8s.f5net.com, kind:Pool}`
-instead of a Service; `Pool.spec.members` lists endpoints by
-IP+port. In this shape, the "external" backend is an nginx pod attached
-to the bnk-bgp NAD (same bridge TMM uses), with its NAD IP
-auto-discovered and rendered into the Pool CR. Gateway address
-is 203.0.113.101 to avoid collision with `http-routing-e2e`.
-
-`cwc-admin-access` (green) — implements how-to #1 (restrict access
-to sensitive data). Demonstrates BNK's dual-gate access control
-on the CWC admin API: mTLS at the TLS layer + bearer token at
-the HTTP layer. Both materials are produced by the deploy-flo
-phase already (cwc-license-client-certs Secret + cwc-auth-token
-Secret in f5-cne-core); the scenario just replicates them into
-its own namespace, spawns a curl probe pod, and runs three
-requests against https://f5-spk-cwc.f5-cne-core.svc:38081/status:
-authenticated (expect 200 + license JSON), no Authorization
-header (expect 401 "invalid token format"), bogus token
-(expect 401 "invalid token"). Independent of bgp-peer-frr —
-this is a pure runtime-access check.
-
-`proxy-protocol-l4` (green) — implements how-to #9 (PROXY-protocol
-iRule on an L4 route). The new BNK CRs reconcile (`F5BigCneIrule`
-Programmed, `L4Route` Accepted, `BNKNetPolicy` ResolvedRefs True),
-TMM proxies the TCP traffic, FRR learns the Gateway IP via BGP,
-and 5/5 curls from FRR through the Gateway return the marker body
-with the parsed `proxy_addr` set to FRR's NAD IP — proving the
-iRule's `TCP::respond` prepended the PROXY v1 line before nginx
-saw the request. Load-bearing knob: `L4Route.spec.pvaAccelerationMode:
-disabled`, which keeps the data path in TMM's TCL slow path. With
-the default `full/assisted` PVA mode, TMM hardware-offloads the
-connection after handshake and `TCP::respond` fires in the VM but
-can't reach the offloaded wire — symptoms are 200 OK from nginx
-turning into "broken header" errors and curl `(52) Empty reply`.
-
-`core-file-collection` (green) — implements how-to #4 (set up
-core file collection). One-line CNEInstance.spec.coreCollection.
-enabled=true flip plus `advanced.coremon.hostPath=true` so the
-CoreMond DaemonSet survives the single-node-RWO storage class.
-FLO auto-creates a CoreMond CR + DaemonSet in f5-cne-core and
-adds kernel-cores / f5-core-store / tmm-core volumes to the TMM
-Deployment template. The scenario asserts the CR exists, the
-DaemonSet is Running, and the CNEInstance condition
-`CoremondAvailable=True`. The how-to's "kill -11 to force a
-crash" verification step is intentionally NOT automated —
-crashing TMM mid-scenario destabilises the cluster, and the
-follow-up "did a core file land in /var/crash" check needs a
-privileged node-level read we'd rather not bake in. Operators
-can run the kill manually after the scenario and inspect the
-k3s worker container's filesystem to confirm capture.
 
 ## Reference run report
 
@@ -1061,10 +901,11 @@ so a reader can see the full report shape (versions, host
 resources, cluster topology, F5 control-plane pods, every deploy
 phase, and every scenario row) without running anything locally.
 
-> This is a **native-k3s** run (`e2e --with-scenarios --no-resume` from a
-> fresh cluster on 2026-06-06, on a **10-core MacBook M4 / Docker
-> Desktop**): **17 ok, 0 failed** — deploy 5/5 + scenarios 12/12 green,
-> including the data-plane scenarios fixed by `bridge-nf-call-iptables=0`.
+> This checked-in report is a **pre-migration** native-k3s run (2026-06-06,
+> single-worker + in-cluster FRR/ZeBOS shape): **17 ok, 0 failed** — deploy 5/5
+> + scenarios 12/12 green. It's kept for the full report *shape*; the current
+> architecture (wholeCluster DaemonSet + OcNOS + external `bnk-edge` FRR) passes
+> **13/13 green** — see the [Scenarios](#scenarios--testing-f5-how-tos-against-the-running-cluster) table.
 
 Reproduce on your own host with:
 
@@ -1106,7 +947,7 @@ non-cluster-dependent surface area in one shot.
 - **[f5-bnk-udf](https://github.com/f5devcentral/f5-bnk-udf/tree/v2.2.0)**
   (branch `v2.2.0`) — the inspiration for the BNK-on-host shape:
   `advanced.demoMode.enabled: true` + node label + nodeSelector,
-  ZeBOS dynamic-routing ConfigMap pattern, multi-worker
-  topology. Same CNEInstance recipe family; ocibnkctl adapts it
-  to a two-node k3s cluster with Multus NADs replacing the
-  macvlan-on-bare-metal approach used in f5-bnk-udf.
+  the dynamic-routing ConfigMap pattern, multi-worker topology.
+  Same CNEInstance recipe family; ocibnkctl adapts it to a
+  control-node + N-worker k3s cluster with Multus NADs replacing the
+  macvlan-on-bare-metal approach, and swaps ZeBOS for OcNOS.
