@@ -1,23 +1,25 @@
 digraph ocibnkctl_lab {
   rankdir=LR;
   splines=ortho;
-  nodesep=0.6;
-  ranksep=2.4;
+  nodesep=0.5;
+  ranksep=2.8;
   bgcolor="white";
   fontname="DejaVu Sans"; fontsize=24; labelloc="t";
-  label=<<b>ocibnkctl lab — stock BNK 2.3.0 (FLO + wholeCluster DaemonSet, OcNOS BGP)</b><br/><font point-size="15">3 k3s nodes (1 server + 2 agents) · full FLO/CNE control plane on the server · one TMM per agent (DaemonSet) · external FRR/origin on bnk-edge · edge_octet 95</font>>;
+  label=<<b>ocibnkctl lab — stock BNK 2.3.0 (FLO + wholeCluster DaemonSet, OcNOS BGP)</b><br/><font point-size="15">3 k3s nodes (1 server + 2 agents) · full FLO/CNE control plane on the server · one TMM per agent (DaemonSet) · external FRR/origin on bnk-edge · edge_octet 95<br/>cluster docker net (eth0) on the LEFT · bnk-edge L2 (eth1 uplink) on the RIGHT</font>>;
   node [shape=box, style="filled,rounded", fontname="DejaVu Sans", fontsize=15];
   edge [fontname="DejaVu Sans", fontsize=13];
 
-  /* ===== networks: thin BOLD vertical lines (the L2 bus), label at the bottom ===== */
-  lbus  [shape=box, fixedsize=true, width=0.30, height=7.0, style=filled, fillcolor="#3a7bd5", color="#3a7bd5", label=""];
-  llab  [shape=plaintext, fontsize=15,
-         label=<<b>cluster docker net</b><br/>k3s-mwtest · 172.18.0.0/16<br/>kube API + Calico pod net>];
-  rbus  [shape=box, fixedsize=true, width=0.30, height=7.0, style=filled, fillcolor="#2e9e2e", color="#2e9e2e", label=""];
-  rlab  [shape=plaintext, fontsize=15,
-         label=<<b>bnk-edge-mwtest</b><br/>192.168.95.0/24 · external L2<br/>(server NOT attached)>];
+  /* ===== LEFT bus: cluster docker net (eth0 / kube API + Calico) ===== */
+  lbus [shape=box, fixedsize=true, width=0.30, height=7.5, style=filled, fillcolor="#3a7bd5", color="#3a7bd5", label=""];
+  llab [shape=plaintext, fontsize=15,
+        label=<<b>cluster docker net</b><br/>k3s-mwtest · 172.18.0.0/16<br/>kube API + Calico pod net>];
 
-  /* ===== k3s NODES (boxes) with their PODS inside ===== */
+  /* ===== RIGHT bus: bnk-edge external L2 (eth1 uplink + FRR/origin) ===== */
+  rbus [shape=box, fixedsize=true, width=0.30, height=7.5, style=filled, fillcolor="#2e9e2e", color="#2e9e2e", label=""];
+  rlab [shape=plaintext, fontsize=15,
+        label=<<b>bnk-edge-mwtest</b><br/>192.168.95.0/24 · external L2<br/>(server NOT attached)>];
+
+  /* ===== k3s NODES (boxes) with their PODS inside — the MIDDLE column ===== */
   server [fillcolor="#eeeeee", label=<
     <table border="0" cellborder="1" cellspacing="0" cellpadding="5">
       <tr><td colspan="2"><b>k3s-mwtest-server-0</b> &#183; <font color="#a00000">CONTROL node (tainted NoSchedule)</font></td></tr>
@@ -64,31 +66,36 @@ digraph ocibnkctl_lab {
       <tr><td><font color="#777777">re-originates the CWC&#8217;s license POST to F5 TEEMS from the host stack;<br/>DNAT redirects the cluster&#8217;s forwarded TEEMS:443 onto it &#8212; only needed where<br/>forwarded pod egress is lossy (host-originated is fine)</font></td></tr>
     </table>>];
 
-  /* middle column order: server, agents, then externals */
+  /* ===== MIDDLE column: stack all nodes + externals in one rank ===== */
   { rank=same; server; agent0; agent1; frr; origin; }
   edge [style=invis];
   server -> agent0 -> agent1 -> frr -> origin;
 
-  /* bus lines + their labels */
-  { rank=same; lbus; llab; }
+  /* each bus sits in the same rank as its caption */
+  { rank=same; llab; lbus; }
   llab -> lbus [style=invis];
-  { rank=same; rbus; rlab; }
+  { rank=same; rlab; rbus; }
   rlab -> rbus [style=invis];
 
-  /* ===== cluster-net (left bus) — one eth0 link per node, terminating ON eth0 ===== */
-  edge [style=solid, color="#3a7bd5", dir=none, penwidth=1.8];
+  /* ===== PIN THREE COLUMNS: lbus (left) | nodes (middle) | rbus (right) ===== */
+  edge [style=invis, weight=30];
+  lbus -> agent0;
+  agent0 -> rbus;
+
+  /* ===== cluster-net links on the LEFT (draw only; rank pinned above) ===== */
+  edge [style=solid, color="#3a7bd5", dir=none, penwidth=1.8, weight=1, constraint=false];
   lbus:e -> server:eth0:w;
   lbus:e -> agent0:eth0:w;
   lbus:e -> agent1:eth0:w;
 
-  /* CWC license egress goes out via the host relay (dashed, purple) */
-  edge [style=dashed, color="#8a4fd0", dir=forward, penwidth=1.6, constraint=false];
-  server:eth0:e -> relay [label="license POST\n(TEEMS, re-originated)"];
-
-  /* ===== bnk-edge (right bus) — ONE uplink per agent + the externals ===== */
-  edge [style=solid, color="#2e9e2e", dir=none, penwidth=1.8];
+  /* ===== bnk-edge links on the RIGHT (draw only) ===== */
+  edge [color="#2e9e2e"];
   agent0:eth1:e -> rbus:w;
   agent1:eth1:e -> rbus:w;
   frr:ip:e -> rbus:w;
   origin:ip:e -> rbus:w;
+
+  /* ===== CWC license egress out via the host relay (dashed, purple) ===== */
+  edge [style=dashed, color="#8a4fd0", dir=forward, penwidth=1.6, constraint=false];
+  server -> relay [label="license POST\n(TEEMS, re-originated)"];
 }
