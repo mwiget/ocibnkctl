@@ -1,0 +1,16 @@
+# F5BnkGateway IP pool for the four token-counting LBs. A distinct /32
+# range (.120-.200) so the Gateway addresses don't collide with the other
+# scenarios (.100 http-routing, .103 token-counting, .105 proxy, …).
+apiVersion: k8s.f5net.com/v1
+kind: F5BnkGateway
+metadata:
+  name: ocibnkctl-aitok-dssm
+  namespace: scn-aitok-dssm
+spec:
+  ingressConfig:
+    defaultListenerNetworks:
+    - name: external
+      ipv4BaseCidr: 203.0.113.0/24
+      startAddress: 203.0.113.120
+      endAddress: 203.0.113.200
+      provider: f5-ip-provider

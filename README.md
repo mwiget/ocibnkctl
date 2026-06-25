@@ -61,7 +61,7 @@ much shorter pipeline.
 ▶ **[Watch the ~3-minute demo on YouTube](https://youtu.be/uUyO17K6r5M)** — a real,
 **live Claude Code session on a local model** drives `ocibnkctl` end to end:
 scaffold the PoC → deploy F5 BIG-IP Next 2.3.0 → inspect every pod → diagnose a
-stuck pod → run the scenario suite (13/13 green) → bnk-forge auto-registration
+stuck pod → run the scenario suite (14/14 green) → bnk-forge auto-registration
 with live Traffic Flow → teardown. The whole production pipeline (headless
 asciinema capture, Kokoro voiceover, playwright slides + bnk-forge UI shots,
 ffmpeg assembly) is in [`docs/video/live-session/`](docs/video/live-session/).
@@ -847,11 +847,11 @@ exercises a slice of BNK functionality end-to-end: render manifests
 into `artifacts/scenarios/<name>/`, apply them, assert reconciled
 state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 
-> **Validated on native k3s — 13/13 green.** A clean run — fresh cluster →
-> `e2e` deploy → `scenario run --all` — passes **13/13 green, 0 failed** on the
+> **Validated on native k3s — 14/14 green.** A clean run — fresh cluster →
+> `e2e` deploy → `scenario run --all` — passes **14/14 green, 0 failed** on the
 > migrated architecture (wholeCluster DaemonSet TMM + OcNOS BGP peering the
 > external `bnk-edge` FRR). Measured 2026-06-22 on a Linux host (`edge_octet`
-> 95). The data-plane scenarios reach Gateway VIPs by curling from the external
+> 95); `ai-token-counting-dssm` added + verified live 2026-06-25. The data-plane scenarios reach Gateway VIPs by curling from the external
 > FRR's netns over BGP-learned routes — TMM's eth0 TCP hook is bypassed
 > entirely. (One non-green scenario, `fic-dynamic-ip`, is amber by design — see
 > below; `scenario run --all` skips it.)
@@ -883,6 +883,7 @@ Rating is a stable hint about what's testable in this demo-TMM shape:
 | 3 | [`bgp-anycast`](internal/scenarios/bgpanycast) | 🟢 | bgp-peer-frr | how-to #3 (all-active) — every TMM advertises its VIP /32 over the shared FRR; ECMP fan-out |
 | 4 | [`core-file-collection`](internal/scenarios/corefiles) | 🟢 | — | how-to #4 — `CNEInstance.spec.coreCollection.enabled` + CoreMond DaemonSet on hostPath |
 | 6 | [`ai-token-counting`](internal/scenarios/aitokencount) | 🟢 | bgp-peer-frr | how-to #6 — Gateway annotation reconciled; TMM data-plane `TOKEN(...)` counters fire |
+| 6 | [`ai-token-counting-dssm`](internal/scenarios/aitokencountdssm) | 🟢 | bgp-peer-frr | how-to #6 (custom-iRule variant) — 4 LBs; HTTPRoute iRule counts streaming + non-streaming tokens into DSSM/Redis; counters match backend usage exactly (scraped by tmm-stat-exporter → `f5tmm_token_*`) |
 | 7 | [`ai-semantic-cache`](internal/scenarios/aisemcache) | 🟢 | bgp-peer-frr | how-to #7 — semantic-cache iRule fires (`CLIENT_ACCEPTED` + `HTTP_REQUEST`) on every request |
 | 8 | [`http-routing-e2e`](internal/scenarios/httproutee2e) | 🟢 | bgp-peer-frr | how-to #8 — Gateway+HTTPRoute; 5/5 end-to-end curls via the BGP-advertised VIP through TMM |
 | 9 | [`proxy-protocol-l4`](internal/scenarios/proxyprotocol) | 🟢 | bgp-peer-frr | how-to #9 — `F5BigCneIrule` PROXY-v1 on an L4Route; backend echoes the parsed client IP |
@@ -936,7 +937,7 @@ phase, and every scenario row) without running anything locally.
 > single-worker + in-cluster FRR/ZeBOS shape): **17 ok, 0 failed** — deploy 5/5
 > + scenarios 12/12 green. It's kept for the full report *shape*; the current
 > architecture (wholeCluster DaemonSet + OcNOS + external `bnk-edge` FRR) passes
-> **13/13 green** — see the [Scenarios](#scenarios--testing-f5-how-tos-against-the-running-cluster) table.
+> **14/14 green** — see the [Scenarios](#scenarios--testing-f5-how-tos-against-the-running-cluster) table.
 
 Reproduce on your own host with:
 

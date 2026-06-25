@@ -1,0 +1,55 @@
+# LB "llm-chat" — HTTP Gateway (VIP 203.0.113.120) + HTTPRoute + BNKNetPolicy
+# binding the shared aitok-counter iRule to the HTTP listener. An HTTP listener
+# (not an L4Route) is required: L4Route yields a FastL4 VS that never runs the
+# payload iRule. All four LBs share the stub-llm backend; the iRule maps the VIP
+# to the friendly vs="llm-chat" label.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: aitok-llm-chat-gw
+  namespace: scn-aitok-dssm
+spec:
+  gatewayClassName: bnk-gatewayclass
+  addresses:
+  - type: IPAddress
+    value: 203.0.113.120
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 8000
+    allowedRoutes:
+      namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aitok-llm-chat-route
+  namespace: scn-aitok-dssm
+spec:
+  parentRefs:
+  - name: aitok-llm-chat-gw
+    sectionName: http
+  hostnames:
+  - llm-chat.aitok.local
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /}
+    backendRefs:
+    - name: stub-llm
+      port: 80
+---
+apiVersion: gateway.k8s.f5net.com/v1alpha1
+kind: BNKNetPolicy
+metadata:
+  name: aitok-llm-chat-attach
+  namespace: scn-aitok-dssm
+spec:
+  extensionRefs:
+  - group: k8s.f5net.com
+    kind: F5BigCneIrule
+    name: aitok-counter
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: aitok-llm-chat-gw
+    sectionName: http

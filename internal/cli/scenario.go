@@ -19,6 +19,7 @@ import (
 	// here as they land.
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aisemcache"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aitokencount"
+	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aitokencountdssm"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/bgpanycast"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/bgppeer"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/clusterwidewatch"

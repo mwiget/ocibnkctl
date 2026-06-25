@@ -1,0 +1,79 @@
+# Production token-counting iRule (shared by all four LBs).
+#
+# Runs on an HTTP virtual server (the Gateways use an HTTP listener + HTTPRoute,
+# so TMM terminates HTTP and the iRule sees the response on HTTP events). It
+# reads the response Content-Type to detect streaming vs non-streaming, collects
+# the (dechunked) response body, parses the OpenAI usage block
+# (prompt/completion/total — present in the single JSON body for non-streaming,
+# and in the final SSE `usage` chunk for streaming with
+# stream_options.include_usage), and maintains cumulative per-LB / per-mode
+# counters in TMM's session table.
+#
+# Why HTTP, not L4Route: an L4Route produces a FastL4 (profile_bigproto) virtual
+# server, which does NOT invoke TCL payload iRules — even with
+# pvaAccelerationMode: disabled, SERVER_DATA never fires, so the counters stay
+# zero. An HTTP listener gives a full HTTP-proxy VS where HTTP_RESPONSE /
+# HTTP_RESPONSE_DATA fire and the iRule can read the body.
+#
+# With DSSM deployed (SESSIONDB_EXTERNAL_STORAGE=true, default on full BNK) the
+# `table` command persists to Redis, where tmm-stat-exporter scans the TMMTOK
+# subtable and emits f5tmm_token_{total,prompt,completion}{vs,mode,model} for
+# Prometheus/Grafana.
+#
+# vs label: a friendly LB name mapped from the listener VIP, so the dashboard
+# legend reads cleanly. A generic production iRule could use [virtual name]
+# instead (the VS id is unique per LB) — the VIP map is a scenario convenience.
+#
+# Persistence: counters use `table timeout … indefinite` so they survive past
+# the default 180s table TTL (Redis is then the durable source of truth, which
+# is what lets the dashboard report day/week/month/year). The timeout call is
+# wrapped in catch so an older tmm that rejects the keyword still counts (just
+# with the default TTL).
+apiVersion: k8s.f5net.com/v1
+kind: F5BigCneIrule
+metadata:
+  name: aitok-counter
+  namespace: scn-aitok-dssm
+spec:
+  iRule: |
+    when CLIENT_ACCEPTED {
+        switch [IP::local_addr] {
+            "203.0.113.120" { set vs "llm-chat" }
+            "203.0.113.121" { set vs "llm-code" }
+            "203.0.113.122" { set vs "llm-embed" }
+            "203.0.113.123" { set vs "llm-rag" }
+            default         { set vs [IP::local_addr] }
+        }
+    }
+    when HTTP_RESPONSE {
+        set mode "non-streaming"
+        if { [string first "text/event-stream" [HTTP::header value "Content-Type"]] >= 0 } {
+            set mode "streaming"
+        }
+        # One large collect handles both shapes: the single JSON body
+        # (non-streaming) and the full dechunked SSE stream whose usage arrives
+        # in the final chunk (streaming). HTTP_RESPONSE_DATA fires once the body
+        # completes (or the cap is hit), so no re-collect loop is needed for the
+        # small simulator responses.
+        HTTP::collect 1048576
+    }
+    when HTTP_RESPONSE_DATA {
+        set buf [HTTP::payload]
+        if { [regexp {"total_tokens":[ ]*([0-9]+)} $buf -> tot] } {
+            set pr 0
+            set co 0
+            regexp {"prompt_tokens":[ ]*([0-9]+)} $buf -> pr
+            regexp {"completion_tokens":[ ]*([0-9]+)} $buf -> co
+            set k "vs=$vs|mode=$mode|model=gpt-stub"
+            table incr -subtable "TMMTOK" "total|$k" $tot
+            table incr -subtable "TMMTOK" "prompt|$k" $pr
+            table incr -subtable "TMMTOK" "completion|$k" $co
+            catch {
+                table timeout -subtable "TMMTOK" "total|$k" indefinite
+                table timeout -subtable "TMMTOK" "prompt|$k" indefinite
+                table timeout -subtable "TMMTOK" "completion|$k" indefinite
+            }
+            log local0.info "TOK_COUNT vs=$vs mode=$mode prompt=$pr completion=$co total=$tot"
+        }
+        HTTP::release
+    }
