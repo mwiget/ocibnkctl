@@ -32,7 +32,7 @@ type Metadata struct {
 	BNKVersion       string    `yaml:"bnk_version"`
 }
 
-// Versions captures the BNK 2.3.0 component pins. FLOChart is resolved
+// Versions captures the BNK 2.3.1 component pins. FLOChart is resolved
 // from the release-manifest chart at deploy time — empty here means
 // "not yet resolved".
 type Versions struct {

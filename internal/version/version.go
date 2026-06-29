@@ -5,10 +5,10 @@ var (
 	Version    = "dev"
 	Commit     = "none"
 	BuildDate  = "unknown"
-	BNKVersion = "2.3.0"
+	BNKVersion = "2.3.1"
 )
 
-// Pinned defaults for BNK 2.3.0 running in demo-mode on the native k3s
+// Pinned defaults for BNK 2.3.1 running in demo-mode on the native k3s
 // backend. The FLO, CIS, and cert-gen chart versions are NOT pinned
 // here — they're resolved at deploy time from the f5-bigip-k8s-manifest
 // release-manifest chart pulled from repo.f5.com (see
@@ -18,9 +18,11 @@ const (
 	K8sVersion = "1.30"
 
 	// K3sNodeImage is the rancher/k3s node-container image both the
-	// server and agent run. Pinned to the v1.30.8 k8s minor BNK 2.3
-	// declares supported; k3s names its image track "<k8s>-k3s1". It is
-	// the default for poc.yaml's versions.node_image.
+	// server and agent run; k3s names its image track "<k8s>-k3s1". It is
+	// the default for poc.yaml's versions.node_image. Still pinned to
+	// v1.30.8 from the 2.3.0 line — BNK 2.3.1 moved its supported 1.30
+	// track to 1.30.10/1.30.14, so a bump to v1.30.14-k3s1 is pending a
+	// tested cluster run (held back from the 2.3.1 version bump on purpose).
 	K3sNodeImage = "rancher/k3s:v1.30.8-k3s1"
 
 	// K8sToolsImage bundles kubectl + helm + openssl + apk so the CWC
@@ -57,7 +59,7 @@ const (
 	// CNEManifestVersion is the version coordinate inside the release
 	// manifest. CNEInstance.spec.manifestVersion references it directly;
 	// PullReleaseManifest uses it as helm pull --version arg.
-	CNEManifestVersion = "2.3.0-3.2598.3-0.0.170"
+	CNEManifestVersion = "2.3.1-3.2598.3-0.0.302"
 
 	// FARRegistryHost is the OCI registry hostname for all F5-published
 	// charts and images.

@@ -1,6 +1,6 @@
 # ocibnkctl
 
-![BNK](https://img.shields.io/badge/BNK-2.3.0-0a3a5c)
+![BNK](https://img.shields.io/badge/BNK-2.3.1-0a3a5c)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30.8-326ce5?logo=kubernetes&logoColor=white)
 ![k3s](https://img.shields.io/badge/k3s-v1.30.8-ffc61c)
 ![Go](https://img.shields.io/github/go-mod/go-version/mwiget/ocibnkctl)
@@ -9,7 +9,7 @@
 [![regcachectl](https://img.shields.io/badge/image%20cache-regcachectl-2496ed?logo=docker&logoColor=white)](https://github.com/mwiget/regcachectl)
 [![Release](https://img.shields.io/github/v/release/mwiget/ocibnkctl?label=download)](https://github.com/mwiget/ocibnkctl/releases/latest)
 
-Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.0
+Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.3.1
 on a [k3s](https://k3s.io/) cluster — one combined control-plane + worker
 (server) plus one or more workers (agents) dedicated to TMM
 (`cluster.tmm_nodes`, default 1) running in demo mode (virtio inside the
@@ -60,7 +60,7 @@ much shorter pipeline.
 
 ▶ **[Watch the ~3-minute demo on YouTube](https://youtu.be/uUyO17K6r5M)** — a real,
 **live Claude Code session on a local model** drives `ocibnkctl` end to end:
-scaffold the PoC → deploy F5 BIG-IP Next 2.3.0 → inspect every pod → diagnose a
+scaffold the PoC → deploy F5 BIG-IP Next 2.3.1 → inspect every pod → diagnose a
 stuck pod → run the scenario suite (14/14 green) → bnk-forge auto-registration
 with live Traffic Flow → teardown. The whole production pipeline (headless
 asciinema capture, Kokoro voiceover, playwright slides + bnk-forge UI shots,
@@ -87,8 +87,8 @@ k3s node containers → remove the cluster's docker network.
 
 | Component | Version |
 |---|---|
-| BNK | 2.3.0 |
-| CNE release manifest | 2.3.0-3.2598.3-0.0.170 |
+| BNK | 2.3.1 |
+| CNE release manifest | 2.3.1-3.2598.3-0.0.302 |
 | Kubernetes (k3s node image) | 1.30.8 (`rancher/k3s:v1.30.8-k3s1`) |
 | Calico | v3.28.2 |
 | cert-manager | v1.16.2 |
@@ -97,7 +97,7 @@ k3s node containers → remove the cluster's docker network.
 ## Minimum host resources
 
 Validated on a **MacBook Air / Pro (Apple M4/M5), 10 CPU cores**, with
-Docker Desktop given **10 CPUs and 16 GB**. The full two-node BNK 2.3.0
+Docker Desktop given **10 CPUs and 16 GB**. The full two-node BNK 2.3.1
 stack — *plus* all 12 green how-to scenarios (50 pods) — schedules and
 runs in that envelope. (The earlier 12-core floor needlessly excluded
 exactly these machines.)
@@ -355,10 +355,11 @@ ocibnkctl version
 ```
 
 Releases follow `v<bnk-version>[-<n>]` — the first cut for a BNK
-release is plain `v2.3.0`, then `v2.3.0-1`, `v2.3.0-2`, … The `2.3.0`
+release is plain `v2.3.1`, then `v2.3.1-1`, `v2.3.1-2`, … The `2.3.1`
 prefix tracks the pinned BNK release; the optional `-n` suffix
 increments per ocibnkctl-only iteration (bug fixes, new scenarios)
-that ships a fresh binary against the same BNK release.
+that ships a fresh binary against the same BNK release. The previous
+BNK line lives on the `release/2.3.0` branch (tags `v2.3.0`, `v2.3.0-1`).
 
 Or build from source — see [Repo layout](#repo-layout-the-binary-itself)
 below.
@@ -511,7 +512,7 @@ This is the operator + agent guide shipped verbatim into every PoC
 
 #### What this PoC deploys
 
-F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a **two-node k3s cluster**:
+F5 BIG-IP Next for Kubernetes (BNK) 2.3.1 on a **two-node k3s cluster**:
 one combined control-plane + worker (server) and one worker (agent)
 dedicated to TMM. The k3s nodes run directly as containers on the host
 OCI runtime (docker or podman) — there is **no kind, no k3d, no
@@ -659,7 +660,7 @@ internal/cluster/      native k3s backend + docker/podman wrappers
 internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen
 internal/bnkforge/     bnk-forge HTTP client (copy-fork of dpubnkctl)
 internal/embedded/     go:embed AGENTS.md, CLAUDE.md, templates/
-internal/version/      build-stamped + BNK 2.3.0 pins + min-spec floor
+internal/version/      build-stamped + BNK 2.3.1 pins + min-spec floor
 ```
 
 ## Repo layout (a PoC created by `ocibnkctl init`)

@@ -7,7 +7,7 @@
 
 ## What this PoC deploys
 
-F5 BIG-IP Next for Kubernetes (BNK) 2.3.0 on a **k3s cluster**: one
+F5 BIG-IP Next for Kubernetes (BNK) 2.3.1 on a **k3s cluster**: one
 combined control-plane + worker (server) and **`cluster.tmm_nodes`**
 worker (agent) node(s) dedicated to TMM (default 1). The k3s nodes run
 directly as containers on the host OCI runtime (docker or podman) —

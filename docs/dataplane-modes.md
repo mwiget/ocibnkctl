@@ -1,7 +1,7 @@
 # Dataplane modes: how ocibnkctl attaches TMM to the network
 
 `ocibnkctl` deploys the **real, stock BIG-IP Next for Kubernetes (BNK)
-2.3.0** binary in **demo mode** (virtio in the pod netns, no DPU/SR-IOV).
+2.3.1** binary in **demo mode** (virtio in the pod netns, no DPU/SR-IOV).
 On top of that it offers three ways to present TMM's data plane, selected
 by `bnk.tmm_dataplane_mode`:
 

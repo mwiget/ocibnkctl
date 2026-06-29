@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this binary is
 
 `ocibnkctl` is a single-binary Go CLI that drives a full F5 BIG-IP Next for
-Kubernetes (BNK) 2.3.0 deployment onto a native k3s cluster: one **dedicated
+Kubernetes (BNK) 2.3.1 deployment onto a native k3s cluster: one **dedicated
 control node** (server, tainted `control-plane:NoSchedule`) plus **N worker
 nodes** (`cluster.tmm_nodes`), each labelled `app=f5-tmm`. TMM runs in **demo
 mode** (virtio inside the pod netns, no DPU/SR-IOV) as a FLO **wholeCluster
@@ -111,7 +111,7 @@ internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kube
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/embedded/     go:embed of AGENTS.md, CLAUDE.md, templates/
-internal/version/      build-stamped version + BNK 2.3.0 pins + min-spec floor
+internal/version/      build-stamped version + BNK 2.3.1 pins + min-spec floor
 ```
 
 ## Scenarios framework
