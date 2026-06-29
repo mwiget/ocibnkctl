@@ -59,7 +59,7 @@ func (p *PoC) Validate() ValidationResult {
 		r.Errors = append(r.Errors, "versions.k8s: required")
 	}
 	if p.Versions.NodeImage == "" {
-		r.Errors = append(r.Errors, "versions.node_image: required (e.g. rancher/k3s:v1.30.8-k3s1)")
+		r.Errors = append(r.Errors, "versions.node_image: required (e.g. rancher/k3s:v1.30.14-k3s1)")
 	}
 	if p.Versions.CNEManifest == "" {
 		r.Errors = append(r.Errors, "versions.cne_manifest: required")

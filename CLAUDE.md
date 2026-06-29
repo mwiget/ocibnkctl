@@ -31,7 +31,7 @@ Calico's `mount-bpffs` init works — plain `docker run` is `rprivate`), joins
 the agent over a per-cluster bridge network with a shared token, and extracts
 the kubeconfig via `docker exec`, rewriting it to the host-mapped API port.
 k3s's bundled flannel/traefik/servicelb are disabled so Calico is the CNI;
-the result is a Calico-CNI v1.30.8 cluster of 1 control node + N workers.
+the result is a Calico-CNI v1.30.14 cluster of 1 control node + N workers.
 k3s leaves the server node schedulable (unlike kind), so `cluster up`
 **taints it** `control-plane:NoSchedule` to dedicate it — all BNK workloads
 (and the TMM DaemonSet) then land only on the labelled worker(s).

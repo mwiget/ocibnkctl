@@ -1,8 +1,8 @@
 # ocibnkctl
 
 ![BNK](https://img.shields.io/badge/BNK-2.3.1-0a3a5c)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30.8-326ce5?logo=kubernetes&logoColor=white)
-![k3s](https://img.shields.io/badge/k3s-v1.30.8-ffc61c)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30.14-326ce5?logo=kubernetes&logoColor=white)
+![k3s](https://img.shields.io/badge/k3s-v1.30.14-ffc61c)
 ![Go](https://img.shields.io/github/go-mod/go-version/mwiget/ocibnkctl)
 ![License](https://img.shields.io/github/license/mwiget/ocibnkctl)
 ![Last commit](https://img.shields.io/github/last-commit/mwiget/ocibnkctl)
@@ -89,7 +89,7 @@ k3s node containers → remove the cluster's docker network.
 |---|---|
 | BNK | 2.3.1 |
 | CNE release manifest | 2.3.1-3.2598.3-0.0.302 |
-| Kubernetes (k3s node image) | 1.30.8 (`rancher/k3s:v1.30.8-k3s1`) |
+| Kubernetes (k3s node image) | 1.30.14 (`rancher/k3s:v1.30.14-k3s1`) |
 | Calico | v3.28.2 |
 | cert-manager | v1.16.2 |
 | FLO chart | resolved at deploy time from the release manifest |
@@ -392,7 +392,7 @@ What customers supply themselves, dropped into `keys/` of the PoC repo
 
 ## Cluster backend (native k3s)
 
-ocibnkctl ships a single backend: the k3s nodes (`rancher/k3s:v1.30.8-k3s1`)
+ocibnkctl ships a single backend: the k3s nodes (`rancher/k3s:v1.30.14-k3s1`)
 run directly as containers on the host OCI runtime, driven through the
 docker/podman CLI — there is **no third-party orchestrator binary** to
 install. `cluster up` starts a server (combined control-plane + worker)
@@ -400,7 +400,7 @@ and an agent (the TMM worker), joins them over a per-cluster docker
 bridge network, remounts each node's rootfs `rshared` (so Calico's
 `mount-bpffs` init works), then layers Calico on top of k3s with its
 bundled flannel/traefik/servicelb disabled. The result is the same
-two-node, Calico-CNI, k8s-v1.30.8 shape the deploy pipeline expects.
+two-node, Calico-CNI, k8s-v1.30.14 shape the deploy pipeline expects.
 
 Podman works through the same code path — set `cluster.provider: podman`
 in `poc.yaml` (or let `doctor`/`cluster up` auto-detect the runtime).

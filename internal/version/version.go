@@ -19,11 +19,10 @@ const (
 
 	// K3sNodeImage is the rancher/k3s node-container image both the
 	// server and agent run; k3s names its image track "<k8s>-k3s1". It is
-	// the default for poc.yaml's versions.node_image. Still pinned to
-	// v1.30.8 from the 2.3.0 line — BNK 2.3.1 moved its supported 1.30
-	// track to 1.30.10/1.30.14, so a bump to v1.30.14-k3s1 is pending a
-	// tested cluster run (held back from the 2.3.1 version bump on purpose).
-	K3sNodeImage = "rancher/k3s:v1.30.8-k3s1"
+	// the default for poc.yaml's versions.node_image. Pinned to v1.30.14,
+	// the top of the 1.30 track BNK 2.3.1 declares supported
+	// (1.30.10/1.30.14); bumped from the 2.3.0 line's v1.30.8.
+	K3sNodeImage = "rancher/k3s:v1.30.14-k3s1"
 
 	// K8sToolsImage bundles kubectl + helm + openssl + apk so the CWC
 	// cert-gen step (which shells gen_cert.sh inside this image) has
