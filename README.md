@@ -88,7 +88,7 @@ k3s node containers → remove the cluster's docker network.
 | Component | Version |
 |---|---|
 | BNK | 2.3.1 |
-| CNE release manifest | 2.3.1-3.2598.3-0.0.302 |
+| CNE release manifest | 2.3.1-3.2598.3-0.0.304 |
 | Kubernetes (k3s node image) | 1.30.14 (`rancher/k3s:v1.30.14-k3s1`) |
 | Calico | v3.28.2 |
 | cert-manager | v1.16.2 |

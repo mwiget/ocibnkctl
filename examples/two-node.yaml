@@ -14,7 +14,7 @@ metadata:
 versions:
     k8s: "1.30"
     kind_node_image: kindest/node:v1.30.8
-    cne_manifest: 2.3.1-3.2598.3-0.0.302
+    cne_manifest: 2.3.1-3.2598.3-0.0.304
 cluster:
     name: two-node
     provider: docker

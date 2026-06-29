@@ -439,9 +439,18 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 	// applied — empirically, it doesn't exist until then. Wait for
 	// both --for=create (CRD object exists) and condition=Established
 	// (apiserver has bound the schema) before applying.
+	//
+	// The --for=create wait is generous (8m): on the FIRST deploy of a
+	// given manifestVersion, FLO doesn't yet have a CNEManifest, so it
+	// pulls the release manifest from repo.f5.com itself before it can
+	// install any CRDs. That pull retries every few seconds and can take
+	// several minutes when cluster DNS is flaky resolving repo.f5.com
+	// (coredns "server misbehaving" / IPv6 unreachable) — observed ~5min
+	// on a fresh 2.3.1 cluster. A 3m wait would give up just before FLO
+	// succeeds, so we wait 8m for the CRD to appear.
 	fmt.Fprintln(out, "[2/4] Waiting for license CRD, then applying License CR ...")
 	if err := r.Kubectl(ctx, "wait", "--for=create",
-		"crd/licenses.k8s.f5net.com", "--timeout=3m"); err != nil {
+		"crd/licenses.k8s.f5net.com", "--timeout=8m"); err != nil {
 		return fmt.Errorf("license CRD never created (FLO did not reconcile?): %w", err)
 	}
 	if err := r.Wait(ctx, "", "Established",

@@ -58,7 +58,7 @@ const (
 	// CNEManifestVersion is the version coordinate inside the release
 	// manifest. CNEInstance.spec.manifestVersion references it directly;
 	// PullReleaseManifest uses it as helm pull --version arg.
-	CNEManifestVersion = "2.3.1-3.2598.3-0.0.302"
+	CNEManifestVersion = "2.3.1-3.2598.3-0.0.304"
 
 	// FARRegistryHost is the OCI registry hostname for all F5-published
 	// charts and images.
