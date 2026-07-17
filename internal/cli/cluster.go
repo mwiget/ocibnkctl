@@ -414,7 +414,13 @@ func registerWithBNKForge(ctx context.Context, out io.Writer, repo string, p *po
 	// works (bnk-forge has always registered fine) AND Docker's default
 	// inter-bridge isolation would BLOCK that container IP — so we leave the
 	// kubeconfig untouched there. 6443 is k3s's in-container apiserver port.
-	if runtime.GOOS != "linux" {
+	// Rewrite when the apiserver's host-loopback URL is unreachable from where
+	// bnk-forge's containers run: on macOS/Windows (Docker Desktop VM) always,
+	// and on Linux when ocibnkctl itself runs inside a container (BNK Forge
+	// artifact) — there the k3s node network is reachable but the host loopback
+	// is not. Native-Linux-on-host keeps the loopback path (and Docker's
+	// inter-bridge isolation would block the container IP anyway).
+	if runtime.GOOS != "linux" || cluster.InContainer() {
 		serverIP, ipErr := dc.ContainerIP(ctx, serverContainer)
 		if ipErr != nil {
 			return fmt.Errorf("look up apiserver IP for bnk-forge: %w", ipErr)

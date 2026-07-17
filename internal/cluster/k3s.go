@@ -678,7 +678,13 @@ func (k *K3s) DeleteCluster(ctx context.Context, name string) error {
 }
 
 // WriteKubeconfig extracts the server's kubeconfig and rewrites its API
-// endpoint to the host-mapped 127.0.0.1:<port>, writing it 0600.
+// endpoint to an address reachable from wherever ocibnkctl runs, writing 0600.
+//
+// On the host: the host-mapped 127.0.0.1:<port> (the published apiserver port).
+// Inside a container (BNK Forge artifact): that loopback is the container's
+// own, and the k3s nodes are on their own docker network — so we attach our
+// container to that network and rewrite the endpoint to the server container's
+// network IP:6443, which k3s lists in the apiserver cert SAN (TLS verifies).
 func (k *K3s) WriteKubeconfig(ctx context.Context, name, path string) error {
 	server := k.serverName(name)
 	c := k.run(ctx, "exec", server, "cat", "/etc/rancher/k3s/k3s.yaml")
@@ -691,12 +697,35 @@ func (k *K3s) WriteKubeconfig(ctx context.Context, name, path string) error {
 	if strings.TrimSpace(out.String()) == "" {
 		return fmt.Errorf("empty kubeconfig from %s", server)
 	}
-	port, err := k.apiHostPort(ctx, server)
+
+	endpoint, err := k.reachableAPIEndpoint(ctx, name, server)
 	if err != nil {
 		return err
 	}
-	kc := strings.ReplaceAll(out.String(), "https://127.0.0.1:6443", "https://127.0.0.1:"+port)
+	kc := strings.ReplaceAll(out.String(), "https://127.0.0.1:6443", endpoint)
 	return os.WriteFile(path, []byte(kc), 0o600)
+}
+
+// reachableAPIEndpoint returns the apiserver URL kubectl should use from here.
+// In-container it attaches this container to the k3s network and returns the
+// server container IP; on the host it returns the host-mapped 127.0.0.1 port.
+func (k *K3s) reachableAPIEndpoint(ctx context.Context, name, server string) (string, error) {
+	if InContainer() {
+		dc := &DockerCLI{Runtime: Runtime(k.rt())}
+		if err := dc.ConnectSelfToNetwork(ctx, k.network(name)); err != nil {
+			return "", fmt.Errorf("attach to k3s network for apiserver access: %w", err)
+		}
+		ip, err := dc.ContainerIP(ctx, server)
+		if err != nil {
+			return "", fmt.Errorf("resolve apiserver container IP: %w", err)
+		}
+		return fmt.Sprintf("https://%s:6443", ip), nil
+	}
+	port, err := k.apiHostPort(ctx, server)
+	if err != nil {
+		return "", err
+	}
+	return "https://127.0.0.1:" + port, nil
 }
 
 // apiHostPort returns the host port the server's 6443 is published on.
