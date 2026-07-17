@@ -43,7 +43,20 @@ Initializes a git repo unless --no-git.
 Auto-detects bnk-forge: if $OCIBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge
 exists (with a Makefile inside), the bnk_forge: block is pre-filled and
 enabled. Otherwise it's written disabled. Either way, deployment never
-blocks on bnk-forge presence.`,
+blocks on bnk-forge presence.
+
+Env overrides (for argv+env runners — BNK Forge container modules, CI —
+that cannot hand-edit poc.yaml). Unset means "keep the default"; an
+invalid value is an error, never a silent fallback:
+
+  OCIBNKCTL_CUSTOMER      metadata.customer      (--customer wins)
+  OCIBNKCTL_PROVIDER      cluster.provider       docker | podman
+  OCIBNKCTL_TMM_NODES     cluster.tmm_nodes      positive integer
+  OCIBNKCTL_EDGE_OCTET    cluster.edge_octet     1-254 — give parallel
+                                                 clusters distinct octets
+  OCIBNKCTL_HOST_PROFILE  bnk.host_profile       standard | small
+                                                 (overrides host auto-detect)
+  OCIBNKCTL_TEEMS_RELAY   cluster.teems_relay    true | false`,
 		Args: initArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -102,6 +115,12 @@ blocks on bnk-forge presence.`,
 				fmt.Fprintf(cmd.OutOrStdout(),
 					"host has %d cores < %d-core floor — set bnk.host_profile=small in poc.yaml (TMM metrics subsystem off)\n",
 					runtime.NumCPU(), version.MinBaseline.Cores)
+			}
+			// Env overrides last: an explicit OCIBNKCTL_* value must win over
+			// the host auto-detect above (e.g. host_profile=standard on a tight
+			// host). See initenv.go.
+			if err := applyEnvOverrides(p, cmd.OutOrStdout(), cmd.Flags().Changed("customer")); err != nil {
+				return err
 			}
 			if err := p.Save(abs); err != nil {
 				return err

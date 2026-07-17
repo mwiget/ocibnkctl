@@ -332,6 +332,33 @@ configured but not running, bring it up manually (`cd ~/git/bnk-forge
 && make deploy`) then `ocibnkctl bnk-forge launch` to register
 after the fact.
 
+### Driving `init` from env (argv+env runners)
+
+BNK Forge deploys `ocibnkctl` as a container-runner module: it can pass
+argv and env, but cannot hand-edit the `poc.yaml` that `init` scaffolds.
+These env vars seed `poc.yaml` at `init` time so the deploy form's inputs
+actually reach the PoC. They apply to any non-interactive caller (CI too),
+not just BNK Forge.
+
+| Env var | poc.yaml field | Values |
+|---|---|---|
+| `OCIBNKCTL_CUSTOMER` | `metadata.customer` | free text (`--customer` wins) |
+| `OCIBNKCTL_PROVIDER` | `cluster.provider` | `docker` \| `podman` |
+| `OCIBNKCTL_TMM_NODES` | `cluster.tmm_nodes` | positive integer (default 1) |
+| `OCIBNKCTL_EDGE_OCTET` | `cluster.edge_octet` | 1–254 — **distinct per cluster**, or parallel clusters collide on the same docker subnet |
+| `OCIBNKCTL_HOST_PROFILE` | `bnk.host_profile` | `standard` \| `small` (overrides the core-count auto-detect) |
+| `OCIBNKCTL_TEEMS_RELAY` | `cluster.teems_relay` | `true` \| `false` |
+
+Unset (or blank) means "keep the default". An **invalid** value is a hard
+error, never a silent fallback — a typo in a runner's env must not cost you
+a 20-minute pipeline that deploys the wrong shape. `poc.yaml` remains the
+source of truth: these only seed it, and you can edit it afterwards as always.
+
+```bash
+OCIBNKCTL_PROVIDER=podman OCIBNKCTL_TMM_NODES=2 OCIBNKCTL_EDGE_OCTET=77 \
+  ocibnkctl init demo --no-git
+```
+
 ## Download
 
 Prebuilt binaries for each tagged release are on the
