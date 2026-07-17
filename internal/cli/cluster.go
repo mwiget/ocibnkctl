@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -230,6 +231,14 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		fmt.Fprintf(out, "      WARN: calico-kube-controllers not Available in 5min: %v\n", err)
 	}
 
+	// Repoint CoreDNS at the host's real upstream resolvers. The k3s default
+	// `forward . /etc/resolv.conf` chains through docker's embedded DNS
+	// (127.0.0.11) on k3s-in-docker, which SERVFAILs external names under load
+	// and makes F5 CNE license device registration fail on its one-shot attempt.
+	// Best-effort — warns and continues if anything goes wrong.
+	fmt.Fprintln(out, "      Configuring CoreDNS upstream resolvers ...")
+	configureCoreDNS(ctx, out, r, rt, p.Cluster.Name)
+
 	// 5. Label the worker node for TMM. We dropped the
 	// bnk-internal / bnk-external docker bridges that earlier
 	// versions of ocibnkctl attached to the node containers — no
@@ -339,6 +348,59 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 
 	fmt.Fprintf(out, "\nDONE.  Next: `%s deploy prereqs && deploy flo && deploy cne` (or run e2e).\n", invocationName())
 	return nil
+}
+
+// configureCoreDNS repoints the cluster's CoreDNS forward at the host's real
+// upstream resolvers (discovered from the k3s node's resolv.conf) instead of the
+// default `forward . /etc/resolv.conf`. On k3s-in-docker that default chains
+// through docker's embedded resolver (127.0.0.11), which SERVFAILs external
+// names under load and makes F5 CNE license device registration fail on its
+// one-shot attempt. Best-effort: every failure warns and returns, leaving
+// CoreDNS untouched so cluster-up still completes.
+func configureCoreDNS(ctx context.Context, out io.Writer, r *deploy.Runner, rt cluster.Runtime, clusterName string) {
+	ups, err := cluster.CoreDNSUpstreams(ctx, rt, clusterName)
+	if err != nil {
+		fmt.Fprintf(out, "      WARN: could not read node resolvers for CoreDNS: %v\n", err)
+		return
+	}
+	if len(ups) == 0 {
+		fmt.Fprintln(out, "      CoreDNS: no host upstreams discovered — leaving default forward")
+		return
+	}
+
+	corefile, err := r.KubectlCapture(ctx, "-n", "kube-system", "get", "configmap", "coredns",
+		"-o", "jsonpath={.data.Corefile}")
+	if err != nil {
+		fmt.Fprintf(out, "      WARN: could not read CoreDNS config: %v\n", err)
+		return
+	}
+	const defaultForward = "forward . /etc/resolv.conf"
+	if !strings.Contains(corefile, defaultForward) {
+		// Already customized (or an unrecognized k3s layout) — don't clobber it.
+		fmt.Fprintln(out, "      CoreDNS: non-default forward already set — leaving as-is")
+		return
+	}
+	patched := strings.Replace(corefile, defaultForward, "forward . "+strings.Join(ups, " "), 1)
+	body, err := json.Marshal(map[string]any{"data": map[string]string{"Corefile": patched}})
+	if err != nil {
+		fmt.Fprintf(out, "      WARN: CoreDNS patch encode failed: %v\n", err)
+		return
+	}
+	if err := r.Kubectl(ctx, "-n", "kube-system", "patch", "configmap", "coredns",
+		"--type", "merge", "-p", string(body)); err != nil {
+		fmt.Fprintf(out, "      WARN: CoreDNS patch failed: %v\n", err)
+		return
+	}
+	if err := r.Kubectl(ctx, "-n", "kube-system", "rollout", "restart", "deployment", "coredns"); err != nil {
+		fmt.Fprintf(out, "      WARN: CoreDNS rollout restart failed: %v\n", err)
+		return
+	}
+	if err := r.Kubectl(ctx, "-n", "kube-system", "rollout", "status", "deployment", "coredns",
+		"--timeout=90s"); err != nil {
+		fmt.Fprintf(out, "      WARN: CoreDNS rollout did not complete: %v\n", err)
+		return
+	}
+	fmt.Fprintf(out, "      CoreDNS → host upstreams %s\n", strings.Join(ups, ", "))
 }
 
 // registerWithBNKForge runs the same flow dpubnkctl's bnk-forge launcher
