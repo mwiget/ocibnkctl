@@ -66,7 +66,7 @@ Required gates:
 }
 
 func runDeployPrereqs(ctx context.Context, out io.Writer, f *deployPrereqsFlags) error {
-	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
+	repo, p, kubeconfig, err := loadDeployContext(ctx, f.pocDir)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ Required gates:
 }
 
 func runDeployFLO(ctx context.Context, out io.Writer, f *deployFLOFlags) error {
-	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
+	repo, p, kubeconfig, err := loadDeployContext(ctx, f.pocDir)
 	if err != nil {
 		return err
 	}
@@ -339,7 +339,7 @@ Required gates:
 }
 
 func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
-	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
+	repo, p, kubeconfig, err := loadDeployContext(ctx, f.pocDir)
 	if err != nil {
 		return err
 	}
@@ -730,7 +730,7 @@ Required gates:
 }
 
 func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) error {
-	repo, p, kubeconfig, err := loadDeployContext(f.pocDir)
+	repo, p, kubeconfig, err := loadDeployContext(ctx, f.pocDir)
 	if err != nil {
 		return err
 	}
@@ -909,7 +909,7 @@ func applyLicenseWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest 
 
 // loadDeployContext resolves the PoC, loads it, and confirms the
 // kubeconfig is present. Used by all three deploy subcommands.
-func loadDeployContext(pocDir string) (string, *poc.PoC, string, error) {
+func loadDeployContext(ctx context.Context, pocDir string) (string, *poc.PoC, string, error) {
 	repo, err := resolvePoCDir(pocDir)
 	if err != nil {
 		return "", nil, "", err
@@ -921,6 +921,12 @@ func loadDeployContext(pocDir string) (string, *poc.PoC, string, error) {
 	kc, err := requireKubeconfig(repo, "run `ocibnkctl cluster up` first")
 	if err != nil {
 		return "", nil, "", err
+	}
+	// In-container preflight: attach to the cluster's docker network so the
+	// kubeconfig's server-container-IP endpoint is reachable. No-op on the host,
+	// idempotent, and required on an e2e resume where cluster-up is skipped.
+	if err := cluster.EnsureReachable(ctx, p.Cluster.Provider, p.Cluster.Name); err != nil {
+		return "", nil, "", fmt.Errorf("make cluster network reachable: %w", err)
 	}
 	return repo, p, kc, nil
 }

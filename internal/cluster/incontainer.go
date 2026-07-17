@@ -32,3 +32,18 @@ func (d *DockerCLI) ConnectSelfToNetwork(ctx context.Context, net string) error 
 	}
 	return nil
 }
+
+// EnsureReachable makes the k3s apiserver reachable from wherever ocibnkctl
+// runs. On the host it is a no-op (the kubeconfig's host-loopback works). In a
+// container it attaches this container to the cluster's docker network, so the
+// kubeconfig's server-container-IP endpoint routes. Idempotent and safe to call
+// as a preflight before every cluster-touching subcommand — crucial on an e2e
+// RESUME, where cluster-up (which also attaches, via WriteKubeconfig) is skipped
+// but the deploy phases still need connectivity.
+func EnsureReachable(ctx context.Context, provider, clusterName string) error {
+	if !runtimeenv.InContainer() {
+		return nil
+	}
+	dc := &DockerCLI{Runtime: Runtime(provider)}
+	return dc.ConnectSelfToNetwork(ctx, "k3s-"+clusterName)
+}
