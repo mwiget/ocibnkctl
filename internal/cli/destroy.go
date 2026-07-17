@@ -62,6 +62,16 @@ func runDestroy(ctx context.Context, out io.Writer, f *destroyFlags) error {
 		return err
 	}
 
+	// Once we've committed to destroying (gates passed), always drop the resume
+	// marker + kubeconfig — even if cluster delete errors partway below. A
+	// partial destroy that leaves e2e-state.json behind makes the next `apply`
+	// resume onto a cluster that's gone (cluster-up SKIPPED → deploy phases fail
+	// with "kubeconfig not found"). Deferred so no early return can skip it.
+	defer func() {
+		_ = os.Remove(filepath.Join(repo, "artifacts", "kubeconfig"))
+		_ = os.Remove(filepath.Join(repo, "artifacts", "e2e-state.json"))
+	}()
+
 	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, p.Cluster.Name)
 
 	rt, err := cluster.Detect(ctx, cluster.Runtime(p.Cluster.Provider))
@@ -134,9 +144,8 @@ func runDestroy(ctx context.Context, out io.Writer, f *destroyFlags) error {
 	fmt.Fprintln(out, "      reverting ~/.kube/config ...")
 	removeGlobalKubeconfig(out, repo)
 
-	// Drop kubeconfig + e2e state so next run can't accidentally reuse it.
-	_ = os.Remove(filepath.Join(repo, "artifacts", "kubeconfig"))
-	_ = os.Remove(filepath.Join(repo, "artifacts", "e2e-state.json"))
+	// kubeconfig + e2e-state.json removal is handled by the deferred cleanup
+	// above (runs even if cluster delete errored partway).
 
 	p.Status.Cluster = "destroyed"
 	p.Status.Deploy = "destroyed"
