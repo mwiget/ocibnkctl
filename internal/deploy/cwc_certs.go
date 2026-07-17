@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mwiget/ocibnkctl/internal/runtimeenv"
 	"github.com/mwiget/ocibnkctl/internal/version"
 )
 
@@ -46,22 +47,37 @@ func PullF5CertGen(ctx context.Context, auth OCIAuth, chartVersion, destDir stri
 	// land arbitrary commands in the sh -c invocation. Inside the
 	// script, $USERNAME / $CHART_VERSION expand once at sh parse time —
 	// they're already inside the shell, no further quoting needed.
-	const script = `set -e
+	// The pull+extract runs the same shell either way; only WHERE differs.
+	// On the host we cannot assume helm/tar are installed, so we run them in
+	// the k8s-tools image with the workspace bind-mounted. As a BNK Forge
+	// artifact that bind mount is broken (absDest is local to THIS container;
+	// the host daemon that would honour `-v` cannot see it), and helm/tar are
+	// already in our own image — so we run the script in-process against the
+	// real workspace. WORKDIR is /work in the container path, absDest locally.
+	script := func(workdir string) string {
+		return `set -e
 cat | helm registry login ` + version.FARRegistryHost + ` --username "$USERNAME" --password-stdin >/dev/null
-cd /work
+cd "` + workdir + `"
 rm -f "f5-cert-gen-${CHART_VERSION}.tgz"
 rm -rf cert-gen
 helm pull oci://` + version.FARRegistryHost + `/utils/f5-cert-gen --version "$CHART_VERSION" -d . >/dev/null
 tar -xzf "f5-cert-gen-${CHART_VERSION}.tgz"
 `
-	cmd := exec.CommandContext(ctx, "docker",
-		"run", "--rm", "-i",
-		"-v", absDest+":/work",
-		"--network=host",
-		"-e", "USERNAME="+auth.Username,
-		"-e", "CHART_VERSION="+chartVersion,
-		version.K8sToolsImage,
-		"sh", "-c", script)
+	}
+	var cmd *exec.Cmd
+	if runtimeenv.InContainer() {
+		cmd = exec.CommandContext(ctx, "sh", "-c", script(absDest))
+		cmd.Env = append(os.Environ(), "USERNAME="+auth.Username, "CHART_VERSION="+chartVersion)
+	} else {
+		cmd = exec.CommandContext(ctx, "docker",
+			"run", "--rm", "-i",
+			"-v", absDest+":/work",
+			"--network=host",
+			"-e", "USERNAME="+auth.Username,
+			"-e", "CHART_VERSION="+chartVersion,
+			version.K8sToolsImage,
+			"sh", "-c", script("/work"))
+	}
 	cmd.Stdin = strings.NewReader(auth.Password + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -96,23 +112,32 @@ func GenerateCWCCerts(ctx context.Context, workDir, utilsNamespace string, out i
 		return fmt.Errorf("cert-gen/gen_cert.sh missing in %s — call PullF5CertGen first", abs)
 	}
 	san := fmt.Sprintf("f5-spk-cwc.%s.svc.cluster.local", utilsNamespace)
-	script := strings.Join([]string{
-		`set -e`,
-		// gen_cert.sh shells out to `make` + python3; alpine/k8s ships
-		// neither. Add them. Pin nothing — we want the apk repo's pick
-		// to track the alpine release we're already on.
-		`apk add --no-cache make openssl python3 >/dev/null`,
-		`cd /work`,
-		// Idempotent: delete the previous run's artifacts so re-run works.
-		`rm -rf api-server-secrets cwc-license-certs.yaml cwc-license-client-certs.yaml`,
-		`sh cert-gen/gen_cert.sh -s=api-server -a=` + san + ` -n=1`,
-	}, " && ")
-	cmd := exec.CommandContext(ctx, "docker",
-		"run", "--rm",
-		"-v", abs+":/work",
-		"--network=host",
-		version.K8sToolsImage,
-		"sh", "-c", script)
+	// gen_cert.sh needs make + openssl + python3. In the k8s-tools image they
+	// are apk-added at runtime; in our own runner image they are baked in, so
+	// the in-container path skips the apk-add (and its network dependency).
+	genScript := func(workdir string, installTools bool) string {
+		steps := []string{`set -e`}
+		if installTools {
+			steps = append(steps, `apk add --no-cache make openssl python3 >/dev/null`)
+		}
+		steps = append(steps,
+			`cd "`+workdir+`"`,
+			`rm -rf api-server-secrets cwc-license-certs.yaml cwc-license-client-certs.yaml`,
+			`sh cert-gen/gen_cert.sh -s=api-server -a=`+san+` -n=1`,
+		)
+		return strings.Join(steps, " && ")
+	}
+	var cmd *exec.Cmd
+	if runtimeenv.InContainer() {
+		cmd = exec.CommandContext(ctx, "sh", "-c", genScript(abs, false))
+	} else {
+		cmd = exec.CommandContext(ctx, "docker",
+			"run", "--rm",
+			"-v", abs+":/work",
+			"--network=host",
+			version.K8sToolsImage,
+			"sh", "-c", genScript("/work", true))
+	}
 	if out != nil {
 		cmd.Stdout = out
 		cmd.Stderr = out
