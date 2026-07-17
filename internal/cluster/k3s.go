@@ -114,12 +114,13 @@ func (k *K3s) rt() string {
 // resolvers out of systemd-resolved's own resolv.conf and pin them on the
 // containers directly, bypassing the broken proxy. When the host already
 // exposes real (non-loopback) resolvers we return nil and don't override.
-// publicFallbackResolvers are pinned only as a last resort — when neither
-// /etc/resolv.conf nor systemd-resolved's uplink file exposes a usable
-// (non-loopback) resolver — so image pulls still work on an otherwise
-// stub-only host. On an air-gapped or split-horizon network this is the
-// wrong answer, so dnsArgs warns when it fires.
-var publicFallbackResolvers = []string{"1.1.1.1", "8.8.8.8"}
+// When we can't discover real resolvers either way we return nil and pin
+// NOTHING. We deliberately do not invent public resolvers (1.1.1.1/8.8.8.8): on
+// split-horizon or locked-down networks (Tailscale, cloud hosts that only permit
+// their own resolvers) they're unreachable, and pinning them both breaks node
+// image pulls and overrides any DNS the operator configured on the container
+// runtime. That fallback belongs to the daemon's DNS config (e.g.
+// /etc/docker/daemon.json "dns"), not here.
 
 // tailscaleCGNAT is Tailscale's 100.64.0.0/10 CGNAT range. Tailscale's MagicDNS
 // resolver (100.100.100.100) lands here; we never pin it onto the nodes — see
@@ -145,19 +146,21 @@ func usableNodeResolver(ip net.IP) bool {
 	return ip != nil && !ip.IsLoopback() && ip.To4() != nil && !tailscaleCGNAT.Contains(ip)
 }
 
-func hostResolvers() (servers []string, fellBackToPublic bool) {
-	// Host resolv.conf already usable → trust the runtime default.
+func hostResolvers() []string {
+	// Host resolv.conf already usable → leave node DNS to the runtime default.
 	if ns := nonLoopbackNameservers("/etc/resolv.conf"); len(ns) > 0 {
-		return nil, false
+		return nil
 	}
 	// /etc/resolv.conf is a loopback-only stub. Pull the real upstreams
 	// systemd-resolved forwards to (the "uplink" resolv.conf it maintains).
 	// NOTE: only systemd-resolved's path is consulted; other stub resolvers
-	// (dnsmasq, NetworkManager) won't be discovered and will hit the fallback.
+	// (dnsmasq, NetworkManager) won't be discovered.
 	if ns := nonLoopbackNameservers("/run/systemd/resolve/resolv.conf"); len(ns) > 0 {
-		return ns, false
+		return ns
 	}
-	return publicFallbackResolvers, true
+	// Couldn't discover real resolvers — pin nothing and defer to the runtime's
+	// daemon DNS config (see the doc comment above).
+	return nil
 }
 
 // nonLoopbackNameservers parses a resolv.conf and returns the nameserver IPs
@@ -182,18 +185,11 @@ func nonLoopbackNameservers(path string) []string {
 	return out
 }
 
-// dnsArgs renders hostResolvers() as `--dns <ip>` runtime flags, warning to
-// out when it had to fall back to public resolvers (no host-configured
-// upstream found) — surprising on an air-gapped or split-horizon host.
-func dnsArgs(out io.Writer) []string {
-	servers, fellBack := hostResolvers()
-	if fellBack && out != nil {
-		fmt.Fprintf(out, "WARN: no non-loopback resolver found in /etc/resolv.conf or systemd-resolved; "+
-			"pinning public DNS %v on the k3s nodes. Configure a real upstream if this host is "+
-			"air-gapped or uses split-horizon DNS.\n", servers)
-	}
+// dnsArgs renders hostResolvers() as `--dns <ip>` runtime flags. Empty when node
+// DNS is left to the container runtime's daemon config (see hostResolvers).
+func dnsArgs() []string {
 	var args []string
-	for _, ns := range servers {
+	for _, ns := range hostResolvers() {
 		args = append(args, "--dns", ns)
 	}
 	return args
@@ -335,7 +331,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 	// Pin real upstream resolvers on the nodes when the host only offers a
 	// loopback stub resolver, so containerd image pulls and CoreDNS don't
 	// depend on the runtime's flaky embedded-DNS proxy. See hostResolvers.
-	dns := dnsArgs(k.Out)
+	dns := dnsArgs()
 
 	server := k.serverName(name)
 	serverArgs := []string{
@@ -434,7 +430,7 @@ func (k *K3s) AddWorker(ctx context.Context, name string, index int, nodeImage s
 		fmt.Fprintf(k.Out, "agent node %q already present — leaving in place\n", agent)
 		return nil
 	}
-	if err := k.startAgent(ctx, name, index, nodeImage, dnsArgs(k.Out)); err != nil {
+	if err := k.startAgent(ctx, name, index, nodeImage, dnsArgs()); err != nil {
 		return err
 	}
 	return k.waitNodeReady(ctx, k.serverName(name), agent, 3*time.Minute)
