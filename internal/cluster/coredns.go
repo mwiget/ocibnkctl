@@ -33,6 +33,25 @@ func CoreDNSUpstreams(ctx context.Context, rt Runtime, clusterName string) ([]st
 	return parseResolvUpstreams(raw), nil
 }
 
+// DisableCoreDNSAddonReconcile writes the k3s ".skip" sentinel next to the
+// bundled coredns manifest on the server node, so the k3s deploy controller
+// stops managing — and reverting — the coredns ConfigMap. Without it, a k3s
+// restart/upgrade re-applies the packaged Corefile and drops the host-upstream
+// forward patch (the failure class this whole path fixes).
+//
+// The skip does NOT remove the already-running coredns objects — k3s leaves
+// resources from a skipped manifest in place — so we don't reproduce the
+// Deployment/Service/RBAC (no version-coupling): the live pods keep running as
+// k3s deployed them, and only our patched ConfigMap is now shielded from
+// reconcile. The tradeoff, matching the skip mechanism, is that a later k3s
+// upgrade won't bump coredns while the skip is present.
+func DisableCoreDNSAddonReconcile(ctx context.Context, rt Runtime, clusterName string) error {
+	server := "k3s-" + clusterName + "-server-0"
+	const skip = "/var/lib/rancher/k3s/server/manifests/coredns.yaml.skip"
+	_, err := runtimeOut(ctx, rt, "exec", server, "touch", skip)
+	return err
+}
+
 // parseResolvUpstreams extracts usable upstream resolver IPs from a resolv.conf.
 // It prefers real `nameserver` lines; when those are only loopback (the docker
 // embedded-DNS case) it falls back to the IPs in docker's

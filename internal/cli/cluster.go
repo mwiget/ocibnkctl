@@ -386,6 +386,16 @@ func configureCoreDNS(ctx context.Context, out io.Writer, r *deploy.Runner, rt c
 		fmt.Fprintf(out, "      WARN: CoreDNS patch encode failed: %v\n", err)
 		return
 	}
+	// Make the patch durable: stop the k3s addon controller from re-applying
+	// the packaged Corefile (which would drop the forward on the next k3s
+	// restart/upgrade) by skipping the bundled coredns manifest. Best-effort —
+	// if it fails the patch below still applies, it just won't survive a
+	// re-reconcile. Done before the patch so no reconcile window can revert it.
+	if err := cluster.DisableCoreDNSAddonReconcile(ctx, rt, clusterName); err != nil {
+		fmt.Fprintf(out, "      WARN: could not disable coredns addon reconcile (patch won't survive a k3s restart): %v\n", err)
+	} else {
+		fmt.Fprintln(out, "      k3s coredns addon reconcile disabled (.skip) — patch is durable")
+	}
 	if err := r.Kubectl(ctx, "-n", "kube-system", "patch", "configmap", "coredns",
 		"--type", "merge", "-p", string(body)); err != nil {
 		fmt.Fprintf(out, "      WARN: CoreDNS patch failed: %v\n", err)
