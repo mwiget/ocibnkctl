@@ -1,4 +1,4 @@
-.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64
+.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64 runner-image
 
 all: build-all
 
@@ -83,6 +83,29 @@ release-darwin-arm64:
 	    > ocibnkctl-$(VERSION)-darwin-arm64.sha256
 
 release: release-linux-amd64 release-linux-arm64 release-darwin-arm64
+
+# --- runner image (BNK Forge container-runner module) -------------------
+#
+# Builds (and, with PUSH=1, pushes) ghcr.io/mwiget/ocibnkctl-tools-runner from
+# runner.Dockerfile. The image wraps a PUBLISHED release binary (it downloads +
+# checksum-verifies it), so the tag must already exist on GitHub. RUNNER_VERSION
+# defaults to the latest tag without the leading "v"; single-platform to match
+# the historical image. See docs/RELEASE.md for the full publish chain.
+#
+#   make runner-image RUNNER_VERSION=2.3.1-10 PUSH=1
+#   docker buildx imagetools inspect $(RUNNER_IMAGE):2.3.1-10 --format '{{.Manifest.Digest}}'
+RUNNER_IMAGE    ?= ghcr.io/mwiget/ocibnkctl-tools-runner
+RUNNER_VERSION  ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
+RUNNER_PLATFORM ?= linux/amd64
+
+runner-image:
+	docker buildx build \
+	    --platform $(RUNNER_PLATFORM) \
+	    --build-arg OCIBNKCTL_VERSION=$(RUNNER_VERSION) \
+	    -t $(RUNNER_IMAGE):$(RUNNER_VERSION) \
+	    -f runner.Dockerfile \
+	    $(if $(PUSH),--push,--load) .
+	@echo "built $(RUNNER_IMAGE):$(RUNNER_VERSION) ($(RUNNER_PLATFORM))$(if $(PUSH), and pushed,)"
 
 install: build
 	install -m 0755 bin/ocibnkctl $(HOME)/.local/bin/ocibnkctl
