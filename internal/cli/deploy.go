@@ -934,9 +934,15 @@ func waitGatewayClassAccepted(ctx context.Context, r *deploy.Runner, out io.Writ
 	for {
 		status, _ := r.KubectlCapture(ctx, "get", "gatewayclass/bnk-gatewayclass",
 			"-o", `jsonpath={.status.conditions[?(@.type=="Accepted")].status}`)
-		if strings.TrimSpace(status) == "True" {
+		switch strings.TrimSpace(status) {
+		case "True":
 			fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True (settled after the initial wait window)")
 			return nil
+		case "False":
+			// The controller processed the class and rejected it — that's a
+			// real misconfiguration, not a slow controller. Fail fast instead
+			// of burning the rest of the grace window.
+			return fmt.Errorf("bnk-gatewayclass Accepted=False — f5-cne-controller rejected it (check `kubectl describe gatewayclass bnk-gatewayclass`)")
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("bnk-gatewayclass never reached Accepted=True after %s (f5-cne-controller not picking it up?)", wait+grace)

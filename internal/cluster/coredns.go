@@ -45,6 +45,11 @@ func CoreDNSUpstreams(ctx context.Context, rt Runtime, clusterName string) ([]st
 // k3s deployed them, and only our patched ConfigMap is now shielded from
 // reconcile. The tradeoff, matching the skip mechanism, is that a later k3s
 // upgrade won't bump coredns while the skip is present.
+//
+// Single-server scope: only server-0 gets the sentinel, matching the rest of
+// this package's single-server assumption (CoreDNSUpstreams also reads only
+// server-0). On an HA/multi-server k3s the other servers would still reconcile
+// their own manifests dir — durability would need the sentinel on each.
 func DisableCoreDNSAddonReconcile(ctx context.Context, rt Runtime, clusterName string) error {
 	server := "k3s-" + clusterName + "-server-0"
 	const skip = "/var/lib/rancher/k3s/server/manifests/coredns.yaml.skip"
