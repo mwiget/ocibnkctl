@@ -286,11 +286,22 @@ func topoSortByDeps(ss []scenarios.Scenario) ([]scenarios.Scenario, error) {
 
 func newScenarioCleanCmd() *cobra.Command {
 	var pocDir string
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "clean [name]",
-		Short: "Delete the cluster objects a scenario applied",
-		Args:  cobra.ExactArgs(1),
+		Short: "Delete the cluster objects a scenario applied (or --all green-rated)",
+		Long: `Delete the cluster objects a scenario applied. With --all, cleans
+every green-rated scenario in REVERSE dependency order (dependents before
+their dependencies, mirroring destroy), best-effort — one scenario's cleanup
+failure doesn't abort the rest.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !all && len(args) != 1 {
+				return fmt.Errorf("provide a scenario name OR --all (see `ocibnkctl scenario list`)")
+			}
+			if all && len(args) > 0 {
+				return fmt.Errorf("--all and a positional name are mutually exclusive")
+			}
 			repo, err := resolvePoCDir(pocDir)
 			if err != nil {
 				return err
@@ -302,10 +313,6 @@ func newScenarioCleanCmd() *cobra.Command {
 			kubeconfig, err := requireKubeconfig(repo, "run `ocibnkctl cluster up` first")
 			if err != nil {
 				return err
-			}
-			s := scenarios.Find(args[0])
-			if s == nil {
-				return fmt.Errorf("unknown scenario %q (see `ocibnkctl scenario list`)", args[0])
 			}
 			// In-container preflight — see scenario run (#22).
 			if err := cluster.EnsureReachable(cmd.Context(), p.Cluster.Provider, p.Cluster.Name); err != nil {
@@ -322,10 +329,53 @@ func newScenarioCleanCmd() *cobra.Command {
 				},
 				Out: cmd.OutOrStdout(),
 			}
-			return scenarios.Cleanup(sctx, s)
+
+			var todo []scenarios.Scenario
+			if all {
+				var greens []scenarios.Scenario
+				for _, s := range scenarios.All() {
+					if s.Rating() == scenarios.Green {
+						greens = append(greens, s)
+					}
+				}
+				if len(greens) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "no green-rated scenarios registered")
+					return nil
+				}
+				ordered, err := topoSortByDeps(greens)
+				if err != nil {
+					return err
+				}
+				// Reverse the dependency order so dependents are removed before
+				// the resources they lean on (BGP peering last).
+				for i := len(ordered) - 1; i >= 0; i-- {
+					todo = append(todo, ordered[i])
+				}
+			} else {
+				s := scenarios.Find(args[0])
+				if s == nil {
+					return fmt.Errorf("unknown scenario %q (see `ocibnkctl scenario list`)", args[0])
+				}
+				todo = append(todo, s)
+			}
+
+			failed := 0
+			for _, s := range todo {
+				if err := scenarios.Cleanup(sctx, s); err != nil {
+					// Best-effort: report and keep going so one failure can't
+					// strand the rest of a bulk clean.
+					fmt.Fprintf(cmd.OutOrStdout(), "warning: clean %s: %v\n", s.Name(), err)
+					failed++
+				}
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d scenario(s) failed to clean", failed)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&pocDir, "poc", "", "PoC repo path (default: current directory)")
+	cmd.Flags().BoolVar(&all, "all", false, "Clean every green-rated scenario in reverse dependency order")
 	return cmd
 }
 
