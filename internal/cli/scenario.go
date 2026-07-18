@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
@@ -134,6 +135,13 @@ func runScenarios(ctx context.Context, out io.Writer, args []string, f *scenario
 	kubeconfig, err := requireKubeconfig(repo, "run `ocibnkctl cluster up` first")
 	if err != nil {
 		return err
+	}
+	// In-container preflight: a fresh container running against a resumed
+	// workspace (e.g. a bnk-forge pipeline action) has not been attached to
+	// the cluster's docker network by any deploy phase — attach or kubectl
+	// hangs against the server-container IP (#22). No-op on the host.
+	if err := cluster.EnsureReachable(ctx, p.Cluster.Provider, p.Cluster.Name); err != nil {
+		return fmt.Errorf("make cluster network reachable: %w", err)
 	}
 
 	sctx := &scenarios.Context{
@@ -298,6 +306,10 @@ func newScenarioCleanCmd() *cobra.Command {
 			s := scenarios.Find(args[0])
 			if s == nil {
 				return fmt.Errorf("unknown scenario %q (see `ocibnkctl scenario list`)", args[0])
+			}
+			// In-container preflight — see scenario run (#22).
+			if err := cluster.EnsureReachable(cmd.Context(), p.Cluster.Provider, p.Cluster.Name); err != nil {
+				return fmt.Errorf("make cluster network reachable: %w", err)
 			}
 			sctx := &scenarios.Context{
 				Ctx:    cmd.Context(),

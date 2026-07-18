@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
@@ -356,14 +357,23 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 	// failed; the kubeconfig might be missing or stale.
 	if !f.dryRun && deployFailed == 0 && report.Environment != nil {
 		if kubeconfig, err := requireKubeconfig(repo, ""); err == nil {
-			r := &deploy.Runner{
-				KubeconfigPath: kubeconfig,
-				HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-				Out:            io.Discard,
+			// In-container preflight: on a fully-resumed run every deploy
+			// phase is SKIPPED, so nothing has attached this container to
+			// the cluster's docker network yet — without it this probe
+			// hangs for minutes against an unroutable server-container IP
+			// (#22). No-op on the host, idempotent in-container.
+			if err := cluster.EnsureReachable(ctx, p.Cluster.Provider, p.Cluster.Name); err != nil {
+				fmt.Fprintf(out, "WARN: cluster network preflight: %v — skipping cluster info\n", err)
+			} else {
+				r := &deploy.Runner{
+					KubeconfigPath: kubeconfig,
+					HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
+					Out:            io.Discard,
+				}
+				collectClusterInfo(ctx, func(args ...string) (string, error) {
+					return r.KubectlCapture(ctx, args...)
+				}, report.Environment)
 			}
-			collectClusterInfo(ctx, func(args ...string) (string, error) {
-				return r.KubectlCapture(ctx, args...)
-			}, report.Environment)
 		}
 	}
 
@@ -416,6 +426,11 @@ func runScenariosForE2E(ctx context.Context, out io.Writer, repo, reportDir stri
 	kubeconfig, err := requireKubeconfig(repo, "deploy did not produce a kubeconfig")
 	if err != nil {
 		return err
+	}
+	// In-container preflight (see the cluster-info probe above): scenarios
+	// genuinely need apiserver connectivity, so a failed attach is fatal here.
+	if err := cluster.EnsureReachable(ctx, p.Cluster.Provider, p.Cluster.Name); err != nil {
+		return fmt.Errorf("make cluster network reachable: %w", err)
 	}
 
 	// The reports dir name is the timestamp portion of reportDir.
