@@ -376,8 +376,12 @@ func configureCoreDNS(ctx context.Context, out io.Writer, r *deploy.Runner, rt c
 	}
 	const defaultForward = "forward . /etc/resolv.conf"
 	if !strings.Contains(corefile, defaultForward) {
-		// Already customized (or an unrecognized k3s layout) — don't clobber it.
+		// Already customized (by us on a prior run, or by the operator) — don't
+		// clobber the forward, but still ensure the .skip is in place: a cluster
+		// patched by a pre-durability build has the custom forward yet no skip,
+		// so this resume run is its only chance to make the patch durable.
 		fmt.Fprintln(out, "      CoreDNS: non-default forward already set — leaving as-is")
+		disableCoreDNSReconcile(ctx, out, rt, clusterName)
 		return
 	}
 	patched := strings.Replace(corefile, defaultForward, "forward . "+strings.Join(ups, " "), 1)
@@ -386,6 +390,9 @@ func configureCoreDNS(ctx context.Context, out io.Writer, r *deploy.Runner, rt c
 		fmt.Fprintf(out, "      WARN: CoreDNS patch encode failed: %v\n", err)
 		return
 	}
+	// Make the patch durable BEFORE patching, so no reconcile window can revert
+	// it: stop the k3s addon controller from re-applying the packaged Corefile.
+	disableCoreDNSReconcile(ctx, out, rt, clusterName)
 	if err := r.Kubectl(ctx, "-n", "kube-system", "patch", "configmap", "coredns",
 		"--type", "merge", "-p", string(body)); err != nil {
 		fmt.Fprintf(out, "      WARN: CoreDNS patch failed: %v\n", err)
@@ -401,6 +408,17 @@ func configureCoreDNS(ctx context.Context, out io.Writer, r *deploy.Runner, rt c
 		return
 	}
 	fmt.Fprintf(out, "      CoreDNS → host upstreams %s\n", strings.Join(ups, ", "))
+}
+
+// disableCoreDNSReconcile writes the k3s .skip sentinel (best-effort) so the
+// addon controller stops reverting the patched coredns ConfigMap. Idempotent,
+// so it's safe to call on both the fresh-patch and already-patched paths.
+func disableCoreDNSReconcile(ctx context.Context, out io.Writer, rt cluster.Runtime, clusterName string) {
+	if err := cluster.DisableCoreDNSAddonReconcile(ctx, rt, clusterName); err != nil {
+		fmt.Fprintf(out, "      WARN: could not disable coredns addon reconcile (patch won't survive a k3s restart): %v\n", err)
+		return
+	}
+	fmt.Fprintln(out, "      k3s coredns addon reconcile disabled (.skip) — patch is durable")
 }
 
 // registerWithBNKForge runs the same flow dpubnkctl's bnk-forge launcher
