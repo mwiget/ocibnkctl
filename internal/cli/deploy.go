@@ -449,37 +449,49 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 	// on a fresh 2.3.1 cluster. A 3m wait would give up just before FLO
 	// succeeds, so we wait 8m for the CRD to appear.
 	fmt.Fprintln(out, "[2/4] Waiting for license CRD, then applying License CR ...")
-	if err := r.Kubectl(ctx, "wait", "--for=create",
-		"crd/licenses.k8s.f5net.com", "--timeout=8m"); err != nil {
-		return fmt.Errorf("license CRD never created (FLO did not reconcile?): %w", err)
-	}
-	if err := r.Wait(ctx, "", "Established",
-		"crd/licenses.k8s.f5net.com", 3*time.Minute); err != nil {
-		return fmt.Errorf("license CRD did not become Established: %w", err)
-	}
-	cr, err := deploy.RenderLicenseCR(deploy.LicenseInputs{JWT: jwt})
-	if err != nil {
-		return err
-	}
-	// CWC creates a ResourceQuota (f5-single-license-quota) when it
-	// reconciles License; for a brief window, `kubectl apply` fails
-	// with "status unknown for quota". Retry up to ~100s.
-	if err := applyLicenseWithQuotaRetry(ctx, r, cr, out); err != nil {
-		return fmt.Errorf("apply License CR: %w", err)
-	}
-
-	// 3. Wait for License Active.
-	fmt.Fprintln(out, "[3/4] Waiting for License Active ...")
-	if err := deploy.WaitForLicenseActive(ctx, r,
-		deploy.LicenseCRName, deploy.SharedComponentNamespace,
-		20*time.Minute); err != nil {
-		if strings.Contains(err.Error(), "PendingVerification") {
-			fmt.Fprintf(out, "      WARN: license stuck at PendingVerification (disconnected mode? follow F5 docs to register manually)\n")
-		} else {
-			fmt.Fprintf(out, "      WARN: %v\n", err)
-		}
+	// Resume-safe short-circuit: if the License CR is already Active (this is
+	// a re-apply / pipeline resume), re-applying it makes CWC re-run device
+	// registration against F5's licensing server, which fails with
+	// "Function host is not running" on an already-registered asset. Skip the
+	// re-apply + Active-wait entirely and go straight to the GatewayClass.
+	if state, err := deploy.LicenseState(ctx, r,
+		deploy.LicenseCRName, deploy.SharedComponentNamespace); err != nil {
+		return fmt.Errorf("check existing license state: %w", err)
+	} else if state == "Active" {
+		fmt.Fprintln(out, "      license already Active — skipping re-apply + registration (resume-safe).")
 	} else {
-		fmt.Fprintln(out, "      License Active.")
+		if err := r.Kubectl(ctx, "wait", "--for=create",
+			"crd/licenses.k8s.f5net.com", "--timeout=8m"); err != nil {
+			return fmt.Errorf("license CRD never created (FLO did not reconcile?): %w", err)
+		}
+		if err := r.Wait(ctx, "", "Established",
+			"crd/licenses.k8s.f5net.com", 3*time.Minute); err != nil {
+			return fmt.Errorf("license CRD did not become Established: %w", err)
+		}
+		cr, err := deploy.RenderLicenseCR(deploy.LicenseInputs{JWT: jwt})
+		if err != nil {
+			return err
+		}
+		// CWC creates a ResourceQuota (f5-single-license-quota) when it
+		// reconciles License; for a brief window, `kubectl apply` fails
+		// with "status unknown for quota". Retry up to ~100s.
+		if err := applyLicenseWithQuotaRetry(ctx, r, cr, out); err != nil {
+			return fmt.Errorf("apply License CR: %w", err)
+		}
+
+		// 3. Wait for License Active.
+		fmt.Fprintln(out, "[3/4] Waiting for License Active ...")
+		if err := deploy.WaitForLicenseActive(ctx, r,
+			deploy.LicenseCRName, deploy.SharedComponentNamespace,
+			20*time.Minute); err != nil {
+			if strings.Contains(err.Error(), "PendingVerification") {
+				fmt.Fprintf(out, "      WARN: license stuck at PendingVerification (disconnected mode? follow F5 docs to register manually)\n")
+			} else {
+				fmt.Fprintf(out, "      WARN: %v\n", err)
+			}
+		} else {
+			fmt.Fprintln(out, "      License Active.")
+		}
 	}
 
 	// 4. Apply the cluster-scoped GatewayClass that every BNK Gateway
@@ -508,11 +520,9 @@ spec:
 `); err != nil {
 		return fmt.Errorf("apply bnk-gatewayclass: %w", err)
 	}
-	if err := r.Wait(ctx, "", "Accepted",
-		"gatewayclass/bnk-gatewayclass", 3*time.Minute); err != nil {
-		return fmt.Errorf("bnk-gatewayclass never reached Accepted=True (f5-cne-controller not picking it up?): %w", err)
+	if err := waitGatewayClassAccepted(ctx, r, out, 3*time.Minute, 5*time.Minute); err != nil {
+		return err
 	}
-	fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
 
 	// 5. TMM rollout strategy.
 	//
@@ -905,6 +915,38 @@ func applyLicenseWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest 
 		}
 	}
 	return fmt.Errorf("quota %s status never populated: %w", quotaName, lastErr)
+}
+
+// waitGatewayClassAccepted waits for bnk-gatewayclass to reach Accepted=True,
+// tolerating a merely-slow f5-cne-controller. `kubectl wait` fails hard the
+// instant its window closes, but on a loaded host the controller comes up
+// healthy just past that window — a longer wait (or a re-run) then succeeds,
+// so a hard 3-min fail is a false negative. On wait timeout we poll the
+// Accepted condition directly for up to grace more before failing the phase,
+// turning "controller is slow" into a proceed instead of an error.
+func waitGatewayClassAccepted(ctx context.Context, r *deploy.Runner, out io.Writer, wait, grace time.Duration) error {
+	if err := r.Wait(ctx, "", "Accepted", "gatewayclass/bnk-gatewayclass", wait); err == nil {
+		fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
+		return nil
+	}
+	fmt.Fprintf(out, "      Accepted=True not seen within %s — f5-cne-controller may be slow; polling up to %s more ...\n", wait, grace)
+	deadline := time.Now().Add(grace)
+	for {
+		status, _ := r.KubectlCapture(ctx, "get", "gatewayclass/bnk-gatewayclass",
+			"-o", `jsonpath={.status.conditions[?(@.type=="Accepted")].status}`)
+		if strings.TrimSpace(status) == "True" {
+			fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True (settled after the initial wait window)")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("bnk-gatewayclass never reached Accepted=True after %s (f5-cne-controller not picking it up?)", wait+grace)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
 }
 
 // loadDeployContext resolves the PoC, loads it, and confirms the

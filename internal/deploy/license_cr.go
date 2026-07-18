@@ -58,6 +58,37 @@ func RenderLicenseCR(in LicenseInputs) (string, error) {
 	return b.String(), nil
 }
 
+// LicenseState returns the License CR's status.state ("Active",
+// "Registering", "Activating", "PendingVerification", …), or "" when the
+// CR — or its CRD — doesn't exist yet. It exists to make deploy-cne
+// resume-safe: an already-Active license must NOT be re-applied, because a
+// re-apply makes CWC re-run device registration against F5's licensing
+// server, which fails with "RegistrationFailed: Function host is not
+// running" on an already-registered asset (observed live on the pipeline
+// resume path). A NotFound / missing-CRD lookup is not an error to the
+// caller — it just means "no state yet, proceed with the first-time apply".
+func LicenseState(ctx context.Context, r *Runner, name, namespace string) (string, error) {
+	if name == "" {
+		name = LicenseCRName
+	}
+	if namespace == "" {
+		namespace = SharedComponentNamespace
+	}
+	out, err := r.KubectlCapture(ctx, "-n", namespace, "get",
+		"license.k8s.f5net.com", name,
+		"-o", "jsonpath={.status.state}")
+	if err != nil {
+		msg := err.Error()
+		// CR absent, or the CRD itself not installed yet (first deploy).
+		if strings.Contains(msg, "NotFound") ||
+			strings.Contains(msg, "the server doesn't have a resource type") {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // WaitForLicenseActive polls `kubectl get license.k8s.f5net.com <name>
 // -o jsonpath={.status.state}` until it returns Active, or the timeout
 // fires. F5 ships a "STATE" printer column that walks through
