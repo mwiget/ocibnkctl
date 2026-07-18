@@ -43,23 +43,37 @@ gh release view v2.3.1-10           # confirm the tar.gz + checksums.txt assets 
 The runner image (next step) downloads the binary **from this release**, so the
 assets must be live before you build it.
 
-## Step 2 — build + push the runner image
+## Step 2 — the runner image (automated)
 
-`runner.Dockerfile` is checked in; the Makefile wraps the buildx call. It
-downloads + checksum-verifies the released binary, so pass the same version:
+**This is automated.** The `runner-image` job in `.github/workflows/release.yml`
+runs after goreleaser (it `needs: goreleaser`, so the release binaries exist) and
+builds + pushes the **multi-arch** (`linux/amd64,linux/arm64`) image from the
+checked-in `runner.Dockerfile`. The pushed **digest** is printed in the workflow
+run's job summary — copy it into bnkctl-index (Step 3).
+
+No manual action is needed on a normal release. Watch it with `gh run watch`.
+
+### Manual fallback / local build
+
+`runner.Dockerfile` + the Makefile target still work if you need to build out of
+band (the target downloads + checksum-verifies the released binary, so pass the
+same version):
 
 ```bash
 make runner-image RUNNER_VERSION=2.3.1-10 \
   RUNNER_PLATFORM=linux/amd64,linux/arm64 PUSH=1
-# capture the pushed manifest-list digest for the artifact manifest:
 docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.3.1-10 \
   --format '{{.Manifest.Digest}}'
 ```
 
-Publish **multi-arch** (`linux/amd64,linux/arm64`) as shown — the release ships
-both arches' binaries, so both build. (`RUNNER_PLATFORM` defaults to `linux/amd64`
-only, for a quick single-arch local `--load` build.) `ghcr.io` push auth comes
-from your `docker login ghcr.io`.
+`RUNNER_PLATFORM` defaults to `linux/amd64` only (quick local `--load` build);
+`ghcr.io` push auth comes from your `docker login ghcr.io`.
+
+> **First automated run — ghcr package access.** The `ocibnkctl-tools-runner`
+> package was originally pushed by hand under the `mwiget` user, so the repo's
+> `GITHUB_TOKEN` may not yet have write access. If the first `runner-image` run
+> 403s, open the package → **Package settings → Manage Actions access** and add
+> the `mwiget/ocibnkctl` repo with the **Write** role (one-time).
 
 ## Step 3 — bump `bnkctl-index` (pin the new digest)
 

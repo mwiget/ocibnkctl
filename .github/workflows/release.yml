@@ -30,3 +30,58 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build + push the BNK Forge container-runner image AFTER the release assets
+  # exist (runner.Dockerfile downloads + checksum-verifies the released binary).
+  # Multi-arch, from the checked-in runner.Dockerfile. See docs/RELEASE.md.
+  runner-image:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Derive version (tag without leading v)
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push multi-arch runner image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: runner.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            OCIBNKCTL_VERSION=${{ steps.ver.outputs.version }}
+          tags: ghcr.io/mwiget/ocibnkctl-tools-runner:${{ steps.ver.outputs.version }}
+          push: true
+
+      - name: Summarize (digest to pin in bnkctl-index)
+        run: |
+          {
+            echo "### Runner image published"
+            echo ""
+            echo "- image: \`ghcr.io/mwiget/ocibnkctl-tools-runner:${{ steps.ver.outputs.version }}\`"
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "Next: pin this digest in **bnkctl-index** — bump \`version\` in"
+            echo "\`tools/ocibnkctl/bnkforge.{artifact,pack}.json\`, set the new digest, and"
+            echo "re-pin the module in \`blueprints/k3s-bnk-demo/forge-blueprint.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
