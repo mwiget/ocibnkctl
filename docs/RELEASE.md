@@ -49,15 +49,17 @@ assets must be live before you build it.
 downloads + checksum-verifies the released binary, so pass the same version:
 
 ```bash
-make runner-image RUNNER_VERSION=2.3.1-10 PUSH=1
-# capture the pushed manifest digest for the artifact manifest:
+make runner-image RUNNER_VERSION=2.3.1-10 \
+  RUNNER_PLATFORM=linux/amd64,linux/arm64 PUSH=1
+# capture the pushed manifest-list digest for the artifact manifest:
 docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.3.1-10 \
   --format '{{.Manifest.Digest}}'
 ```
 
-The image is single-platform `linux/amd64` by default (matching prior releases);
-build multi-arch with `RUNNER_PLATFORM=linux/amd64,linux/arm64` if needed.
-`ghcr.io` push auth comes from your `docker login ghcr.io`.
+Publish **multi-arch** (`linux/amd64,linux/arm64`) as shown — the release ships
+both arches' binaries, so both build. (`RUNNER_PLATFORM` defaults to `linux/amd64`
+only, for a quick single-arch local `--load` build.) `ghcr.io` push auth comes
+from your `docker login ghcr.io`.
 
 ## Step 3 — bump `bnkctl-index` (pin the new digest)
 
