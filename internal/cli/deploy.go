@@ -597,6 +597,19 @@ spec:
 		}
 	}
 
+	// Final gate: every workload in the shared namespace must actually be
+	// available before this phase declares success. Without it a wedged
+	// component is invisible — f5-spk-csrc sat at 0 available for 29 minutes
+	// (hostPath mount of /etc/iproute2/rt_tables, absent on a stock k3s node)
+	// while every other check passed and the deploy reported DONE. A green
+	// deploy that is not green hides the next failure too.
+	fmt.Fprintf(out, "\nVerifying all %s workloads are available ...\n", deploy.SharedComponentNamespace)
+	if err := deploy.WaitWorkloadsAvailable(ctx, r,
+		deploy.SharedComponentNamespace, 5*time.Minute); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "      all workloads available.")
+
 	p.Status.Deploy = "ready"
 	p.Status.LastPhaseAt = time.Now().UTC()
 	if err := savePoC(repo, p, out); err != nil {
