@@ -72,8 +72,21 @@ invalid value is an error, never a silent fallback:
 			if err != nil {
 				return err
 			}
-			if _, err := os.Stat(abs); err == nil {
-				return fmt.Errorf("refusing to overwrite: %s already exists", abs)
+			// An existing directory is only fatal once it holds a PoC. Keying the
+			// refusal on poc.yaml (not on the directory) keeps the "never clobber
+			// an initialized PoC" guarantee while letting init adopt a directory
+			// something else pre-seeded — BNK Forge materializes declared
+			// secret_files into <poc>/keys/ before it runs this step, so the
+			// target always exists there and a blanket refusal made the module
+			// un-deployable.
+			if info, err := os.Stat(abs); err == nil {
+				if !info.IsDir() {
+					return fmt.Errorf("refusing to overwrite: %s exists and is not a directory", abs)
+				}
+				if _, err := os.Stat(filepath.Join(abs, poc.FileName)); err == nil {
+					return fmt.Errorf("refusing to overwrite: %s already holds a %s", abs, poc.FileName)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "adopting existing directory %s (no %s yet)\n", abs, poc.FileName)
 			}
 			if err := os.MkdirAll(abs, 0o755); err != nil {
 				return err
