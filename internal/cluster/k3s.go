@@ -359,6 +359,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 	if err := k.makeRshared(ctx, server); err != nil {
 		return fmt.Errorf("k3s server: %w", err)
 	}
+	if err := k.writeRouteTables(ctx, server); err != nil {
+		return fmt.Errorf("k3s server: %w", err)
+	}
 	// core_pattern is VM-global (non-namespaced); setting it once on the
 	// server fixes BNK's crashagent for pods on both nodes.
 	if err := k.setCorePattern(ctx, server); err != nil {
@@ -414,6 +417,9 @@ func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage 
 		return fmt.Errorf("k3s agent %s: %w", agent, err)
 	}
 	if err := k.makeRshared(ctx, agent); err != nil {
+		return fmt.Errorf("k3s agent %s: %w", agent, err)
+	}
+	if err := k.writeRouteTables(ctx, agent); err != nil {
 		return fmt.Errorf("k3s agent %s: %w", agent, err)
 	}
 	return nil
@@ -514,6 +520,47 @@ func (k *K3s) makeRshared(ctx context.Context, container string) error {
 		}
 	}
 	return fmt.Errorf("make rootfs rshared in %s: %w", container, lastErr)
+}
+
+// k3sRouteTables is the stock iproute2 routing-table name map. The
+// rancher/k3s image ships no iproute2 package, so /etc/iproute2/rt_tables
+// is absent on every node.
+const k3sRouteTables = "#\n# reserved values\n#\n" +
+	"255\tlocal\n254\tmain\n253\tdefault\n0\tunspec\n" +
+	"#\n# local\n#\n#1\tinr.ruhep\n"
+
+// writeRouteTables creates /etc/iproute2/rt_tables on the node. BNK's
+// f5-spk-csrc DaemonSet hostPath-mounts that file with an implicit File
+// type check, so on a stock rancher/k3s node the mount fails forever
+// ("hostPath type check failed: /etc/iproute2/rt_tables is not a file")
+// and the pod never leaves ContainerCreating — silently, since the
+// DaemonSet just sits at 0 available. Same class of fixup as
+// makeRshared: the node container is not a real host and lacks files
+// BNK expects a host to have. Retried briefly to absorb the gap between
+// `run -d` returning and the container being exec-ready.
+func (k *K3s) writeRouteTables(ctx context.Context, container string) error {
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		c := k.run(ctx, "exec", container, "sh", "-c",
+			"mkdir -p /etc/iproute2 && cat > /etc/iproute2/rt_tables")
+		c.Stdin = strings.NewReader(k3sRouteTables)
+		var errb bytes.Buffer
+		c.Stdout = io.Discard
+		c.Stderr = &errb
+		if err := c.Run(); err == nil {
+			return nil
+		} else if s := strings.TrimSpace(errb.String()); s != "" {
+			lastErr = fmt.Errorf("%s", s)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("write /etc/iproute2/rt_tables in %s: %w", container, lastErr)
 }
 
 // setCorePattern installs k3sCorePattern into the host kernel's global
