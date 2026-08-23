@@ -529,6 +529,17 @@ const k3sRouteTables = "#\n# reserved values\n#\n" +
 	"255\tlocal\n254\tmain\n253\tdefault\n0\tunspec\n" +
 	"#\n# local\n#\n#1\tinr.ruhep\n"
 
+// routeTablesExecArgs builds the exec argv that streams k3sRouteTables into
+// the node. -i is load-bearing: without it `docker exec` does not attach
+// stdin, so `cat` reads EOF immediately and writes a ZERO-BYTE file. That
+// empty file still satisfies the hostPath File type check, so the DaemonSet
+// starts and the breakage is invisible — the node simply has no
+// routing-table names. Shipped exactly that way once; see the test.
+func routeTablesExecArgs(container string) []string {
+	return []string{"exec", "-i", container, "sh", "-c",
+		"mkdir -p /etc/iproute2 && cat > /etc/iproute2/rt_tables"}
+}
+
 // writeRouteTables creates /etc/iproute2/rt_tables on the node. BNK's
 // f5-spk-csrc DaemonSet hostPath-mounts that file with an implicit File
 // type check, so on a stock rancher/k3s node the mount fails forever
@@ -541,8 +552,7 @@ const k3sRouteTables = "#\n# reserved values\n#\n" +
 func (k *K3s) writeRouteTables(ctx context.Context, container string) error {
 	var lastErr error
 	for i := 0; i < 10; i++ {
-		c := k.run(ctx, "exec", container, "sh", "-c",
-			"mkdir -p /etc/iproute2 && cat > /etc/iproute2/rt_tables")
+		c := k.run(ctx, routeTablesExecArgs(container)...)
 		c.Stdin = strings.NewReader(k3sRouteTables)
 		var errb bytes.Buffer
 		c.Stdout = io.Discard
