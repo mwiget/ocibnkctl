@@ -166,6 +166,16 @@ func injectPasswdConf(ctx *scenarios.Context, pod string) error {
 	return err
 }
 
+// redistShCmd is the `imish -f` script triggerRedistribution streams onto each
+// TMM. Package-level so a test can pin its shape.
+//
+// It must NOT open with `configure terminal`: `imish -f` already starts in
+// config mode, so that line comes back as `% Invalid input detected` — 3
+// retries x N TMMs of pure noise in the scenario output. Every following line
+// applied regardless, which is why the noise shipped unnoticed. Two trailing
+// exits, not three: one leaves address-family, one leaves router-bgp.
+const redistShCmd = `printf 'router bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`
+
 // triggerRedistribution re-issues the BGP redistribute statements over imish so
 // OcNOS XP-6.6.0 (re-)runs its redistribution scan at runtime (it doesn't
 // redistribute from the startup config). Goes through `imish -f <script>`, not
@@ -174,10 +184,9 @@ func injectPasswdConf(ctx *scenarios.Context, pod string) error {
 // config-mode context across lines. Best-effort + retried.
 func triggerRedistribution(ctx *scenarios.Context, pod string) {
 	r := ctx.Runner
-	const shCmd = `printf 'configure terminal\nrouter bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`
 	for i := 0; i < 3; i++ {
 		_ = r.Kubectl(ctx.Ctx, "-n", "default", "exec", pod, "-c", "f5-tmm-routing", "--",
-			"sh", "-c", shCmd)
+			"sh", "-c", redistShCmd)
 		select {
 		case <-ctx.Ctx.Done():
 			return
