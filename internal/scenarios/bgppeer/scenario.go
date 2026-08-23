@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 )
 
@@ -166,27 +167,22 @@ func injectPasswdConf(ctx *scenarios.Context, pod string) error {
 	return err
 }
 
-// redistShCmd is the `imish -f` script triggerRedistribution streams onto each
-// TMM. Package-level so a test can pin its shape.
-//
-// It must NOT open with `configure terminal`: `imish -f` already starts in
-// config mode, so that line comes back as `% Invalid input detected` — 3
-// retries x N TMMs of pure noise in the scenario output. Every following line
-// applied regardless, which is why the noise shipped unnoticed. Two trailing
-// exits, not three: one leaves address-family, one leaves router-bgp.
-const redistShCmd = `printf 'router bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`
-
 // triggerRedistribution re-issues the BGP redistribute statements over imish so
 // OcNOS XP-6.6.0 (re-)runs its redistribution scan at runtime (it doesn't
 // redistribute from the startup config). Goes through `imish -f <script>`, not
 // repeated `imish -e` flags — each `-e` runs in exec mode and never enters
 // router-bgp config context, so the redistribute is a no-op; a -f script keeps
 // config-mode context across lines. Best-effort + retried.
+//
+// The script is deploy.OcNOSRedistributeScript — the single copy shared with
+// the deploy path and the edge helper. It used to be a third near-duplicate
+// here, which is how the `configure terminal` defect stayed alive in the other
+// two after being fixed in this one.
 func triggerRedistribution(ctx *scenarios.Context, pod string) {
 	r := ctx.Runner
 	for i := 0; i < 3; i++ {
 		_ = r.Kubectl(ctx.Ctx, "-n", "default", "exec", pod, "-c", "f5-tmm-routing", "--",
-			"sh", "-c", redistShCmd)
+			"sh", "-c", deploy.OcNOSRedistributeScript())
 		select {
 		case <-ctx.Ctx.Done():
 			return
