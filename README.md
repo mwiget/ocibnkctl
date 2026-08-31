@@ -94,6 +94,25 @@ k3s node containers → remove the cluster's docker network.
 | cert-manager | v1.16.2 |
 | FLO chart | resolved at deploy time from the release manifest |
 
+The release-manifest row is the only F5-side pin that matters: every chart
+and image version is resolved from it at deploy time. To check a candidate
+tag before bumping it — no cluster, no kubeconfig, just the FAR key:
+
+```bash
+ocibnkctl manifest probe                                  # the pinned tag
+ocibnkctl manifest probe 2.3.2-3.2598.3-0.0.392           # a candidate
+ocibnkctl manifest probe --far ~/keys/far.tgz --all       # full BOM, outside a PoC
+```
+
+`probe` fails if the BOM's own `releases[0].version` disagrees with the tag
+it was pulled under. That check is not theoretical: F5's FLO upgrade doc
+advertised `2.3.1-...-0.0.302` while the real chart tag was `...0.0.304`.
+The authoritative table lives in the F5 install doc, ["Download the release
+manifest and create its companion
+script"](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/prepare-to-install/download-the-release-manifest-and-create-its-companion-script.html)
+— verify it with `probe` regardless. Two `--all` runs diff cleanly, which is
+the fastest way to see what a release bump actually moves.
+
 ## Minimum host resources
 
 Validated on a **MacBook Air / Pro (Apple M4/M5), 10 CPU cores**, with

@@ -172,6 +172,15 @@ smoke: test build
 	  grep -q "anycast-bgp" /tmp/smoke-aa.log || { echo "anycast-bgp caveat warning missing"; exit 1; }; \
 	  grep -q "OK" /tmp/smoke-aa.log || { echo "anycast-bgp should validate clean"; exit 1; }; \
 	  mv $(SMOKE_DIR)/poc.yaml.bak $(SMOKE_DIR)/poc.yaml; rm -f $(SMOKE_DIR)/poc.yaml.tmp; \
+	echo "[10] manifest probe reports a missing FAR key without touching the network"; \
+	  if ./bin/ocibnkctl manifest probe --far $(SMOKE_DIR)/keys/absent.tgz \
+	       >/tmp/smoke-manifest.log 2>&1; then \
+	    echo "manifest probe should have failed on a missing FAR key"; exit 1; \
+	  fi; \
+	  grep -q "FAR tgz not found" /tmp/smoke-manifest.log \
+	    || { echo "probe missing-key error message missing"; exit 1; }; \
+	  ./bin/ocibnkctl manifest probe --help | grep -q "no cluster required" \
+	    || { echo "probe help text missing"; exit 1; }; \
 	echo "PASS"
 
 clean:

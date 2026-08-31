@@ -55,6 +55,17 @@ Drop these into `keys/` (gitignored) before running a deploy phase:
 Both come from F5's normal license-portal channels. **Never commit them,
 never echo their contents, never paste them into a chat or a report.**
 
+Once `keys/f5-far-auth-key.tgz` is in place you can confirm it authenticates
+against repo.f5.com — before creating any cluster — with:
+
+```bash
+ocibnkctl manifest probe
+```
+
+It pulls the pinned release-manifest (the BOM naming every chart and image
+version for this BNK release) and prints it. A failure here is a bad or
+expired FAR key, and it is far cheaper to learn that now than four phases in.
+
 ## The pipeline
 
 ```
