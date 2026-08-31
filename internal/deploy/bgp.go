@@ -197,14 +197,30 @@ spec:
 // "% Error in processing command"). A -f script keeps config-mode context
 // across lines, so the statement is actually re-issued and OcNOS rescans the
 // kernel RIB. Terminated with `exit`s (OcNOS rejects `end` in this path).
+// OcNOSRedistributeScript is the `imish -f` script that re-issues the BGP
+// redistribute statements on one TMM. Exported and shared so the deploy path
+// and the scenario helpers cannot drift apart — three near-copies of this
+// string is how the `configure terminal` defect below survived in two of them
+// after being fixed in the third.
+//
+// It must NOT open with `configure terminal`: `imish -f` already starts in
+// config mode, so that line comes back as `% Invalid input detected` — once
+// per exec, per TMM. Every following line applies regardless, so BGP still
+// comes up and nothing fails; the only symptom is a wall of error banners in
+// the deploy and scenario output. Two trailing exits, not three: one leaves
+// address-family, one leaves router-bgp.
+func OcNOSRedistributeScript() string {
+	return fmt.Sprintf(
+		`printf 'router bgp %d\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`,
+		BGPTMMAS)
+}
+
 func TriggerOcNOSRedistribute(ctx context.Context, r *Runner) error {
 	pods, err := RunningTMMPods(ctx, r)
 	if err != nil {
 		return err
 	}
-	shCmd := fmt.Sprintf(
-		`printf 'configure terminal\nrouter bgp %d\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`,
-		BGPTMMAS)
+	shCmd := OcNOSRedistributeScript()
 	var lastErr error
 	for _, pod := range pods {
 		if e := r.Kubectl(ctx, "-n", "default", "exec", pod,

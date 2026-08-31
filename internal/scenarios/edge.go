@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mwiget/ocibnkctl/internal/cluster"
+	"github.com/mwiget/ocibnkctl/internal/deploy"
 )
 
 // External edge fabric — the BGP peer (FRR) and upstream (origin) run as their
@@ -127,10 +128,12 @@ func RetriggerRedistribute(ctx *Context) {
 		// imish -f a tiny config file: unlike repeated `-e` flags (each of which
 		// runs in exec mode and never enters router-bgp config context), a -f
 		// script keeps config-mode context across lines, so the redistribute is
-		// actually re-issued and OcNOS rescans the kernel RIB.
+		// actually re-issued and OcNOS rescans the kernel RIB. The script itself
+		// is deploy.OcNOSRedistributeScript so this cannot drift from the
+		// deploy path — see the notes there.
 		_ = ctx.Runner.Kubectl(ctx.Ctx, "-n", "default", "exec", pod,
 			"-c", "f5-tmm-routing", "--", "sh", "-c",
-			`printf 'configure terminal\nrouter bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`)
+			deploy.OcNOSRedistributeScript())
 	}
 }
 
