@@ -5,7 +5,7 @@ all: build-all
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BNK     := 2.3.1
+BNK     := 2.3.2
 
 LDFLAGS := -X 'github.com/mwiget/ocibnkctl/internal/version.Version=$(VERSION)' \
            -X 'github.com/mwiget/ocibnkctl/internal/version.Commit=$(COMMIT)' \
@@ -32,15 +32,15 @@ build-all: build build-linux-arm64
 
 # --- release artifacts --------------------------------------------------
 #
-# Tagging convention. The binary is hard-pinned to BNK 2.3.1
-# (BNKVersion=2.3.1, baked into ldflags here and in .goreleaser.yaml), so
-# every release tag carries the `v2.3.1` prefix. Tool-level changes that
+# Tagging convention. The binary is hard-pinned to BNK 2.3.2
+# (BNKVersion=2.3.2, baked into ldflags here and in .goreleaser.yaml), so
+# every release tag carries the `v2.3.2` prefix. Tool-level changes that
 # need a fresh binary — bug fixes, new scenarios, doc bumps — get an
 # incrementing suffix, NOT a new MAJOR.MINOR.PATCH:
 #
-#   v2.3.1       first cut for BNK 2.3.1
-#   v2.3.1-1     next binary, same BNK release
-#   v2.3.1-2     ...and so on
+#   v2.3.2       first cut for BNK 2.3.2
+#   v2.3.2-1     next binary, same BNK release
+#   v2.3.2-2     ...and so on
 #
 # The prior BNK release line lives on the `release/2.3.0` branch (tags
 # v2.3.0, v2.3.0-1); backport fixes there and tag v2.3.0-N off that branch.
@@ -49,15 +49,15 @@ build-all: build build-linux-arm64
 # the GitHub Actions goreleaser workflow (.github/workflows/release.yml),
 # which is the canonical release path:
 #
-#   git tag v2.3.1 && git push origin v2.3.1
+#   git tag v2.3.2 && git push origin v2.3.2
 #
 # The `make release` targets below are the manual fallback — they produce
 # the same versioned, sha256-checksummed binaries locally. Run from a
-# clean checkout of the tag so $(VERSION) resolves (e.g. to v2.3.1):
+# clean checkout of the tag so $(VERSION) resolves (e.g. to v2.3.2):
 #
-#   git checkout v2.3.1
+#   git checkout v2.3.2
 #   make release
-#   gh release upload v2.3.1 bin/ocibnkctl-v2.3.1-* --clobber
+#   gh release upload v2.3.2 bin/ocibnkctl-v2.3.2-* --clobber
 release-linux-amd64:
 	@mkdir -p bin
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
@@ -92,8 +92,8 @@ release: release-linux-amd64 release-linux-arm64 release-darwin-arm64
 # defaults to the latest tag without the leading "v"; single-platform to match
 # the historical image. See docs/RELEASE.md for the full publish chain.
 #
-#   make runner-image RUNNER_VERSION=2.3.1-10 PUSH=1
-#   docker buildx imagetools inspect $(RUNNER_IMAGE):2.3.1-10 --format '{{.Manifest.Digest}}'
+#   make runner-image RUNNER_VERSION=2.3.2-1 PUSH=1
+#   docker buildx imagetools inspect $(RUNNER_IMAGE):2.3.2-1 --format '{{.Manifest.Digest}}'
 RUNNER_IMAGE    ?= ghcr.io/mwiget/ocibnkctl-tools-runner
 RUNNER_VERSION  ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
 RUNNER_PLATFORM ?= linux/amd64
