@@ -78,9 +78,12 @@ Base: https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/ ("BNK 2.4 (late
 23. **Release notes vs shipped CRD bundle (observed on a live 2.4.0 install)**: the
     breaking-changes section says "F5BnkGateway will no longer be valid", yet the
     2.4.0 crd-installer still creates `f5-bnkgateways.k8s.f5net.com` (and
-    `f5-spk-vlans` / `f5-spk-egresses` / `f5-spk-staticroutes`). Conversely the old
-    `l4routes.gateway.k8s.f5net.com` and `bnknetpolicies` CRDs are gone outright —
-    the notes only say the group "changed", not that the old group is removed.
+    `f5-spk-vlans` / `f5-spk-egresses` / `f5-spk-egresssips` / `f5-spk-staticroutes`,
+    all `k8s.f5net.com`). Conversely the old `l4routes.gateway.k8s.f5net.com` and
+    `bnknetpolicies.gateway.k8s.f5net.com` CRDs are gone outright, so a 2.3 manifest
+    fails with `no matches for kind "L4Route" in version "gateway.k8s.f5net.com/v1"`.
+    The notes only say the group "changed", not that the old group is removed.
+    (Re-checked on a live 2.4.0 cluster, 2026-09-13.)
 24. **Dead link on the 2.4 site**: `use-cases/bnk-ficforgatewayapi.html` ("F5 IPAM
     Controller for Gateway API", referenced by the ocibnkctl `fic-dynamic-ip` scenario)
     now serves the generic F5 Cloud Docs index; the 2.4 `use-cases/index.html` links
