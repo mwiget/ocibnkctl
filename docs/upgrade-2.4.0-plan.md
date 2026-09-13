@@ -70,3 +70,13 @@ Exit: `scenario run --all` green set ≥ the 14 that were green on 2.3.2.
 - Optional: `deploy upgrade` path 2.3.x→2.4.0 on the live bnk232 cluster (FLO helm upgrade +
   CNEInstance manifestVersion bump; needs KI 2455985-1 metrics CRD rename workaround).
 - Tag v2.4.0 (first cut), sibling tools (dpubnkctl/tmmlitectl) later.
+
+## Phase 4 backlog (found during the 2.4.0 gate runs, not yet done)
+- `deploy cne` re-runs restart the TMM DaemonSet even when the OcNOS routing
+  ConfigMap is `unchanged` (~8 min); skip the rollout when nothing changed.
+- `validate` / `cluster up` should pre-check docker networks for an edge-octet
+  subnet overlap (bnk240's first attempt died on scope's 192.168.99.0/24).
+- The CWC cert-gen step (alpine/k8s container, bind mount) leaves
+  `artifacts/cwc-certs/` root-owned, so `rm -rf <poc>` after `destroy` fails
+  with Permission denied; run the container as the invoking uid or chown after.
+- Port `selfip-dag` to Infra vlan networks, or drop the mode on the 2.4 line.
