@@ -183,6 +183,24 @@ func checkResources(profile string) checkResult {
 	}
 	detail := fmt.Sprintf("host: %d cores  ≥  %s %d cores",
 		cores, label, baseline.Cores)
+	status := "ok"
+	if profile != "small" {
+		// Memory doesn't fail doctor — e2e compensates with deploy shrink — but a
+		// runtime VM below the floor won't schedule the unshrunk footprint, so say so.
+		mem := runtimeMemBytes("")
+		switch {
+		case mem <= 0:
+			detail += "\n" + strings.Repeat(" ", 20) +
+				"note: container runtime memory unreadable — the e2e auto-shrink decision falls back to cores alone"
+		case version.MemoryBelowFloor(mem):
+			status = "warn"
+			detail += fmt.Sprintf("\n%snote: runtime memory %.1f GiB < %d GiB floor — the full BNK footprint won't schedule on one TMM worker; e2e auto-runs deploy shrink (or raise the VM memory)",
+				strings.Repeat(" ", 20), float64(mem)/(1<<30), version.MinBaseline.MemoryGB)
+		default:
+			detail += fmt.Sprintf(" · runtime memory %.1f GiB  ≥  %d GiB",
+				float64(mem)/(1<<30), version.MinBaseline.MemoryGB)
+		}
+	}
 	if profile == "small" {
 		// On a tight host the chart only schedules once shrink + metrics-off
 		// are in effect — both now happen without manual steps: `init` pins
@@ -191,5 +209,5 @@ func checkResources(profile string) checkResult {
 		detail += "\n" + strings.Repeat(" ", 20) +
 			"note: tight host — init pins bnk.host_profile=small (TMM metrics off) & e2e auto-runs deploy shrink; set host_profile=standard to opt out"
 	}
-	return checkResult{"resources", "ok", detail}
+	return checkResult{"resources", status, detail}
 }

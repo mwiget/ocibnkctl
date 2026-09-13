@@ -54,15 +54,75 @@ var canonicalPhases = []e2ePhase{
 		destructive: true, confirmFlag: "--confirm-deploy"},
 }
 
-// autoShrinkDecision reports the host core count, the workers-scaled
-// floor, and whether the host is below it — in which case the auto
+// shrinkDecision is what the auto deploy-shrink phase decides on: the host
+// cores against the workers-scaled core floor, and the container runtime's
+// memory against the memory floor. Either one falling short engages shrink.
+type shrinkDecision struct {
+	workers    int
+	cores      int
+	coreFloor  int
+	memBytes   int64 // runtime MemTotal; 0 = unknown
+	coresTight bool
+	memTight   bool
+}
+
+func (d shrinkDecision) tight() bool { return d.coresTight || d.memTight }
+
+// summary renders both checks, e.g.
+// "host has 10 cores ≥ 10-core floor, 15.6 GiB runtime memory < 24 GiB floor (1 TMM node(s))".
+func (d shrinkDecision) summary() string {
+	rel := func(below bool) string {
+		if below {
+			return "<"
+		}
+		return "≥"
+	}
+	mem := "runtime memory unknown"
+	if d.memBytes > 0 {
+		mem = fmt.Sprintf("%.1f GiB runtime memory %s %d GiB floor",
+			float64(d.memBytes)/(1<<30), rel(d.memTight), version.MinBaseline.MemoryGB)
+	}
+	return fmt.Sprintf("host has %d cores %s %d-core floor, %s (%d TMM node(s))",
+		d.cores, rel(d.coresTight), d.coreFloor, mem, d.workers)
+}
+
+// autoShrinkDecision measures the host and decides whether the auto
 // deploy-shrink phase engages so BNK's footprint fits. workers is
 // cluster.tmm_nodes: each extra TMM node piles another full-fat TMM onto
-// the same host, so the floor grows with it.
-func autoShrinkDecision(workers int) (cores, floor int, tight bool) {
-	cores = runtime.NumCPU()
-	floor = version.FloorForWorkers(workers)
-	return cores, floor, coresBelowFloor(cores, workers)
+// the same host, so the core floor grows with it.
+func autoShrinkDecision(provider string, workers int) shrinkDecision {
+	return decideShrink(runtime.NumCPU(), workers, runtimeMemBytes(provider))
+}
+
+// decideShrink is the pure half of autoShrinkDecision, for testability.
+func decideShrink(cores, workers int, memBytes int64) shrinkDecision {
+	if workers < 1 {
+		workers = 1
+	}
+	return shrinkDecision{
+		workers:    workers,
+		cores:      cores,
+		coreFloor:  version.FloorForWorkers(workers),
+		memBytes:   memBytes,
+		coresTight: coresBelowFloor(cores, workers),
+		memTight:   version.MemoryBelowFloor(memBytes),
+	}
+}
+
+// runtimeMemBytes returns the container runtime's total memory, or 0 when it
+// can't be read (the memory check then abstains and cores alone decide).
+func runtimeMemBytes(provider string) int64 {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	rt, err := cluster.Detect(ctx, cluster.Runtime(provider))
+	if err != nil {
+		return 0
+	}
+	mem, err := (&cluster.DockerCLI{Runtime: rt}).MemTotalBytes(ctx)
+	if err != nil {
+		return 0
+	}
+	return mem
 }
 
 // coresBelowFloor reports whether a host with the given core count falls
@@ -101,13 +161,15 @@ Phases:
   deploy-prereqs     ocibnkctl deploy prereqs --yolo --confirm-deploy <name>
   deploy-flo         ocibnkctl deploy flo --yolo --confirm-deploy <name>
   deploy-shrink      ocibnkctl deploy shrink --yolo --confirm-deploy <name>
-                       (auto: runs only when the host has fewer cores than
-                        the documented standard floor — see below)
+                       (auto: runs only when the host is below the
+                        documented core or memory floor — see below)
   deploy-cne         ocibnkctl deploy cne --yolo --confirm-deploy <name>
 
 deploy-shrink is conditional. On a full run it engages automatically only
-when the host has fewer than the standard core floor (currently 10); on a
-roomier host it is skipped. Naming it explicitly via --phase deploy-shrink
+when the host has fewer than the standard core floor (currently 10, plus 8
+per extra TMM node) or the container runtime reports less memory than the
+standard memory floor (currently 24 GiB — on Docker Desktop that is the VM
+allocation, not host RAM); on a roomier host it is skipped. Naming it explicitly via --phase deploy-shrink
 always runs it. It caps F5 + kube-system pod requests so the footprint fits
 a tight host (e.g. a 4-core Raspberry Pi). On such a host init already pins
 bnk.host_profile=small in poc.yaml so TMM itself also fits (metrics sidecar
@@ -266,26 +328,23 @@ func runE2E(ctx context.Context, out io.Writer, f *e2eFlags) error {
 		}
 
 		// Conditional auto phase (deploy-shrink): engaged unprompted only on
-		// a host below the documented core floor. An explicit --phase
-		// selection (filter != "") bypasses the gate and always runs it.
+		// a host below the documented core or memory floor. An explicit
+		// --phase selection (filter != "") bypasses the gate and always runs it.
 		var autoNote string
 		if ph.auto && f.phaseFilter == "" {
-			cores, floor, tight := autoShrinkDecision(p.Cluster.Workers())
+			d := autoShrinkDecision(p.Cluster.Provider, p.Cluster.Workers())
 			switch {
-			case !tight && !f.dryRun:
-				reason := fmt.Sprintf("host has %d cores ≥ %d-core floor (%d TMM node(s)) — shrink not needed",
-					cores, floor, p.Cluster.Workers())
+			case !d.tight() && !f.dryRun:
+				reason := d.summary() + " — shrink not needed"
 				fmt.Fprintf(out, "[%d/%d] %-18s  SKIPPED — %s\n", idx, len(selected), ph.name, reason)
 				report.Phases = append(report.Phases, phaseReport{
 					Phase: ph.name, Status: "skipped", Summary: reason, Index: idx,
 				})
 				continue
-			case !tight:
-				autoNote = fmt.Sprintf("  (auto: would skip — host has %d cores ≥ %d-core floor)",
-					cores, floor)
+			case !d.tight():
+				autoNote = "  (auto: would skip — " + d.summary() + ")"
 			default:
-				autoNote = fmt.Sprintf("  (auto: host has %d cores < %d-core floor (%d TMM node(s)) — engaging shrink)",
-					cores, floor, p.Cluster.Workers())
+				autoNote = "  (auto: " + d.summary() + " — engaging shrink)"
 			}
 		}
 
@@ -495,13 +554,11 @@ func printPlan(out io.Writer, p *poc.PoC, repo, binary string, selected []e2ePha
 		args := buildArgs(p, repo, ph, p.Metadata.Name)
 		note := ""
 		if ph.auto {
-			cores, floor, tight := autoShrinkDecision(p.Cluster.Workers())
-			if tight {
-				note = fmt.Sprintf("   [auto: host has %d cores < %d-core floor → runs]",
-					cores, floor)
+			d := autoShrinkDecision(p.Cluster.Provider, p.Cluster.Workers())
+			if d.tight() {
+				note = "   [auto: " + d.summary() + " → runs]"
 			} else {
-				note = fmt.Sprintf("   [auto: host has %d cores ≥ %d-core floor → skipped]",
-					cores, floor)
+				note = "   [auto: " + d.summary() + " → skipped]"
 			}
 		}
 		fmt.Fprintf(out, "  %d. %-15s %s %s%s\n", i+1, ph.name, binary, strings.Join(args, " "), note)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mwiget/ocibnkctl/internal/version"
@@ -35,6 +36,42 @@ func TestCoresBelowFloor(t *testing.T) {
 		if got := coresBelowFloor(c.cores, c.workers); got != c.want {
 			t.Errorf("coresBelowFloor(%d, workers=%d) = %v, want %v (floor1=%d)",
 				c.cores, c.workers, got, c.want, floor)
+		}
+	}
+}
+
+// TestDecideShrink pins that memory is checked alongside cores: a host that
+// meets the core floor still engages shrink when the runtime's memory is
+// short (the 10-CPU / 16 GB Docker Desktop VM), and an unreadable memory
+// value leaves the decision to cores alone.
+func TestDecideShrink(t *testing.T) {
+	const gib = int64(1) << 30
+	cores := version.MinBaseline.Cores
+	memFloor := int64(version.MinBaseline.MemoryGB) * gib
+	cases := []struct {
+		name          string
+		cores         int
+		mem           int64
+		wantCores     bool
+		wantMem       bool
+		wantTight     bool
+		summaryPrefix string
+	}{
+		{"roomy", 28, 188 * gib, false, false, false, "host has 28 cores ≥"},
+		{"16 GB Docker Desktop", cores, 16745824256, false, true, true, "host has 10 cores ≥ 10-core floor, 15.6 GiB runtime memory < "},
+		{"memory at floor", cores, memFloor, false, false, false, "host has 10 cores ≥"},
+		{"cores short, memory roomy", 4, 64 * gib, true, false, true, "host has 4 cores <"},
+		{"memory unknown", cores, 0, false, false, false, "host has 10 cores ≥ 10-core floor, runtime memory unknown"},
+		{"memory unknown, cores short", 4, 0, true, false, true, "host has 4 cores <"},
+	}
+	for _, c := range cases {
+		d := decideShrink(c.cores, 1, c.mem)
+		if d.coresTight != c.wantCores || d.memTight != c.wantMem || d.tight() != c.wantTight {
+			t.Errorf("%s: coresTight=%v memTight=%v tight=%v, want %v %v %v",
+				c.name, d.coresTight, d.memTight, d.tight(), c.wantCores, c.wantMem, c.wantTight)
+		}
+		if s := d.summary(); !strings.HasPrefix(s, c.summaryPrefix) {
+			t.Errorf("%s: summary %q, want prefix %q", c.name, s, c.summaryPrefix)
 		}
 	}
 }

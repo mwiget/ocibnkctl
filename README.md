@@ -115,16 +115,18 @@ the fastest way to see what a release bump actually moves.
 
 ## Minimum host resources
 
-Validated on a **MacBook Air / Pro (Apple M4/M5), 10 CPU cores**, with
-Docker Desktop given **10 CPUs and 16 GB**. The full two-node BNK 2.4.0
-stack — *plus* all 12 green how-to scenarios (50 pods) — schedules and
-runs in that envelope. (The earlier 12-core floor needlessly excluded
-exactly these machines.)
+The core floor is **10 CPU cores** (MacBook Air / Pro, Apple M4/M5). The
+memory floor for the *full, unshrunk* footprint is **24 GB** of container-
+runtime memory: since `cluster up` dedicates the control node, every BNK pod
+lands on the single TMM worker, which must hold ~20.2 Gi of requests (BNK
+2.4.0, measured) plus scenario headroom. Below either floor `e2e` auto-runs
+`deploy shrink` (requests-only caps — real usage is ~7 GB), so a **10-CPU /
+16 GB** Docker Desktop VM still deploys, just via the shrink path.
 
-|                          | Cluster floor       | With bnk-forge      | Free disk |
+|                          | Full footprint (no shrink) | With bnk-forge      | Free disk |
 |--------------------------|---------------------|---------------------|-----------|
-| Linux (host docker)      | **10 cores · 16 GB**| **10 cores · 18 GB**| **~10 GB**|
-| macOS / Windows Docker Desktop | **10 CPUs · 16 GB allocated to the VM** | **10 CPUs · 18 GB** | **~10 GB** |
+| Linux (host docker)      | **10 cores · 24 GB**| **10 cores · 26 GB**| **~10 GB**|
+| macOS / Windows Docker Desktop | **10 CPUs · 24 GB allocated to the VM** | **10 CPUs · 26 GB** | **~10 GB** |
 
 (Configured in Docker Desktop → Settings → Resources. Rancher Desktop /
 Colima use the same numbers — same underlying Linux VM model. `bnk-forge`
@@ -132,12 +134,22 @@ runs as host-side containers *outside* the VM, so it costs no extra VM
 cores, just a little more host RAM.)
 
 `ocibnkctl doctor` enforces the **core** floor (`runtime.NumCPU()` vs
-`MinBaseline.Cores`); memory is not auto-checked — size the VM per the
-table above. By default (`--profile auto`) it picks the **small-host** floor
+`MinBaseline.Cores`) and reads the runtime's memory (`docker info`
+MemTotal — the VM allocation on Docker Desktop, not host RAM), warning when
+it is below `MinBaseline.MemoryGB`; `e2e` uses the same two checks to decide
+whether `deploy shrink` is needed. By default (`--profile auto`) it picks the **small-host** floor
 (4 cores) automatically when the host is below 10 cores, so a Pi passes with a
 note instead of failing; pass `--profile standard` to force the 10-core check.
 
 ### Why 10 cores is the floor (and why it's tight)
+
+> **Historical (BNK 2.3.0, before the dedicated control node).** The numbers
+> below were measured while the server node was still schedulable. Commit
+> `8ae5da4` taints it `control-plane:NoSchedule`, so the non-TMM pods no
+> longer spread across both nodes — they pile onto the TMM worker, whose
+> memory then binds first (TMM 9204 Mi + ~11.2 Gi of other pods on BNK 2.4.0).
+> That is why the memory floor rose to 24 GB and why `e2e` also checks memory
+> before skipping `deploy shrink`.
 
 TMM is pinned to the agent node via `nodeSelector: app=f5-tmm`. Unlike
 kind, **k3s leaves the server node schedulable** (no control-plane
@@ -280,7 +292,8 @@ tight host** — a Pi needs no hand-edited `poc.yaml` and no extra flags:
   roomier machine), `deploy cne` resolves it to `small` in-memory and logs it.
 - **`deploy shrink`** runs for you. `e2e` inserts a conditional `deploy-shrink`
   phase between `deploy-flo` and `deploy-cne` that engages below the standard
-  floor and is skipped on roomier hosts.
+  core floor **or** the memory floor (runtime memory < 24 GB) and is skipped
+  on roomier hosts.
 
 So on a Pi the recipe is just:
 
