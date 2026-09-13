@@ -60,11 +60,19 @@ much shorter pipeline.
 
 ▶ **[Watch the ~3-minute demo on YouTube](https://youtu.be/uUyO17K6r5M)** — a real,
 **live Claude Code session on a local model** drives `ocibnkctl` end to end:
-scaffold the PoC → deploy F5 BIG-IP Next 2.4.0 → inspect every pod → diagnose a
-stuck pod → run the scenario suite (14/14 green) → bnk-forge auto-registration
-with live Traffic Flow → teardown. The whole production pipeline (headless
-asciinema capture, Kokoro voiceover, playwright slides + bnk-forge UI shots,
-ffmpeg assembly) is in [`docs/video/live-session/`](docs/video/live-session/).
+scaffold the PoC → deploy F5 BIG-IP Next → inspect every pod → diagnose a
+stuck pod → run the scenario suite → bnk-forge auto-registration
+with live Traffic Flow → teardown.
+
+> The video was recorded in June 2026 on **BNK 2.3.0**, with an earlier
+> ocibnkctl. The workflow is the same on 2.4.0, but details on screen differ:
+> the cluster then scheduled BNK pods on the control node too, the scenarios
+> used the 2.3 F5BnkGateway model, and the suite was smaller than today's 15
+> green scenarios.
+
+The whole production pipeline (headless asciinema capture, Kokoro voiceover,
+playwright slides + bnk-forge UI shots, ffmpeg assembly) is in
+[`docs/video/live-session/`](docs/video/live-session/).
 
 ## What this tool does
 
