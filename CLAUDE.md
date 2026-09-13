@@ -20,7 +20,14 @@ kubectl/helm instead of containerized). It is itself the successor to
 `kindbnkctl` (the kind/k3d-backed predecessor).
 
 Versions are pinned in `internal/version/version.go` and stamped into the
-binary via `-ldflags` (see Makefile).
+binary via `-ldflags` (see Makefile). Important nuance: only the *cluster-side*
+pins live there (k3s node image, Calico, cert-manager, Kyverno, whereabouts —
+the latter SHA-pinned). The **FLO / CIS / cert-gen chart and image versions are
+deliberately NOT pinned in Go** — they are resolved at deploy time from the
+`f5-bigip-k8s-manifest` release-manifest chart on `repo.f5.com`, keyed off
+`version.CNEManifestVersion` (`internal/deploy/manifest.go`). A BNK bump is
+therefore usually a one-line `CNEManifestVersion` change, not a sweep of chart
+versions — verify it first with `ocibnkctl manifest probe` (no cluster needed).
 
 **Cluster backend.** A single native **k3s** backend (`internal/cluster/k3s.go`,
 implementing the `Provisioner` interface). It runs `rancher/k3s` server +
@@ -46,7 +53,17 @@ make install             # → ~/.local/bin/ocibnkctl
 make test                # go test ./...
 make smoke               # unit tests + Layer-A CLI smoke (no cluster, ~5s) — the gate before pushing
 make fmt vet tidy
+make runner-image RUNNER_VERSION=2.3.2-1 PUSH=1   # BNK Forge container-runner image
 ```
+
+Release tagging is unusual and deliberate: the binary is hard-pinned to one BNK
+release, so **every tag carries the `v<BNK>` prefix** and tool-level changes get
+an incrementing suffix rather than a new semver — `v2.3.2`, `v2.3.2-1`,
+`v2.3.2-2`. Pushing any `v*` tag triggers the goreleaser workflow
+(`.github/workflows/release.yml`), which is the canonical release path;
+`make release` is the manual fallback. The prior BNK line lives on
+`release/2.3.0`. Full publish chain (binary → runner image → `bnkctl-index`
+digest → BNK Forge) is in `docs/RELEASE.md`.
 
 Run one test:
 
@@ -81,15 +98,43 @@ and is shipped inside the binary via `go:embed` (`internal/embedded/`).
 ## Pipeline shape
 
 ```
-validate → cluster up → deploy prereqs → deploy flo → deploy cne
+validate → cluster up → deploy prereqs → deploy flo → [deploy shrink] → deploy cne
 ```
 
 Each phase is idempotent and gated by `--yolo` plus a typo-guard:
 `--confirm-cluster <name>` (cluster mutations) or `--confirm-deploy <name>`
-(in-cluster mutations) must echo the PoC name. `e2e` chains all phases.
+(in-cluster mutations) must echo the PoC name. `e2e` chains all phases
+(`internal/cli/e2e.go`, `canonicalPhases`): it is resume-safe (per-phase state
+persisted; `--no-resume` to force), supports `--phase a,b,c` and `--dry-run`,
+and writes `reports/<ts>/logs/NN-<phase>.log` plus an aggregated
+`run-<poc>-<ts>.{json,md}`.
+
+`deploy shrink` is the one **conditional auto phase** — on a full `e2e` it
+engages unprompted only when `runtime.NumCPU()` is below
+`version.FloorForWorkers(tmm_nodes)`; naming it via `--phase deploy-shrink`
+always runs it. It sits between `flo` and `cne` on purpose: Kyverno must be
+admitting before `deploy cne` creates the TMM/DSSM pods, so they land
+pre-capped instead of wedging the readiness wait on Insufficient CPU.
 
 `destroy` runs them in reverse: bnk-forge unregister → remove k3s node containers
 → remove the cluster's docker network.
+
+### Host resource floor (why `shrink` exists)
+
+The floor is dictated by scheduling `requests`, not real RSS (~6.7 Gi actual vs
+a 10-core/16 GB reservation floor) — see the long comment on
+`version.MinBaseline`. Every k3s node is a container on the *same* host, so an
+extra TMM worker adds no capacity, just another full-fat TMM: hence
+`PerExtraTMMNodeCores = 8` and `FloorForWorkers()`. `doctor` enforces cores
+only; memory there is documentation.
+
+`deploy shrink` (`internal/deploy/shrink.go`) lowers the footprint via a
+**Kyverno mutating admission policy**, not via chart values — FLO owns every
+workload spec through server-side-apply and reasserts it on a tight reconcile
+loop, so admission (which runs after FLO's apply) is the only durable layer.
+`bnk.host_profile: small` is the Raspberry-Pi-class 4-core profile
+(`MinBaselineSmallHost`); it assumes both the shrink policy *and*
+`telemetry.metricSubsystem=false`.
 
 The deploy phase composes: cert-manager via helm, Multus + whereabouts
 (cluster-wide IPAM for per-TMM net1) and the `bnk-bgp` NAD for the default
@@ -110,9 +155,23 @@ internal/cluster/      native k3s backend (Provisioner) + docker/podman wrappers
 internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kubectl/helm wrapper)
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
+internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)
 internal/embedded/     go:embed of AGENTS.md, CLAUDE.md, templates/
 internal/version/      build-stamped version + BNK 2.3.2 pins + min-spec floor
 ```
+
+**`internal/runtimeenv` matters more than its size suggests.** `ocibnkctl` is a
+host tool by design, but it also ships as a BNK Forge container-runner image
+(`runner.Dockerfile`), where host assumptions break — loopback addresses, and
+`docker run -v <local-path>` binding a path the host daemon cannot see. Both
+`cluster` and `deploy` branch on `runtimeenv.InContainer()`; `cluster` also uses
+`SelfContainerID()` to attach itself to the cluster's docker network
+(`internal/cluster/incontainer.go`) so kubectl can reach the node containers.
+
+Relatedly, `init` accepts **env overrides** (`OCIBNKCTL_CUSTOMER`,
+`_PROVIDER`, `_TMM_NODES`, `_EDGE_OCTET`, `_HOST_PROFILE`, `_TEEMS_RELAY` —
+`internal/cli/initenv.go`) so argv+env runners can scaffold a non-default PoC
+non-interactively. They only *seed* poc.yaml, which stays the source of truth.
 
 ## Scenarios framework
 
@@ -126,6 +185,15 @@ Scenarios self-register at `init()` time via `scenarios.Register(s)` and
 implement the `Scenario` interface in `internal/scenarios/scenario.go`:
 `Manifests` (pure render) → `Apply` → `Verify` → `Cleanup`. Each lives in
 its own subpackage (`aitokencount/`, `bgppeer/`, `httproutee2e/`, etc.).
+
+`Dependencies()` is the ordering contract: `scenario run --all` topo-sorts the
+green scenarios by it (`topoSortByDeps` in `internal/cli/scenario.go`) so e.g.
+`bgp-peer-frr` comes up before `http-routing-e2e`. A single-name
+`scenario run` does **not** auto-chain — a missing dep surfaces as a failed
+assertion, leaving the call to the operator. `Verify` reports rich
+`Assertion{Description, OK, Got}` values so a report reader can see what failed
+without re-running; a failed assertion does not short-circuit `Verify`.
+Subcommands: `scenario list` / `run [name|--all]` / `clean [name]`.
 
 Ratings — set by the scenario itself, only after it's been run:
 
@@ -196,3 +264,18 @@ engineering builds share one cache. Renderer/mount: `internal/cluster/
 `keys/.jwt` (TEEM activation token) must be dropped into `keys/` by the
 operator before any deploy phase. `keys/` is gitignored in scaffolded PoCs.
 These come from F5's normal license-portal channels; never check them in.
+
+## Where the long-form reasoning lives
+
+CLAUDE.md stays short on purpose; the deep write-ups are checked in:
+
+- `README.md` — "Network topology", quick start, per-phase invocation,
+  scaling, the `~/.kube/config` lifecycle, the full scenario table.
+- `docs/dataplane-modes.md` — the three TMM dataplane modes side by side, and
+  why `anycast-bgp` needs no `F5SPKVlan` (the pod IP *is* the self-IP).
+- `docs/RELEASE.md` — tag → binaries → runner image → `bnkctl-index` → Forge.
+- `docs/grpc-route-investigation.md` — worked example of how a scenario's
+  rating gets established (and why GRPCRoute's data plane is still red).
+- `docs/rpi-e2e-performance.md` — measured small-host (`host_profile: small`) run.
+- `examples/two-node.yaml`, `examples/reports/` — a reference poc.yaml and a
+  real e2e report tree.
