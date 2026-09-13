@@ -475,7 +475,7 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		// CWC creates a ResourceQuota (f5-single-license-quota) when it
 		// reconciles License; for a brief window, `kubectl apply` fails
 		// with "status unknown for quota". Retry up to ~100s.
-		if err := applyLicenseWithQuotaRetry(ctx, r, cr, out); err != nil {
+		if err := applyWithQuotaRetry(ctx, r, cr, "f5-single-license-quota", 100*time.Second, out); err != nil {
 			return fmt.Errorf("apply License CR: %w", err)
 		}
 
@@ -530,7 +530,9 @@ spec:
 	//    the GatewayClass, so it lives here rather than in a scenario.
 	fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
 		deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
-	if err := r.Apply(ctx, deploy.RenderInfra("default")); err != nil {
+	//    FLO guards the singleton with f5-single-infra-quota; a fast deploy
+	//    can reach this apply before the quota controller has populated it.
+	if err := applyWithQuotaRetry(ctx, r, deploy.RenderInfra("default"), "f5-single-infra-quota", 6*time.Minute, out); err != nil {
 		return fmt.Errorf("apply Infra: %w", err)
 	}
 	if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
@@ -890,7 +892,6 @@ func recycleF5Pods(ctx context.Context, r *deploy.Runner, out io.Writer) error {
 	return nil
 }
 
-// applyLicenseWithQuotaRetry retries `kubectl apply` while the
 // redactJWTSub trims a JWT subject claim down to "<type-prefix>-<4 chars>…"
 // for diagnostic display. The full sub is a subscription/account
 // identifier we don't want echoed verbatim into per-phase deploy logs
@@ -914,14 +915,19 @@ func redactJWTSub(s string) string {
 	return s
 }
 
-// f5-single-license-quota's status.used is still unpopulated (CWC
-// creates the quota at the same time it reconciles License, and the
-// quota controller takes a moment to populate it). Bounded retry:
-// 20 attempts × 5s = ~100s.
-func applyLicenseWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest string, out io.Writer) error {
-	const attempts = 20
+// applyWithQuotaRetry applies manifest, retrying while the API server rejects
+// it with "status unknown for quota: <quotaName>" — FLO/CWC create the F5
+// singleton ResourceQuotas (f5-single-license-quota, f5-single-infra-quota)
+// alongside the resources they guard, and the quota controller can take
+// minutes to populate status.used (measured ~3.5 min for the infra quota on a
+// fast warm-cache deploy). Any other error returns immediately. Bounded by
+// window, polling every 5s.
+func applyWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest, quotaName string, window time.Duration, out io.Writer) error {
 	const interval = 5 * time.Second
-	const quotaName = "f5-single-license-quota"
+	attempts := int(window / interval)
+	if attempts < 1 {
+		attempts = 1
+	}
 	var lastErr error
 	for i := 1; i <= attempts; i++ {
 		lastErr = r.Apply(ctx, manifest)
