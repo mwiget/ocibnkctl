@@ -326,6 +326,9 @@ A full measured run (Raspberry Pi 5, deploy + all 12 green scenarios in
 with `FailedScheduling: Insufficient cpu` (server node) or
 `Insufficient memory` (agent/TMM node — usually the first to bite, since
 TMM's 9204 Mi dominates), and `CNEInstance.Available` never goes true.
+deploy-cne then fails on its TMM gate rather than reporting DONE, naming the
+stuck pod and the scheduler's reason, e.g.
+`TMM not ready after 10m0s: 0 of 1 TMM pod(s) available — pods: f5-tmm-cx5ms Pending: 0/2 nodes are available: 1 Insufficient memory. …`
 Quick check (nodes are `k3s-<poc>-server-0` / `k3s-<poc>-agent-0`):
 
 ```bash

@@ -612,6 +612,16 @@ spec:
 		}
 	}
 
+	// TMM gate: the f5-tmm DaemonSet lives in default, outside the shared-
+	// namespace gate below, and the finalize steps above only WARN when its
+	// rollout stalls — so a TMM pod stuck Pending on Insufficient memory still
+	// ended in DONE. 10 min leaves room for a cold TMM image pull.
+	fmt.Fprintf(out, "\nVerifying f5-tmm is ready on %d worker(s) ...\n", p.Cluster.Workers())
+	if err := deploy.WaitTMMReady(ctx, r, p.Cluster.Workers(), 10*time.Minute); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "      f5-tmm ready.")
+
 	// Final gate: every workload in the shared namespace must actually be
 	// available before this phase declares success. Without it a wedged
 	// component is invisible — f5-spk-csrc sat at 0 available for 29 minutes
