@@ -1,4 +1,4 @@
-# LB "llm-chat" — HTTP Gateway (VIP 203.0.113.120) + HTTPRoute + BNKNetPolicy
+# LB "llm-chat" — HTTP Gateway (VIP 203.0.113.120) + HTTPRoute + NetPolicy
 # binding the shared aitok-counter iRule to the HTTP listener. An HTTP listener
 # (not an L4Route) is required: L4Route yields a FastL4 VS that never runs the
 # payload iRule. All four LBs share the stub-llm backend; the iRule maps the VIP
@@ -38,8 +38,8 @@ spec:
     - name: stub-llm
       port: 80
 ---
-apiVersion: gateway.k8s.f5net.com/v1alpha1
-kind: BNKNetPolicy
+apiVersion: gateway.k8s.f5.com/v1alpha1
+kind: NetPolicy
 metadata:
   name: aitok-llm-chat-attach
   namespace: scn-aitok-dssm

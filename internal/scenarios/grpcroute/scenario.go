@@ -145,7 +145,6 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
 		"03-backend.yaml",
 		"04-gateway.yaml",
 		"05-grpcroute.yaml",

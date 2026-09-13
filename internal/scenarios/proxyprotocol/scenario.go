@@ -4,7 +4,7 @@
 // The Gateway has a TCP listener on port 8000. An L4Route binds it
 // to an nginx backend Service. An F5BigCneIrule contains a PROXY v1
 // iRule (on CLIENT_ACCEPTED capture client IP/port; on
-// SERVER_CONNECTED prepend "PROXY TCP4 ..."). A BnkNetPolicy
+// SERVER_CONNECTED prepend "PROXY TCP4 ..."). A NetPolicy
 // connects the iRule to the L4Route (extensionRefs → iRule,
 // targetRefs → L4Route).
 //
@@ -30,7 +30,7 @@ var manifestFS embed.FS
 
 const (
 	scnName  = "proxy-protocol-l4"
-	scnTitle = "Proxy Protocol iRule on an L4 route (how-to #9) — F5BigCneIrule + L4Route + BnkNetPolicy"
+	scnTitle = "Proxy Protocol iRule on an L4 route (how-to #9) — F5BigCneIrule + L4Route + NetPolicy"
 )
 
 func init() { scenarios.Register(&scenario{}) }
@@ -58,7 +58,7 @@ Three new BNK CRs come together:
     full/assisted PVA mode, TMM hardware-offloads the connection
     after handshake and the iRule's TCP::respond fires in the VM
     but cannot inject bytes onto the offloaded wire.
-  - BnkNetPolicy   — wires the iRule (extensionRef) to the route
+  - NetPolicy   — wires the iRule (extensionRef) to the route
     (targetRef) so the iRule fires on this route's traffic.
 
 The nginx backend has 'listen 80 proxy_protocol' configured, so
@@ -101,11 +101,10 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 	// Apply in numbered order so each object's dependencies are in
-	// place before it lands. The BnkNetPolicy is last because it
+	// place before it lands. The NetPolicy is last because it
 	// references both the iRule and the L4Route.
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
 		"03-backend.yaml",
 		"04-gateway.yaml",
 		"05-irule.yaml",
@@ -166,10 +165,10 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	})
 
 	netpol, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-proxy", "get",
-		"bnknetpolicy/scn-proxy-attach",
+		"netpolicy.gateway.k8s.f5.com/scn-proxy-attach",
 		"-o", "jsonpath={.metadata.name}")
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "BnkNetPolicy scn-proxy-attach exists",
+		Description: "NetPolicy scn-proxy-attach exists",
 		OK:          strings.TrimSpace(netpol) == "scn-proxy-attach",
 		Got:         strings.TrimSpace(netpol),
 	})
@@ -247,7 +246,7 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 func finalize(res scenarios.Result) scenarios.Result {
 	if res.AllPassed() {
 		res.Status = "ok"
-		res.Summary = "L4Route + iRule + BnkNetPolicy reconciled; 5/5 PROXY-prefixed connections parsed by nginx"
+		res.Summary = "L4Route + iRule + NetPolicy reconciled; 5/5 PROXY-prefixed connections parsed by nginx"
 	} else {
 		res.Status = "failed"
 		var failed []string

@@ -5,7 +5,7 @@
 # tcp-l4-loadbalance scenario. PVA was empirically verified NOT to affect
 # gRPC framing (it works at both full/assisted and disabled), so unlike
 # proxy-protocol-l4 there is no need to disable it here.
-apiVersion: gateway.k8s.f5net.com/v1
+apiVersion: gateway.k8s.f5.com/v1
 kind: L4Route
 metadata:
   name: scn-grpc-l4-route

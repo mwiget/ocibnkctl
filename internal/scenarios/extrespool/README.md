@@ -25,7 +25,6 @@ without adding capability.)
 | File | What it is |
 |---|---|
 | [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-extres` |
-| [`02-bnkgateway.yaml`](manifests/02-bnkgateway.yaml) | `F5BnkGateway` IP pool for 203.0.113.101 (a separate /32 from `http-routing-e2e`'s .100 so they don't collide) |
 | [`03-backend.yaml`](manifests/03-backend.yaml) | nginx Deployment + Service + ConfigMap (marker body) — plain Calico pod |
 | [`04-gateway.yaml`](manifests/04-gateway.yaml) | Gateway with `spec.addresses=203.0.113.101`, HTTP listener |
 | [`05-pool.yaml.tmpl`](manifests/05-pool.yaml.tmpl) | text/template — Pool CR with `{{.BackendIP}}` filled at apply time from `ext-backend`'s `status.podIP` |

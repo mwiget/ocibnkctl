@@ -901,8 +901,8 @@ state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 > external `bnk-edge` FRR). Measured 2026-06-22 on a Linux host (`edge_octet`
 > 95); `ai-token-counting-dssm` added + verified live 2026-06-25. The data-plane scenarios reach Gateway VIPs by curling from the external
 > FRR's netns over BGP-learned routes — TMM's eth0 TCP hook is bypassed
-> entirely. (One non-green scenario, `fic-dynamic-ip`, is amber by design — see
-> below; `scenario run --all` skips it.)
+> entirely. All 15 scenarios are green on BNK 2.4.0 (`fic-dynamic-ip` turned green
+> with 2.4's GatewaySettings/Infra IPAM — see below).
 
 ```bash
 ocibnkctl scenario list                            # all scenarios + rating + deps
@@ -939,7 +939,7 @@ Rating is a stable hint about what's testable in this demo-TMM shape:
 | — | [`tcp-l4-loadbalance`](internal/scenarios/tcpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=TCP, weighted backends — 20/20 curls, 70/30 split observed across A/B |
 | — | [`udp-l4-loadbalance`](internal/scenarios/udpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=UDP — socat echo backend reached through the VIP |
 | — | [`grpc-loadbalance`](internal/scenarios/grpcroute) | 🟢 | bgp-peer-frr | `GRPCRoute` control plane + an `L4Route` (TCP) data plane — `grpcurl` list/unary through the L4 Gateway |
-| — | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) | 🟡 | bgp-peer-frr | use-case (FIC for Gateway API) — control plane only; see note |
+| — | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) | 🟢 | bgp-peer-frr | address-less Gateway + `GatewaySettings` → Infra IPAM pool; VIP allocated, advertised, curled |
 
 How-to #s map to the [F5 BNK how-tos index](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/);
 the bottom four come from the Use-Cases / CRD pages. **#5** (DOCA Offloads on DPU),
@@ -953,11 +953,14 @@ How the green data-plane scenarios prove the path: each creates a Gateway whose 
 external FRR's network namespace** — which has the BGP-learned route. Path: FRR netns →
 BGP route → `net1` → `br-bnk-bgp` (shared L2) → TMM net1 → Gateway listener → backend.
 
-`fic-dynamic-ip` (🟡): the manifests (F5BnkGateway, a Gateway with
-`infrastructure.parametersRef`, HTTPRoute) apply cleanly, but the Gateway never reaches
-`Programmed=True` — `f5-cne-controller` logs "No IPAM found for Gateway": the F5BnkGateway
-pool isn't auto-converted into IPAM/IPAMRange CRs in this BNK 2.3.0 demo deployment. The
-scenario asserts the control-plane state and surfaces `AddressNotAssigned` as informational.
+`fic-dynamic-ip` (🟢 since BNK 2.4.0): the Gateway omits `spec.addresses` and binds via
+`infrastructure.parametersRef` to a `GatewaySettings` CR (`gateway.k8s.f5.com/v1alpha1`,
+2.4's replacement for the `F5BnkGateway` pool). That CR references the platform IPAM pool
+in the singleton `Infra` CR (`default/infra`, `bnk-dynamic-vips` = 203.0.113.110-119)
+which `deploy cne` applies next to the GatewayClass, together with
+`USE_GATEWAY_SETTINGS=true` on the CNE controller. The controller allocates the VIP,
+programs the listener, OcNOS advertises the `/32`, and the scenario curls it. On 2.3.x
+this was amber (the F5BnkGateway pool was never bridged into IPAM CRs).
 
 `grpc-loadbalance` (🟢): cleartext gRPC through an HTTP Gateway returns
 `RST_STREAM(INTERNAL_ERROR)` — TMM unconditionally applies its `profile-http` /
@@ -1003,8 +1006,8 @@ per-scenario JSONs under `scenarios/`).
 The checked-in report ran 14m58s end-to-end: ~5m deploy
 (validate → cluster-up → deploy-prereqs/flo/cne) plus the
 12 green scenarios topo-sorted by dependency order
-(the one amber scenario — `fic-dynamic-ip` — is skipped by
-`--all` and must be run explicitly).
+(on 2.3.x the one amber scenario — `fic-dynamic-ip` — was skipped by
+`--all`; on 2.4.0 it is green and included).
 
 ## Testing
 

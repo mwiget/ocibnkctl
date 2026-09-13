@@ -1,4 +1,4 @@
-# `proxy-protocol-l4` — F5BigCneIrule + L4Route + BNKNetPolicy
+# `proxy-protocol-l4` — F5BigCneIrule + L4Route + NetPolicy
 
 F5 how-to: [Proxy Protocol iRule support for L4 routes](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/proxy-protocol.html)
 &nbsp;·&nbsp; Rating: 🟢
@@ -12,11 +12,11 @@ Three new BNK CRs come together:
   captures `[IP::client_addr]` + `[TCP::client_port]`; on
   `SERVER_CONNECTED` prepends a PROXY v1 line to the server-side
   payload via `TCP::respond`.
-- **`L4Route`** (`gateway.k8s.f5net.com/v1`) — TCP-protocol route
+- **`L4Route`** (`gateway.k8s.f5.com/v1`) — TCP-protocol route
   binding a Gateway listener to a backend Service (analogous to
   HTTPRoute but for raw L4). **Sets `spec.pvaAccelerationMode:
   disabled`** — the load-bearing knob, see below.
-- **`BNKNetPolicy`** (`gateway.k8s.f5net.com/v1alpha1`) — wires
+- **`NetPolicy`** (`gateway.k8s.f5.com/v1alpha1`) — wires
   the iRule (`extensionRefs`) to the Gateway listener
   (`targetRefs`) so the iRule fires on that listener's traffic.
 
@@ -87,12 +87,11 @@ all five test curls.
 | File | What it is |
 |---|---|
 | [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-proxy` |
-| [`02-bnkgateway.yaml`](manifests/02-bnkgateway.yaml) | `F5BnkGateway` IP pool for 203.0.113.102 |
 | [`03-backend.yaml`](manifests/03-backend.yaml) | nginx Deployment + Service + ConfigMap; `listen 80 proxy_protocol` so it parses the PROXY header (and rejects plain HTTP) |
 | [`04-gateway.yaml`](manifests/04-gateway.yaml) | Gateway with TCP listener on port 8000, `allowedRoutes.kinds = L4Route` |
 | [`05-irule.yaml`](manifests/05-irule.yaml) | `F5BigCneIrule` with the PROXY v1 iRule TCL |
 | [`06-l4route.yaml`](manifests/06-l4route.yaml) | `L4Route` binding the listener to the backend Service, **with `pvaAccelerationMode: disabled`** |
-| [`07-bnknetpolicy.yaml`](manifests/07-bnknetpolicy.yaml) | `BNKNetPolicy` linking iRule → Gateway listener (kind=Gateway is the only allowed `targetRefs.kind`; sectionName=tcp-listener) |
+| [`07-bnknetpolicy.yaml`](manifests/07-bnknetpolicy.yaml) | `NetPolicy` linking iRule → Gateway listener (kind=Gateway is the only allowed `targetRefs.kind`; sectionName=tcp-listener) |
 
 ## How to run
 

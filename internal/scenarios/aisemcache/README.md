@@ -74,7 +74,6 @@ non-matching path fall through to the LLM backend.
 | File | What it is |
 |---|---|
 | [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-semcache` |
-| [`02-bnkgateway.yaml`](manifests/02-bnkgateway.yaml) | F5BnkGateway IP pool for 203.0.113.104 |
 | [`03-stubs.yaml`](manifests/03-stubs.yaml) | stub-llm (nginx) + stub-modelcache (socat TCP listener on :5050) Deployments + Services |
 | [`04-gateway.yaml.tmpl`](manifests/04-gateway.yaml.tmpl) | text/template — Gateway with `spec.addresses=[203.0.113.104]` and the `k8s.f5.com/ai` annotation; `{{.CacheIP}}` is the stub-modelcache Service ClusterIP, filled in at apply time |
 | [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `semcache.ocibnkctl.local`, path `/v1/chat/completions` → stub-llm; carries `k8s.f5.com/sse-enabled: "true"` annotation |

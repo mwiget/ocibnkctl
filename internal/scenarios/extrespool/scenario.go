@@ -14,7 +14,7 @@
 //
 // Pipeline:
 //
-//  1. scn-extres namespace + F5BnkGateway IP pool for .101
+//  1. scn-extres namespace (Gateway VIP .101 is a static spec.address)
 //  2. ext-backend Deployment (nginx) with the bnk-bgp NAD on net1
 //  3. Gateway with static addresses=[203.0.113.101] +
 //     HTTPRoute backendRef → Pool
@@ -71,7 +71,7 @@ bgp-peer-frr setup), so the backend pod's NAD IP is reachable
 from TMM at L2.
 
 Pipeline:
-  - F5BnkGateway IP pool for the .101 range
+  - Gateway with static spec.addresses .101 (F5BnkGateway pools were dropped in BNK 2.4)
   - ext-backend Deployment (nginx on bnk-bgp NAD)
   - Gateway with spec.addresses=[203.0.113.101]
   - HTTPRoute hostname=extres.ocibnkctl.local, backendRefs to
@@ -112,10 +112,9 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 
-	// 1. Namespace + F5BnkGateway IP pool + backend.
+	// 1. Namespace + backend.
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
 		"03-backend.yaml",
 	} {
 		body, err := manifestFS.ReadFile("manifests/" + f)
@@ -279,7 +278,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	// Dropping the namespace removes Pool, HTTPRoute, Gateway,
-	// F5BnkGateway, backend Deployment + Service + ConfigMap in one
+	// backend Deployment + Service + ConfigMap in one
 	// shot.
 	_ = ctx.Runner.Kubectl(ctx.Ctx, "delete", "namespace", "scn-extres",
 		"--ignore-not-found")

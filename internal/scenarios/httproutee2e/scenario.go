@@ -14,7 +14,7 @@
 //
 // Pipeline (Apply):
 //
-//  1. GatewayClass + F5BnkGateway IP pool
+//  1. GatewayClass (applied by deploy cne; re-applied here idempotently)
 //  2. nginx Deployment+Service (2 replicas, marker body)
 //  3. Gateway with static spec.addresses=203.0.113.100
 //  4. HTTPRoute (host=ocibnkctl.local, path=/, → nginx)
@@ -117,7 +117,6 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	for _, f := range []string{
 		"01-gatewayclass.yaml",
 		"02-namespace.yaml",
-		"03-bnkgateway.yaml",
 		"04-backend.yaml",
 		"05-gateway.yaml",
 		"06-httproute.yaml",

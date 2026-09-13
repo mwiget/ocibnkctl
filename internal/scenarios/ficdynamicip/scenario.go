@@ -2,23 +2,32 @@
 // use-case "Dynamic IP address allocation" (FIC for Gateway API).
 //
 // Same plumbing as http-routing-e2e except the Gateway omits
-// spec.addresses entirely. FIC (F5 IPAM Controller, lifecycled by FLO)
-// is expected to pick the first free address from the F5BnkGateway
-// pool and populate gateway.status.addresses. The scenario asserts
-// (a) status.addresses got populated with an IP from the configured
-// pool, (b) FRR's BGP table learns that /32, (c) 5/5 end-to-end curls
-// to the dynamically-allocated address succeed.
+// spec.addresses entirely and binds, via spec.infrastructure.parametersRef,
+// to a GatewaySettings CR (BNK 2.4's replacement for the F5BnkGateway
+// pool). The GatewaySettings references the platform Infra CR's IPAM pool
+// (default/infra, bnk-dynamic-vips = 203.0.113.110-119, applied by
+// `ocibnkctl deploy cne`), and the CNE controller allocates the listener
+// address from it. The scenario asserts (a) GatewaySettings resolved,
+// (b) gateway.status.addresses got an IP from that pool and the Gateway is
+// Programmed, (c) FRR's BGP table learns that /32, (d) 5/5 end-to-end
+// curls to the dynamically-allocated address succeed.
 //
-// Reference: https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/use-cases/bnk-ficforgatewayapi.html
+// Reference: the 2.3 use-case page (…/use-cases/bnk-ficforgatewayapi.html)
+// is gone from the 2.4 docs; the 2.4 sources are the GatewaySettings and
+// Infra CRD references plus "Configure tenant traffic settings with
+// GatewaySettings" under how-tos.
 package ficdynamicip
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
+	"net"
 	"strings"
 	"time"
 
+	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 )
 
@@ -27,7 +36,7 @@ var manifestFS embed.FS
 
 const (
 	scnName  = "fic-dynamic-ip"
-	scnTitle = "Dynamic IP address allocation (use-case FIC for Gateway API) — Gateway without spec.addresses"
+	scnTitle = "Dynamic IP address allocation (FIC for Gateway API) — address-less Gateway + GatewaySettings/Infra IPAM"
 )
 
 func init() { scenarios.Register(&scenario{}) }
@@ -36,40 +45,32 @@ type scenario struct{}
 
 func (s *scenario) Name() string             { return scnName }
 func (s *scenario) Title() string            { return scnTitle }
-func (s *scenario) Rating() scenarios.Rating { return scenarios.Amber }
+func (s *scenario) Rating() scenarios.Rating { return scenarios.Green }
 func (s *scenario) Dependencies() []string   { return []string{"bgp-peer-frr"} }
 func (s *scenario) Description() string {
 	return strings.TrimSpace(`
-Demonstrates the configuration for dynamic IP allocation by FIC.
+Demonstrates dynamic IP allocation for a Gateway API Gateway.
 
-The Gateway is applied WITHOUT spec.addresses. The F5BnkGateway
-in the same namespace declares a small pool (203.0.113.110-.115)
-and the Gateway's spec.infrastructure.parametersRef binds to it
-per the F5 use-case doc. In a fully-wired FIC deployment the
-F5BnkGateway pool would produce an IPAM/IPAMRange CR pair (label
-f5bnkcr=true in the default namespace) and the IPAM controller
-would allocate from the pool, populating gateway.status.addresses.
+The Gateway is applied WITHOUT spec.addresses. A GatewaySettings CR in the
+same namespace references the platform IPAM pool (Infra default/infra,
+ipams bnk-dynamic-vips = 203.0.113.110-119 — applied by ocibnkctl deploy cne
+together with USE_GATEWAY_SETTINGS=true on the CNE controller) and the
+Gateway binds to it through spec.infrastructure.parametersRef
+(group gateway.k8s.f5.com, kind GatewaySettings).
 
-Status as of BNK 2.3.0 in ocibnkctl's demo-TMM shape (🟡):
-  - F5BnkGateway applies cleanly.
-  - Gateway applies cleanly; HTTPRoute reaches Accepted=True.
-  - The Gateway never reaches Programmed=True: f5-cne-controller
-    logs "No IPAM found for Gateway: scn-fic-gateway" because no
-    IPAM CR with label f5bnkcr=true exists in default for this
-    Gateway, and nothing in the demo deployment auto-converts the
-    F5BnkGateway pool into IPAM/IPAMRange CRs. The Gateway's
-    Programmed condition stays at "AddressNotAssigned".
+Status on BNK 2.4.0 in ocibnkctl's demo-TMM shape (🟢): the controller
+allocates an address from the pool, populates gateway.status.addresses,
+programs the listener, OcNOS advertises the /32 to the external FRR and
+end-to-end curls succeed. On 2.3.x this was amber — the F5BnkGateway pool
+was never bridged into IPAM/IPAMRange CRs in the demo deployment, so the
+Gateway stalled at AddressNotAssigned.
 
-This scenario therefore asserts the manifest-side state only:
-F5BnkGateway exists, Gateway Accepted=True, HTTPRoute Accepted
-=True. The "Programmed + status.addresses populated" path is
-left as a known gap so the docs and assertion shape match the
-reality of this cluster. Operators wanting full FIC end-to-end
-need to either (a) manually create IPAM+IPAMRange CRs in default
-labelled f5bnkcr=true, or (b) deploy on a BNK build where the
-F5BnkGateway-to-IPAM auto-bridge controller is shipped.
+Asserts: GatewaySettings Accepted+ResolvedRefs=True; Gateway
+Programmed=True with status.addresses inside the pool; HTTPRoute
+Accepted=True; FRR learned the allocated /32; 5/5 curls via the external
+FRR reach nginx through the allocated VIP.
 
-Cleanup deletes the scn-fic-dyn namespace.
+Cleanup deletes the scn-fic-dyn namespace (the platform Infra CR stays).
 `)
 }
 
@@ -98,7 +99,7 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
+		"02-gatewaysettings.yaml",
 		"03-backend.yaml",
 		"04-gateway.yaml",
 		"05-httproute.yaml",
@@ -118,18 +119,16 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	r := ctx.Runner
 	res := scenarios.Result{}
 
-	// F5BnkGateway exists and is the one we applied.
-	bnk, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
-		"f5-bnkgateway/ocibnkctl-fic",
-		"-o", "jsonpath={.metadata.name}")
+	// GatewaySettings resolved against the platform Infra pool.
+	gws, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
+		"gatewaysettings.gateway.k8s.f5.com/ocibnkctl-fic",
+		"-o", `jsonpath={.status.conditions[?(@.type=="Accepted")].status}/{.status.conditions[?(@.type=="ResolvedRefs")].status}`)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "F5BnkGateway ocibnkctl-fic exists",
-		OK:          strings.TrimSpace(bnk) == "ocibnkctl-fic",
-		Got:         strings.TrimSpace(bnk),
+		Description: "GatewaySettings ocibnkctl-fic Accepted=True + ResolvedRefs=True",
+		OK:          strings.TrimSpace(gws) == "True/True",
+		Got:         strings.TrimSpace(gws),
 	})
 
-	// nginx came up — confirms the namespace + workload manifests
-	// applied cleanly even though FIC won't program the Gateway.
 	{
 		err := r.Wait(ctx.Ctx, "scn-fic-dyn", "Available",
 			"deployment/nginx", 3*time.Minute)
@@ -139,39 +138,84 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		})
 	}
 
-	// Gateway is Accepted (controller saw it); we deliberately do NOT
-	// wait for Programmed=True here — see Description() for why.
-	gState, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
+	// Gateway Programmed with an address allocated from the pool.
+	{
+		err := r.Wait(ctx.Ctx, "scn-fic-dyn", "Programmed",
+			"gateway/scn-fic-gateway", 3*time.Minute)
+		res.Assertions = append(res.Assertions, scenarios.Assertion{
+			Description: "Gateway Programmed=True (address allocated by the controller)",
+			OK:          err == nil, Got: errString(err),
+		})
+	}
+	vip, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
 		"gateway/scn-fic-gateway",
-		"-o", "jsonpath={.status.conditions[?(@.type==\"Accepted\")].status}")
+		"-o", `jsonpath={.status.addresses[0].value}`)
+	vip = strings.TrimSpace(vip)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "Gateway Accepted=True",
-		OK:          strings.TrimSpace(gState) == "True",
-		Got:         strings.TrimSpace(gState),
-	})
-
-	// Surface the actual Programmed-condition reason in the report so
-	// the gap is visible without grepping logs. Treated as informational
-	// (always OK) — the message itself is what the operator wants to see.
-	gMsg, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
-		"gateway/scn-fic-gateway",
-		"-o", "jsonpath={.status.conditions[?(@.type==\"Programmed\")].message}")
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "Gateway Programmed condition message (informational)",
-		OK:          true,
-		Got:         oneLine(gMsg, 200),
+		Description: fmt.Sprintf("gateway.status.addresses populated from the %s pool (%s-%s)",
+			deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd),
+		OK:  inPool(vip, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd),
+		Got: vip,
 	})
 
 	rstate, _ := r.KubectlCapture(ctx.Ctx, "-n", "scn-fic-dyn", "get",
 		"httproute/scn-fic-route",
-		"-o", "jsonpath={.status.parents[0].conditions[?(@.type==\"Accepted\")].status}")
+		"-o", `jsonpath={.status.parents[0].conditions[?(@.type=="Accepted")].status}`)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute Accepted=True",
 		OK:          strings.TrimSpace(rstate) == "True",
 		Got:         strings.TrimSpace(rstate),
 	})
 
+	if vip == "" {
+		return finalize(res)
+	}
+
+	// The external FRR must learn the allocated /32 over BGP from a TMM.
+	deadline := time.Now().Add(2 * time.Minute)
+	var lastTable string
+	learned := false
+	for time.Now().Before(deadline) {
+		lastTable, _ = scenarios.FRRVtysh(ctx, "show bgp ipv4 unicast")
+		if strings.Contains(lastTable, vip+"/32") {
+			learned = true
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	res.Assertions = append(res.Assertions, scenarios.Assertion{
+		Description: "external FRR BGP table has " + vip + "/32 advertised by TMM",
+		OK:          learned,
+		Got:         oneLine(lastTable, 200),
+	})
+
+	// Data plane: curls through the allocated VIP from the FRR netns.
+	const curls = 5
+	ok := 0
+	var last string
+	for i := 0; i < curls; i++ {
+		body, err := scenarios.FRRNetnsCurl(ctx, "http://"+vip+"/", "-H", "Host: ocibnkctl-fic.local")
+		last = oneLine(body, 120)
+		if err == nil && strings.Contains(body, "ocibnkctl-scenario-fic-dynamic-ip-OK") {
+			ok++
+		}
+	}
+	res.Assertions = append(res.Assertions, scenarios.Assertion{
+		Description: fmt.Sprintf("%d/%d curls to the allocated VIP %s reach nginx", curls, curls, vip),
+		OK:          ok == curls,
+		Got:         fmt.Sprintf("%d/%d — last body: %s", ok, curls, last),
+	})
+
 	return finalize(res)
+}
+
+// inPool reports whether ip lies within [start, end] (IPv4, inclusive).
+func inPool(ip, start, end string) bool {
+	a, s, e := net.ParseIP(ip).To4(), net.ParseIP(start).To4(), net.ParseIP(end).To4()
+	if a == nil || s == nil || e == nil {
+		return false
+	}
+	return bytes.Compare(a, s) >= 0 && bytes.Compare(a, e) <= 0
 }
 
 func (s *scenario) Cleanup(ctx *scenarios.Context) error {
@@ -183,7 +227,7 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 func finalize(res scenarios.Result) scenarios.Result {
 	if res.AllPassed() {
 		res.Status = "ok"
-		res.Summary = "manifests applied, Gateway Accepted=True, HTTPRoute Accepted=True; allocation gap surfaced as informational (see Description)"
+		res.Summary = "GatewaySettings resolved; Gateway got a dynamic VIP from the Infra pool, FRR learned it, 5/5 curls succeeded"
 	} else {
 		res.Status = "failed"
 		var failed []string

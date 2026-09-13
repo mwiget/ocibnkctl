@@ -74,7 +74,6 @@ what verifies BNK's side of the feature.
 | File | What it is |
 |---|---|
 | [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-tokencount` |
-| [`02-bnkgateway.yaml`](manifests/02-bnkgateway.yaml) | F5BnkGateway IP pool for 203.0.113.103 |
 | [`03-backend.yaml`](manifests/03-backend.yaml) | Stub LLM (nginx returning fixed OpenAI-style JSON) + Service |
 | [`04-gateway.yaml`](manifests/04-gateway.yaml) | Gateway with `spec.addresses=[203.0.113.103]`, HTTP listener on :8000, and the verbatim `k8s.f5.com/ai-token-counting` annotation under `spec.infrastructure.annotations` |
 | [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `tokencount.ocibnkctl.local`, path `/v1/chat/completions` → stub-llm |

@@ -1,7 +1,8 @@
-# Gateway WITHOUT spec.addresses — FIC must allocate one from the
-# F5BnkGateway pool. The infrastructure.parametersRef explicitly binds
-# to the F5BnkGateway in the same namespace (matches the F5 how-to
-# example for dynamic allocation).
+# Gateway WITHOUT spec.addresses — the controller must allocate one from
+# the GatewaySettings' IPAM pool (Infra.ipams bnk-dynamic-vips). The
+# infrastructure.parametersRef binds to the GatewaySettings in the same
+# namespace (group gateway.k8s.f5.com, kind GatewaySettings — the BNK 2.4
+# shape; 2.3 pointed this at an F5BnkGateway).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -11,8 +12,8 @@ spec:
   gatewayClassName: bnk-gatewayclass
   infrastructure:
     parametersRef:
-      group: k8s.f5net.com
-      kind: F5BnkGateway
+      group: gateway.k8s.f5.com
+      kind: GatewaySettings
       name: ocibnkctl-fic
   listeners:
   - name: http

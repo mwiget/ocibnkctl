@@ -1,6 +1,6 @@
 # Gateway with a single TCP listener on port 8000 (matching the F5
 # docs' example port). The Gateway address is hardcoded in
-# spec.addresses; the F5BnkGateway IP-pool CR ratifies the /32.
+# spec.addresses (static VIP; no IP-pool CR needed — BNK 2.4 dropped F5BnkGateway).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -19,4 +19,4 @@ spec:
       namespaces: {from: Same}
       kinds:
       - kind: L4Route
-        group: gateway.k8s.f5net.com
+        group: gateway.k8s.f5.com

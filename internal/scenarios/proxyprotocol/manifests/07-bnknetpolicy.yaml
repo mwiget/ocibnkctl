@@ -1,10 +1,10 @@
-# BNKNetPolicy connects the F5BigCneIrule (extensionRef) to the
+# NetPolicy connects the F5BigCneIrule (extensionRef) to the
 # Gateway listener (targetRef). The CRD's targetRefs.kind is
 # restricted to Gateway only — attaching directly to an L4Route
 # isn't supported. The iRule fires on traffic for the listener
 # the L4Route binds to.
-apiVersion: gateway.k8s.f5net.com/v1alpha1
-kind: BNKNetPolicy
+apiVersion: gateway.k8s.f5.com/v1alpha1
+kind: NetPolicy
 metadata:
   name: scn-proxy-attach
   namespace: scn-proxy

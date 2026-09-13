@@ -16,4 +16,4 @@ spec:
       namespaces: {from: Same}
       kinds:
       - kind: L4Route
-        group: gateway.k8s.f5net.com
+        group: gateway.k8s.f5.com

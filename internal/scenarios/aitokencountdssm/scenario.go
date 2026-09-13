@@ -93,7 +93,7 @@ to Redis.
 
 Four LBs (Gateways with an HTTP listener on 203.0.113.120-123) share one
 llm-d-inference-sim backend. One F5BigCneIrule (04-irule.yaml), bound to each
-HTTP listener via BNKNetPolicy, fires on HTTP_RESPONSE / HTTP_RESPONSE_DATA,
+HTTP listener via NetPolicy, fires on HTTP_RESPONSE / HTTP_RESPONSE_DATA,
 parses the OpenAI usage block, detects streaming vs non-streaming from the
 response Content-Type, and table-incr's cumulative total/prompt/completion
 counters keyed by vs + mode + model (an L4Route would yield a FastL4 VS that
@@ -132,7 +132,6 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
 		"03-backend.yaml",
 		"04-irule.yaml",
 		"05-lb-chat.yaml",

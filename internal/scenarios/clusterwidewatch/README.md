@@ -31,7 +31,6 @@ existing single controller picks them up.
 | File | What it is |
 |---|---|
 | [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-cwatch` |
-| [`02-bnkgateway.yaml`](manifests/02-bnkgateway.yaml) | F5BnkGateway IP pool for 203.0.113.105 |
 | [`03-backend.yaml`](manifests/03-backend.yaml) | nginx Deployment + Service + ConfigMap |
 | [`04-gateway.yaml`](manifests/04-gateway.yaml) | Gateway with `spec.addresses=[203.0.113.105]`, HTTP listener |
 | [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `cwatch.ocibnkctl.local`, backendRefs → nginx |

@@ -34,7 +34,7 @@ earns its own scenario:
   `L4Route` with `pvaAccelerationMode: disabled` (keeps the data path in TMM's
   slow/TCL path so the iRule can read raw payload). All four share the one
   `stub-llm` backend above.
-- **One iRule** (`04-irule.yaml`), bound to every listener via `BNKNetPolicy`,
+- **One iRule** (`04-irule.yaml`), bound to every listener via `NetPolicy`,
   parses the OpenAI usage block, detects **streaming vs non-streaming** from the
   response `Content-Type` (`text/event-stream` vs `application/json`), and
   `table incr`s cumulative `total`/`prompt`/`completion` counters keyed by

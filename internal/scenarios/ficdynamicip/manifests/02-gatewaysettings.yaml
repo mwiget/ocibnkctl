@@ -1,0 +1,19 @@
+# GatewaySettings (BNK 2.4 — replaces the per-namespace F5BnkGateway pool).
+# Tenant-side: it lives in the Gateway's namespace and only *references*
+# the platform IPAM pool that `ocibnkctl deploy cne` declared in the
+# singleton Infra CR (default/infra, pool bnk-dynamic-vips =
+# 203.0.113.110-119). The Gateway below binds to it via
+# spec.infrastructure.parametersRef and omits spec.addresses, so the
+# controller allocates the listener address from that pool.
+apiVersion: gateway.k8s.f5.com/v1alpha1
+kind: GatewaySettings
+metadata:
+  name: ocibnkctl-fic
+  namespace: scn-fic-dyn
+spec:
+  ingressConfig:
+    defaultListenerNetwork:
+      ipamRefs:
+      - name: bnk-dynamic-vips
+      sourceNATConfig:
+        type: Automap

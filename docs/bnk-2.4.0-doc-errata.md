@@ -75,3 +75,19 @@ Base: https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/ ("BNK 2.4 (late
 21. **CNEInstance CRD page** does not document the `USE_GATEWAY_SETTINGS` cneController
     env var that the 2.4 install example relies on.
 22. **HTTPRoute how-to** states Gateway API "version 1.4" while the traffic page says v1.5.0.
+23. **Release notes vs shipped CRD bundle (observed on a live 2.4.0 install)**: the
+    breaking-changes section says "F5BnkGateway will no longer be valid", yet the
+    2.4.0 crd-installer still creates `f5-bnkgateways.k8s.f5net.com` (and
+    `f5-spk-vlans` / `f5-spk-egresses` / `f5-spk-staticroutes`). Conversely the old
+    `l4routes.gateway.k8s.f5net.com` and `bnknetpolicies` CRDs are gone outright —
+    the notes only say the group "changed", not that the old group is removed.
+24. **Dead link on the 2.4 site**: `use-cases/bnk-ficforgatewayapi.html` ("F5 IPAM
+    Controller for Gateway API", referenced by the ocibnkctl `fic-dynamic-ip` scenario)
+    now serves the generic F5 Cloud Docs index; the 2.4 `use-cases/index.html` links
+    only to the Vxlan CRD page. The Gateway API page still says "See F5 IPAM Controller
+    for Gateway API" with no working target.
+25. **Install docs vs shipped controller**: the 2.4 "Install a CNE instance" example
+    sets `advanced.cneController.env USE_GATEWAY_SETTINGS=true`, but a fresh 2.4.0
+    install via FLO runs f5-cne-controller with only `GATEWAY_API_VERSION=v1.4.1`; the
+    variable is undocumented in the CNEInstance CRD reference, so whether it is
+    required for GatewaySettings/Infra reconciliation is unknowable from the docs.

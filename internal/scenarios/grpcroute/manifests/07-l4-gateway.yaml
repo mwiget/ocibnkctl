@@ -3,7 +3,7 @@
 # GRPCRoute's L7 HTTP/json/httprouter profile chain corrupts gRPC's
 # HTTP/2 binary framing (RST_STREAM); a raw L4Route passes the bytes
 # through intact. This Gateway draws a second IP (203.0.113.109) from
-# the same F5BnkGateway pool as the GRPCRoute Gateway (.108), and TMM
+# the same static-VIP range as the GRPCRoute Gateway (.108), and TMM
 # advertises it over BGP the same way. See docs/grpc-route-investigation.md.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -23,4 +23,4 @@ spec:
       namespaces: {from: Same}
       kinds:
       - kind: L4Route
-        group: gateway.k8s.f5net.com
+        group: gateway.k8s.f5.com

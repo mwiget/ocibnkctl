@@ -1,9 +1,17 @@
 # Dataplane modes: how ocibnkctl attaches TMM to the network
 
 `ocibnkctl` deploys the **real, stock BIG-IP Next for Kubernetes (BNK)
-2.3.2** binary in **demo mode** (virtio in the pod netns, no DPU/SR-IOV).
+2.4.0** binary in **demo mode** (virtio in the pod netns, no DPU/SR-IOV).
 On top of that it offers three ways to present TMM's data plane, selected
 by `bnk.tmm_dataplane_mode`:
+
+> **BNK 2.4.0 status.** `selfip-dag` programs TMM's `net1` through an
+> `F5SPKVlan`, which 2.4.0 folded into the `gateway.k8s.f5.com` `Infra`
+> CRD (`spec.networks[].vlan`). The mode has not been ported to `Infra`
+> yet, so `ocibnkctl validate` refuses it on the 2.4 line; `standby` and
+> the default `anycast-bgp` are unaffected (`anycast-bgp` never used an
+> `F5SPKVlan` — see §4 — and its `Infra` CR is IPAM-only). The description
+> of `selfip-dag` below is kept as the 2.3.x design record.
 
 | `tmm_dataplane_mode` | net1 / `mapres` | L3 identity | Reachability | Reference model |
 |---|---|---|---|---|

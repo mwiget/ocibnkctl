@@ -38,7 +38,6 @@ TMM via `net1`, a normal Linux interface in the pod netns.
 |---|---|
 | [`01-gatewayclass.yaml`](manifests/01-gatewayclass.yaml) | Cluster-wide `bnk-gatewayclass` (idempotent across scenarios) |
 | [`02-namespace.yaml`](manifests/02-namespace.yaml) | `scn-httproute-e2e` |
-| [`03-bnkgateway.yaml`](manifests/03-bnkgateway.yaml) | `F5BnkGateway` IP pool (203.0.113.100-200) |
 | [`04-backend.yaml`](manifests/04-backend.yaml) | nginx Deployment + Service + ConfigMap (marker body) — plain Calico pod, no NAD |
 | [`05-gateway.yaml`](manifests/05-gateway.yaml) | Gateway with `spec.addresses=203.0.113.100`, HTTP listener |
 | [`06-httproute.yaml`](manifests/06-httproute.yaml) | HTTPRoute hostname `ocibnkctl.local`, backendRefs → nginx Service |

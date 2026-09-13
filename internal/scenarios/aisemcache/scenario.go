@@ -126,7 +126,6 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	// 1. Namespace + IP pool + stub backends.
 	for _, f := range []string{
 		"01-namespace.yaml",
-		"02-bnkgateway.yaml",
 		"03-stubs.yaml",
 	} {
 		body, err := manifestFS.ReadFile("manifests/" + f)
@@ -295,12 +294,22 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		tmmLogsB.WriteString(s)
 	}
 	tmmLogs := tmmLogsB.String()
+	// BNK 2.3 logged both a CLIENT_ACCEPTED init line and a
+	// "SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered" line per request. The
+	// controller-generated iRule in 2.4.0 (f5ingress v14.91) dropped the
+	// HTTP_REQUEST log statement — only the CLIENT_ACCEPTED init line with
+	// the annotated modelcache server survives — so that line is now the
+	// proof the iRule ran; the HTTP_REQUEST line is surfaced informationally.
 	hasIRule := strings.Contains(tmmLogs, "scn-semcache-gateway-scn-semcache-semantic-cache") &&
-		strings.Contains(tmmLogs, "Client initialized with modelcache_server=") &&
-		strings.Contains(tmmLogs, "SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered")
+		strings.Contains(tmmLogs, "Client initialized with modelcache_server=")
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "TMM semantic-cache iRule fired (CLIENT_ACCEPTED + HTTP_REQUEST events)",
+		Description: "TMM semantic-cache iRule fired (CLIENT_ACCEPTED init with the annotated modelcache server)",
 		OK:          hasIRule,
+		Got:         oneLine(extractMatching(tmmLogs, "modelcache_server="), 250),
+	})
+	res.Assertions = append(res.Assertions, scenarios.Assertion{
+		Description: "iRule HTTP_REQUEST log line (informational — absent since BNK 2.4.0)",
+		OK:          true,
 		Got:         oneLine(extractMatching(tmmLogs, "SEMANTIC_CACHE_IRULE"), 250),
 	})
 

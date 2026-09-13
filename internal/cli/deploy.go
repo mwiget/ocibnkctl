@@ -524,6 +524,19 @@ spec:
 		return err
 	}
 
+	//    Alongside it, the BNK 2.4 platform Infra CR: the singleton IPAM
+	//    source that GatewaySettings reference for address-less Gateways
+	//    (F5BnkGateway pools are gone in 2.4). Same platform-level status as
+	//    the GatewayClass, so it lives here rather than in a scenario.
+	fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
+		deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
+	if err := r.Apply(ctx, deploy.RenderInfra("default")); err != nil {
+		return fmt.Errorf("apply Infra: %w", err)
+	}
+	if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
+		return err
+	}
+
 	// 5. TMM rollout strategy.
 	//
 	// Under wholeCluster, FLO runs TMM as a DaemonSet, not a Deployment. A
@@ -964,6 +977,38 @@ func waitGatewayClassAccepted(ctx context.Context, r *deploy.Runner, out io.Writ
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// waitInfraProgrammed polls the platform Infra CR until the controller
+// reports Programmed=True. Unlike the GatewayClass there is no `kubectl wait`
+// condition shortcut worth taking: the CR starts at Accepted=Unknown
+// ("Waiting for controller"), which is also exactly what a controller
+// missing USE_GATEWAY_SETTINGS=true looks like forever — so a timeout here
+// names that switch in the error.
+func waitInfraProgrammed(ctx context.Context, r *deploy.Runner, out io.Writer, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		status, _ := r.KubectlCapture(ctx, "-n", "default", "get", "infra/"+deploy.InfraName,
+			"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}`)
+		switch strings.TrimSpace(status) {
+		case "True":
+			fmt.Fprintf(out, "      Infra %s Programmed=True\n", deploy.InfraName)
+			return nil
+		case "False":
+			msg, _ := r.KubectlCapture(ctx, "-n", "default", "get", "infra/"+deploy.InfraName,
+				"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].message}`)
+			return fmt.Errorf("Infra %s Programmed=False: %s", deploy.InfraName, strings.TrimSpace(msg))
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Infra %s never reached Programmed=True after %s — is USE_GATEWAY_SETTINGS=true on the CNE controller? (`kubectl -n default describe infra %s`)",
+				deploy.InfraName, wait, deploy.InfraName)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
 		}
 	}
 }

@@ -88,6 +88,14 @@ spec:
       env:
       - name: "TMM_DEFAULT_MTU"
         value: "1500"
+      # BNK 2.4 gates the Gateway-API network model (Infra + GatewaySettings,
+      # the replacement for F5BnkGateway pools) behind this switch — without
+      # it the controller never picks up an Infra CR ("Waiting for
+      # controller"). Static-address Gateways work either way; `deploy cne`
+      # applies the platform Infra CR so address-less Gateways can be
+      # allocated from its IPAM pool (see deploy.RenderInfra).
+      - name: "USE_GATEWAY_SETTINGS"
+        value: "true"
     tmm:
       # TMM scheduling is driven by the `app=f5-tmm` label that
       # `ocibnkctl cluster up` applies to the worker node — FLO's
