@@ -5,3 +5,6 @@ bin/
 
 # Local PoC working dirs created by `ocibnkctl init` (each is its own repo).
 labs/
+
+# Customer-supplied secrets (FAR key + license JWT) — never commit.
+keys/

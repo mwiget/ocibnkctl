@@ -135,6 +135,17 @@ func (p *PoC) Validate() ValidationResult {
 			"bnk.tmm_active_active is deprecated: it aliases to tmm_dataplane_mode: %q — "+
 				"prefer setting tmm_dataplane_mode explicitly.", DataplaneSelfIPDAG))
 	}
+	// selfip-dag programs TMM's net1 through an F5SPKVlan, which BNK 2.4.0
+	// removed (folded into the gateway.k8s.f5.com Infra CRD). The mode has
+	// not been ported to Infra yet, so refuse it up front rather than let
+	// `deploy cne` fail at the F5SPKVlan apply after a 20-minute rollout.
+	if p.BNK.IsSelfIPDAG() {
+		r.Errors = append(r.Errors, fmt.Sprintf(
+			"bnk.tmm_dataplane_mode=%s (or the legacy tmm_active_active bool) renders an "+
+				"F5SPKVlan, which BNK 2.4.0 removed in favour of the Infra CRD; the mode is not "+
+				"ported yet — use tmm_dataplane_mode: %s (the default) or %s",
+			DataplaneSelfIPDAG, DataplaneAnycastBGP, DataplaneStandby))
+	}
 	if p.BNK.IsAnycastBGP() {
 		r.Warnings = append(r.Warnings,
 			"bnk.tmm_dataplane_mode=anycast-bgp: real cross-node ECMP fan-out needs a "+

@@ -50,7 +50,7 @@ With no argument it probes the version this binary is pinned to
 (` + version.CNEManifestVersion + `). Pass a candidate tag to check a
 release before bumping internal/version/version.go:
 
-  ocibnkctl manifest probe 2.3.2-3.2598.3-0.0.392
+  ocibnkctl manifest probe 2.4.0
 
 probe verifies that the BOM's own releases[0].version matches the tag it
 was pulled under, and fails if they diverge. That check exists because

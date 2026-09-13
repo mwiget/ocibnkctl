@@ -242,13 +242,28 @@ func TestValidateDataplaneMode(t *testing.T) {
 			t.Fatalf("expected conflict error, got: %v", r.Errors)
 		}
 	})
-	t.Run("legacy bool + matching selfip-dag is fine", func(t *testing.T) {
+	t.Run("legacy bool + matching selfip-dag: consistent, but rejected on 2.4 (F5SPKVlan gone)", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.ActiveActive = true
 		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
 		r := p.Validate()
-		if !r.Valid() {
-			t.Fatalf("bool + matching mode should be valid, got: %v", r.Errors)
+		errs := strings.Join(r.Errors, "\n")
+		if strings.Contains(errs, "conflicts") {
+			t.Fatalf("bool + matching mode must not be a conflict, got: %v", r.Errors)
+		}
+		if !strings.Contains(errs, "F5SPKVlan") {
+			t.Fatalf("expected the 2.4 F5SPKVlan-removed error, got: %v", r.Errors)
+		}
+	})
+	t.Run("explicit selfip-dag rejected on 2.4 with the Infra hint", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
+		r := p.Validate()
+		if r.Valid() {
+			t.Fatal("selfip-dag should be rejected on BNK 2.4, got clean")
+		}
+		if !strings.Contains(strings.Join(r.Errors, "\n"), "Infra") {
+			t.Fatalf("expected Infra hint, got: %v", r.Errors)
 		}
 	})
 	t.Run("anycast-bgp valid with single-host caveat warning", func(t *testing.T) {
@@ -262,12 +277,12 @@ func TestValidateDataplaneMode(t *testing.T) {
 			t.Fatalf("expected single-host caveat warning, got: %v", r.Warnings)
 		}
 	})
-	t.Run("legacy bool alone warns deprecation", func(t *testing.T) {
+	t.Run("legacy bool alone warns deprecation (and is rejected on 2.4 like selfip-dag)", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.ActiveActive = true
 		r := p.Validate()
-		if !r.Valid() {
-			t.Fatalf("legacy bool alone should be valid, got: %v", r.Errors)
+		if !strings.Contains(strings.Join(r.Errors, "\n"), "F5SPKVlan") {
+			t.Fatalf("legacy bool aliases selfip-dag and must hit the 2.4 error, got: %v", r.Errors)
 		}
 		if !strings.Contains(strings.Join(r.Warnings, "\n"), "deprecated") {
 			t.Fatalf("expected deprecation warning, got: %v", r.Warnings)

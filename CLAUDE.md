@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this binary is
 
 `ocibnkctl` is a single-binary Go CLI that drives a full F5 BIG-IP Next for
-Kubernetes (BNK) 2.3.2 deployment onto a native k3s cluster: one **dedicated
+Kubernetes (BNK) 2.4.0 deployment onto a native k3s cluster: one **dedicated
 control node** (server, tainted `control-plane:NoSchedule`) plus **N worker
 nodes** (`cluster.tmm_nodes`), each labelled `app=f5-tmm`. TMM runs in **demo
 mode** (virtio inside the pod netns, no DPU/SR-IOV) as a FLO **wholeCluster
@@ -28,6 +28,9 @@ deliberately NOT pinned in Go** — they are resolved at deploy time from the
 `version.CNEManifestVersion` (`internal/deploy/manifest.go`). A BNK bump is
 therefore usually a one-line `CNEManifestVersion` change, not a sweep of chart
 versions — verify it first with `ocibnkctl manifest probe` (no cluster needed).
+Since 2.4.0 the tag is the plain product version (`2.4.0`); the 2.3 line used
+`<ver>-3.2598.3-0.0.NNN`. Doc-vs-chart tag divergence has happened before, so
+the probe is the source of truth, not the docs.
 
 **Cluster backend.** A single native **k3s** backend (`internal/cluster/k3s.go`,
 implementing the `Provisioner` interface). It runs `rancher/k3s` server +
@@ -53,16 +56,16 @@ make install             # → ~/.local/bin/ocibnkctl
 make test                # go test ./...
 make smoke               # unit tests + Layer-A CLI smoke (no cluster, ~5s) — the gate before pushing
 make fmt vet tidy
-make runner-image RUNNER_VERSION=2.3.2-1 PUSH=1   # BNK Forge container-runner image
+make runner-image RUNNER_VERSION=2.4.0-1 PUSH=1   # BNK Forge container-runner image
 ```
 
 Release tagging is unusual and deliberate: the binary is hard-pinned to one BNK
 release, so **every tag carries the `v<BNK>` prefix** and tool-level changes get
-an incrementing suffix rather than a new semver — `v2.3.2`, `v2.3.2-1`,
-`v2.3.2-2`. Pushing any `v*` tag triggers the goreleaser workflow
+an incrementing suffix rather than a new semver — `v2.4.0`, `v2.4.0-1`,
+`v2.4.0-2`. Pushing any `v*` tag triggers the goreleaser workflow
 (`.github/workflows/release.yml`), which is the canonical release path;
-`make release` is the manual fallback. The prior BNK line lives on
-`release/2.3.0`. Full publish chain (binary → runner image → `bnkctl-index`
+`make release` is the manual fallback. Prior BNK lines live on
+`release/2.3.2`, `release/2.3.1`, `release/2.3.0`. Full publish chain (binary → runner image → `bnkctl-index`
 digest → BNK Forge) is in `docs/RELEASE.md`.
 
 Run one test:
@@ -157,7 +160,7 @@ internal/scenarios/    test-case framework + per-scenario subpackages (see below
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)
 internal/embedded/     go:embed of AGENTS.md, CLAUDE.md, templates/
-internal/version/      build-stamped version + BNK 2.3.2 pins + min-spec floor
+internal/version/      build-stamped version + BNK 2.4.0 pins + min-spec floor
 ```
 
 **`internal/runtimeenv` matters more than its size suggests.** `ocibnkctl` is a
