@@ -236,12 +236,27 @@ func EnsureMultus(ctx context.Context, r *Runner) error {
 			return fmt.Errorf("apply multus: %w", err)
 		}
 	}
-	// Upstream's 50Mi limit OOMKills under CNI churn; 500Mi holds.
-	patch := `[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"500Mi"},` +
-		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"200Mi"}]`
-	_ = r.Kubectl(ctx, "-n", "kube-system", "patch", "daemonset/kube-multus-ds", "--type=json", "-p", patch)
+	// Upstream's 50Mi limit OOMKills under CNI churn; 500Mi holds. The requests
+	// follow `deploy shrink` when its policy is applied: e2e runs shrink before
+	// deploy cne installs Multus, so shrink can't cap it, and a fixed 200Mi here
+	// would undo the cap on every deploy cne re-run.
+	cpuReq, memReq := "100m", "200Mi"
+	if cpu, mem, ok := ActiveShrinkRequests(ctx, r); ok {
+		cpuReq, memReq = cpu, mem
+	}
+	_ = r.Kubectl(ctx, "-n", "kube-system", "patch", "daemonset/kube-multus-ds", "--type=json",
+		"-p", multusResourcesPatch(cpuReq, memReq))
 	return r.Kubectl(ctx, "-n", "kube-system", "rollout", "status",
 		"daemonset/kube-multus-ds", "--timeout=3m")
+}
+
+// multusResourcesPatch is the JSON patch for the Multus container: the 500Mi
+// memory limit plus the given CPU/memory requests.
+func multusResourcesPatch(cpuRequest, memoryRequest string) string {
+	return fmt.Sprintf(`[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"500Mi"},`+
+		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":%q},`+
+		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":%q}]`,
+		cpuRequest, memoryRequest)
 }
 
 // downloadAndVerify fetches url and refuses to return the body unless its

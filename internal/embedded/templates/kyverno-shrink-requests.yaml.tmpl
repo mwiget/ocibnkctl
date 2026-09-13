@@ -43,7 +43,10 @@ spec:
       # resourceFilters and the webhook namespaceSelector skip kube-system),
       # and relaxing that would weaken a cluster-wide safety guard. calico /
       # multus are plain DaemonSets with no operator, so `deploy shrink`
-      # caps them with a direct DaemonSet patch instead (see shrinkKubeSystem).
+      # caps them with a direct DaemonSet patch instead (see shrinkKubeSystem);
+      # Multus installed later by deploy cne reads the requests below back out
+      # of this policy (deploy.ActiveShrinkRequests), so keep the first
+      # container patch of this rule carrying them.
     exclude:
       any:
       # f5-tmm-pod-manager fights any mutation of the TMM pod (see above).

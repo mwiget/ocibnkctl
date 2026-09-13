@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"text/template"
 	"time"
 
@@ -24,6 +25,33 @@ const (
 	DefaultShrinkCPURequest    = "25m"
 	DefaultShrinkMemoryRequest = "128Mi"
 )
+
+// shrinkRequestsJSONPath reads the per-container request ceilings back out of
+// an applied shrink policy (the first container patch of its only rule).
+const shrinkRequestsJSONPath = `{.spec.rules[?(@.name=="shrink-f5-requests")].mutate.foreach[0].patchStrategicMerge.spec.containers[0].resources.requests.cpu} ` +
+	`{.spec.rules[?(@.name=="shrink-f5-requests")].mutate.foreach[0].patchStrategicMerge.spec.containers[0].resources.requests.memory}`
+
+// ActiveShrinkRequests returns the CPU and memory request ceilings of the
+// shrink policy applied to the cluster; ok is false when none is (Kyverno
+// absent, policy not applied). Components installed after `deploy shrink` —
+// Multus, which e2e only installs in deploy cne — use it to pick up the cap
+// the shrink step could not apply to them yet.
+func ActiveShrinkRequests(ctx context.Context, r *Runner) (cpu, memory string, ok bool) {
+	raw, err := r.KubectlCapture(ctx, "get", "clusterpolicy", ShrinkPolicyName,
+		"-o", "jsonpath="+shrinkRequestsJSONPath)
+	if err != nil {
+		return "", "", false
+	}
+	return parseShrinkRequests(raw)
+}
+
+func parseShrinkRequests(raw string) (cpu, memory string, ok bool) {
+	f := strings.Fields(raw)
+	if len(f) != 2 {
+		return "", "", false
+	}
+	return f[0], f[1], true
+}
 
 // ShrinkInputs are substituted into the embedded Kyverno policy template.
 type ShrinkInputs struct {

@@ -850,20 +850,28 @@ func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) e
 }
 
 // kubeSystemShrinkTargets are the kube-system DaemonSets capped by the
-// shrink step via a direct patch (daemonset, container). Kyverno won't
-// touch system namespaces, and these are plain manifest-installed
-// DaemonSets with no operator to revert the change.
-var kubeSystemShrinkTargets = []struct{ ds, container string }{
-	{"calico-node", "calico-node"},
-	{"kube-multus-ds", "kube-multus"},
+// shrink step via a direct patch (daemonset, container, and what it means
+// when the DaemonSet doesn't exist). Kyverno won't touch system namespaces,
+// and these are plain manifest-installed DaemonSets with no operator to
+// revert the change.
+var kubeSystemShrinkTargets = []struct{ ds, container, missing string }{
+	{"calico-node", "calico-node", "not present (different CNI?)"},
+	// e2e runs shrink before deploy cne installs Multus; deploy.EnsureMultus
+	// reads the applied shrink policy and caps Multus at install instead.
+	{"kube-multus-ds", "kube-multus", "not installed yet — deploy cne caps it when it installs Multus"},
 }
 
 // shrinkKubeSystem caps the calico/multus DaemonSet resource *requests*
-// (never limits) via `kubectl set resources`. Best-effort: a missing
-// target (e.g. a host running a different CNI) is logged and skipped, not
+// (never limits) via `kubectl set resources`. Best-effort: a target that
+// doesn't exist is noted and skipped, any other failure warns; neither is
 // fatal. Patching the DS template rolls its pods automatically.
 func shrinkKubeSystem(ctx context.Context, r *deploy.Runner, cpu, memory string, out io.Writer) {
 	for _, t := range kubeSystemShrinkTargets {
+		if _, err := r.KubectlCapture(ctx, "-n", "kube-system", "get", "daemonset/"+t.ds,
+			"-o", "name"); err != nil && strings.Contains(err.Error(), "NotFound") {
+			fmt.Fprintf(out, "      %s %s — skipping\n", t.ds, t.missing)
+			continue
+		}
 		if err := r.Kubectl(ctx, "-n", "kube-system", "set", "resources",
 			"daemonset/"+t.ds, "--containers="+t.container,
 			"--requests=cpu="+cpu+",memory="+memory); err != nil {
