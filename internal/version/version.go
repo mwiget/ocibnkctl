@@ -149,13 +149,28 @@ type ResourceSpec struct {
 // far smaller (~6.7 Gi / ~0.5 core total, even with every scenario up) —
 // the floor is dictated by scheduling reservation, not by real usage.
 //
-// doctor enforces only Cores (runtime.NumCPU vs MinBaseline.Cores);
-// MemoryGB here is documentation. MinWithBNKForge: bnk-forge runs as
-// host-side containers OUTSIDE the Docker Desktop VM, so it needs no
-// extra VM cores — just a little more host RAM.
+// That 16 GB no longer holds. Since `cluster up` dedicates the control
+// node (taint control-plane:NoSchedule), every BNK pod piles onto the
+// single TMM worker, so the worker alone must fit the whole reservation.
+// Measured on BNK 2.4.0 (2026-09-13, MacBook Air, Docker Desktop =
+// 10 CPUs / 15.6 Gi, base deploy, no scenarios): the worker requests
+// 11482 Mi before TMM + 9204 Mi for TMM ≈ 20.2 Gi — TMM stays Pending
+// with Insufficient memory on a 16 GB VM. MemoryGB is therefore the
+// container-runtime memory (`docker info` MemTotal — the VM's allocation
+// on Docker Desktop, not host RAM) at which the full, unshrunk footprint
+// schedules: 20.2 Gi measured + headroom for scenario pods. Below it
+// `e2e` auto-engages `deploy shrink` (see MemoryBelowFloor), and doctor
+// warns. The floor is per node, not per worker: each k3s node container
+// advertises the whole runtime memory, and extra workers split the
+// non-TMM pods between them, so it does not scale with tmm_nodes.
+//
+// doctor enforces Cores (runtime.NumCPU vs MinBaseline.Cores) as a hard
+// floor; memory only decides whether shrink is needed. MinWithBNKForge:
+// bnk-forge runs as host-side containers OUTSIDE the Docker Desktop VM,
+// so it needs no extra VM cores — just a little more host RAM.
 var (
-	MinBaseline     = ResourceSpec{Cores: 10, MemoryGB: 16}
-	MinWithBNKForge = ResourceSpec{Cores: 10, MemoryGB: 18}
+	MinBaseline     = ResourceSpec{Cores: 10, MemoryGB: 24}
+	MinWithBNKForge = ResourceSpec{Cores: 10, MemoryGB: 26}
 
 	// MinBaselineSmallHost is the floor for the small-host profile
 	// (bnk.host_profile=small) — a Raspberry-Pi-class 4-core / 16 GB box.
@@ -203,4 +218,12 @@ func FloorForWorkers(workers int) int {
 		workers = 1
 	}
 	return MinBaseline.Cores + (workers-1)*PerExtraTMMNodeCores
+}
+
+// MemoryBelowFloor reports whether a container runtime with memBytes of
+// total memory is below the standard memory floor (MinBaseline.MemoryGB)
+// and so needs `deploy shrink` for BNK's requests to schedule. memBytes <= 0
+// means "unknown" and never trips — the core check still applies.
+func MemoryBelowFloor(memBytes int64) bool {
+	return memBytes > 0 && memBytes < int64(MinBaseline.MemoryGB)<<30
 }

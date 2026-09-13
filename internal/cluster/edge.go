@@ -191,6 +191,16 @@ if [ -n "$IF" ]; then
   ip link set "$IF" up
   [ -n "$CIDR" ] && ip addr add "$CIDR" dev ` + edgeBridge + `
 fi
+# No MAC learning on the uplink (every non-veth port). Docker Desktop runs
+# dockerd with userland-proxy=false, which sets hairpin_mode=1 on the bnk-edge
+# bridge ports, so each ARP broadcast a TMM sends comes straight back in through
+# the uplink. The bridge would then learn the TMM's MAC on the uplink and send
+# FRR's unicast replies back out of it — TMM never resolves the peer and BGP
+# sits in Connect/Idle. Unlearned uplink MACs are simply flooded to the ports.
+for p in /sys/class/net/` + edgeBridge + `/brif/*; do
+  [ -e "$p/learning" ] || continue
+  case "${p##*/}" in veth*) ;; *) echo 0 > "$p/learning" ;; esac
+done
 # Keep the cluster net as the node's default route (attaching bnk-edge +
 # the flush above otherwise leaves the node with no default → kubelet/CNI
 # can't reach the API service IP).

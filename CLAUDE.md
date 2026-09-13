@@ -114,8 +114,10 @@ and writes `reports/<ts>/logs/NN-<phase>.log` plus an aggregated
 
 `deploy shrink` is the one **conditional auto phase** — on a full `e2e` it
 engages unprompted only when `runtime.NumCPU()` is below
-`version.FloorForWorkers(tmm_nodes)`; naming it via `--phase deploy-shrink`
-always runs it. It sits between `flo` and `cne` on purpose: Kyverno must be
+`version.FloorForWorkers(tmm_nodes)` **or** the runtime's memory (`docker info`
+MemTotal — the Docker Desktop VM, not host RAM) is below
+`MinBaseline.MemoryGB` (`version.MemoryBelowFloor`); naming it via
+`--phase deploy-shrink` always runs it. It sits between `flo` and `cne` on purpose: Kyverno must be
 admitting before `deploy cne` creates the TMM/DSSM pods, so they land
 pre-capped instead of wedging the readiness wait on Insufficient CPU.
 
@@ -128,8 +130,10 @@ The floor is dictated by scheduling `requests`, not real RSS (~6.7 Gi actual vs
 a 10-core/16 GB reservation floor) — see the long comment on
 `version.MinBaseline`. Every k3s node is a container on the *same* host, so an
 extra TMM worker adds no capacity, just another full-fat TMM: hence
-`PerExtraTMMNodeCores = 8` and `FloorForWorkers()`. `doctor` enforces cores
-only; memory there is documentation.
+`PerExtraTMMNodeCores = 8` and `FloorForWorkers()`. Memory binds per node:
+with the control node tainted, the single TMM worker must hold every BNK
+request (~20.2 Gi on 2.4.0), so a 16 GB VM needs shrink even at 10 cores —
+`MinBaseline.MemoryGB = 24`. `doctor` fails on cores and warns on memory.
 
 `deploy shrink` (`internal/deploy/shrink.go`) lowers the footprint via a
 **Kyverno mutating admission policy**, not via chart values — FLO owns every

@@ -475,7 +475,7 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		// CWC creates a ResourceQuota (f5-single-license-quota) when it
 		// reconciles License; for a brief window, `kubectl apply` fails
 		// with "status unknown for quota". Retry up to ~100s.
-		if err := applyLicenseWithQuotaRetry(ctx, r, cr, out); err != nil {
+		if err := applyWithQuotaRetry(ctx, r, cr, "f5-single-license-quota", 100*time.Second, out); err != nil {
 			return fmt.Errorf("apply License CR: %w", err)
 		}
 
@@ -530,7 +530,9 @@ spec:
 	//    the GatewayClass, so it lives here rather than in a scenario.
 	fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
 		deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
-	if err := r.Apply(ctx, deploy.RenderInfra("default")); err != nil {
+	//    FLO guards the singleton with f5-single-infra-quota; a fast deploy
+	//    can reach this apply before the quota controller has populated it.
+	if err := applyWithQuotaRetry(ctx, r, deploy.RenderInfra("default"), "f5-single-infra-quota", 6*time.Minute, out); err != nil {
 		return fmt.Errorf("apply Infra: %w", err)
 	}
 	if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
@@ -609,6 +611,16 @@ spec:
 				n, peerIP)
 		}
 	}
+
+	// TMM gate: the f5-tmm DaemonSet lives in default, outside the shared-
+	// namespace gate below, and the finalize steps above only WARN when its
+	// rollout stalls — so a TMM pod stuck Pending on Insufficient memory still
+	// ended in DONE. 10 min leaves room for a cold TMM image pull.
+	fmt.Fprintf(out, "\nVerifying f5-tmm is ready on %d worker(s) ...\n", p.Cluster.Workers())
+	if err := deploy.WaitTMMReady(ctx, r, p.Cluster.Workers(), 10*time.Minute); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "      f5-tmm ready.")
 
 	// Final gate: every workload in the shared namespace must actually be
 	// available before this phase declares success. Without it a wedged
@@ -838,20 +850,28 @@ func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) e
 }
 
 // kubeSystemShrinkTargets are the kube-system DaemonSets capped by the
-// shrink step via a direct patch (daemonset, container). Kyverno won't
-// touch system namespaces, and these are plain manifest-installed
-// DaemonSets with no operator to revert the change.
-var kubeSystemShrinkTargets = []struct{ ds, container string }{
-	{"calico-node", "calico-node"},
-	{"kube-multus-ds", "kube-multus"},
+// shrink step via a direct patch (daemonset, container, and what it means
+// when the DaemonSet doesn't exist). Kyverno won't touch system namespaces,
+// and these are plain manifest-installed DaemonSets with no operator to
+// revert the change.
+var kubeSystemShrinkTargets = []struct{ ds, container, missing string }{
+	{"calico-node", "calico-node", "not present (different CNI?)"},
+	// e2e runs shrink before deploy cne installs Multus; deploy.EnsureMultus
+	// reads the applied shrink policy and caps Multus at install instead.
+	{"kube-multus-ds", "kube-multus", "not installed yet — deploy cne caps it when it installs Multus"},
 }
 
 // shrinkKubeSystem caps the calico/multus DaemonSet resource *requests*
-// (never limits) via `kubectl set resources`. Best-effort: a missing
-// target (e.g. a host running a different CNI) is logged and skipped, not
+// (never limits) via `kubectl set resources`. Best-effort: a target that
+// doesn't exist is noted and skipped, any other failure warns; neither is
 // fatal. Patching the DS template rolls its pods automatically.
 func shrinkKubeSystem(ctx context.Context, r *deploy.Runner, cpu, memory string, out io.Writer) {
 	for _, t := range kubeSystemShrinkTargets {
+		if _, err := r.KubectlCapture(ctx, "-n", "kube-system", "get", "daemonset/"+t.ds,
+			"-o", "name"); err != nil && strings.Contains(err.Error(), "NotFound") {
+			fmt.Fprintf(out, "      %s %s — skipping\n", t.ds, t.missing)
+			continue
+		}
 		if err := r.Kubectl(ctx, "-n", "kube-system", "set", "resources",
 			"daemonset/"+t.ds, "--containers="+t.container,
 			"--requests=cpu="+cpu+",memory="+memory); err != nil {
@@ -890,7 +910,6 @@ func recycleF5Pods(ctx context.Context, r *deploy.Runner, out io.Writer) error {
 	return nil
 }
 
-// applyLicenseWithQuotaRetry retries `kubectl apply` while the
 // redactJWTSub trims a JWT subject claim down to "<type-prefix>-<4 chars>…"
 // for diagnostic display. The full sub is a subscription/account
 // identifier we don't want echoed verbatim into per-phase deploy logs
@@ -914,14 +933,19 @@ func redactJWTSub(s string) string {
 	return s
 }
 
-// f5-single-license-quota's status.used is still unpopulated (CWC
-// creates the quota at the same time it reconciles License, and the
-// quota controller takes a moment to populate it). Bounded retry:
-// 20 attempts × 5s = ~100s.
-func applyLicenseWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest string, out io.Writer) error {
-	const attempts = 20
+// applyWithQuotaRetry applies manifest, retrying while the API server rejects
+// it with "status unknown for quota: <quotaName>" — FLO/CWC create the F5
+// singleton ResourceQuotas (f5-single-license-quota, f5-single-infra-quota)
+// alongside the resources they guard, and the quota controller can take
+// minutes to populate status.used (measured ~3.5 min for the infra quota on a
+// fast warm-cache deploy). Any other error returns immediately. Bounded by
+// window, polling every 5s.
+func applyWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest, quotaName string, window time.Duration, out io.Writer) error {
 	const interval = 5 * time.Second
-	const quotaName = "f5-single-license-quota"
+	attempts := int(window / interval)
+	if attempts < 1 {
+		attempts = 1
+	}
 	var lastErr error
 	for i := 1; i <= attempts; i++ {
 		lastErr = r.Apply(ctx, manifest)

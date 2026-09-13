@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,25 @@ func (d *DockerCLI) capture(ctx context.Context, args ...string) (string, error)
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// MemTotalBytes returns the total memory the container runtime reports. On
+// Docker Desktop / podman machine that is the VM's allocation, not host RAM —
+// and it is what every k3s node container advertises as allocatable.
+func (d *DockerCLI) MemTotalBytes(ctx context.Context) (int64, error) {
+	format := "{{.MemTotal}}"
+	if d.Runtime == RuntimePodman {
+		format = "{{.Host.MemTotal}}"
+	}
+	s, err := d.capture(ctx, "info", "--format", format)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s info MemTotal %q: %w", d.Runtime, s, err)
+	}
+	return n, nil
 }
 
 // NetworkExists returns true iff a docker network named `name` is
