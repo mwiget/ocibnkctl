@@ -169,8 +169,8 @@ deploy-shrink is conditional. On a full run it engages automatically only
 when the host has fewer than the standard core floor (currently 10, plus 8
 per extra TMM node) or the container runtime reports less memory than the
 standard memory floor (currently 24 GiB — on Docker Desktop that is the VM
-allocation, not host RAM); on a roomier host it is skipped. Naming it explicitly via --phase deploy-shrink
-always runs it. It caps F5 + kube-system pod requests so the footprint fits
+allocation, not host RAM); on a roomier host it is skipped. Naming it
+explicitly via --phase deploy-shrink always runs it. It caps F5 + kube-system pod requests so the footprint fits
 a tight host (e.g. a 4-core Raspberry Pi). On such a host init already pins
 bnk.host_profile=small in poc.yaml so TMM itself also fits (metrics sidecar
 off); set host_profile=standard to force the full footprint.
