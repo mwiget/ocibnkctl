@@ -18,6 +18,9 @@ func TestRenderRegistriesYAML(t *testing.T) {
 		`"repo.f5.com":`,
 		`- "http://host.docker.internal:5003"`,
 		`- "https://repo.f5.com"`,
+		`"nvcr.io":`,
+		`- "http://host.docker.internal:5004"`, // matches regcachectl's nvcr port offset
+		`- "https://nvcr.io"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("registries.yaml missing %q\n---\n%s", want, got)

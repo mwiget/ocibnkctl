@@ -247,8 +247,11 @@ Repeated cluster create/destroy cycles re-pull the same images (each k3s node's
 containerd store is wiped on `destroy`). The companion **`regcachectl`** tool
 ([separate repo](https://github.com/mwiget/regcachectl), `../regcachectl`) runs a
 host-local pull-through cache fleet —
-anonymous `registry:2` caches for `docker.io`/`ghcr.io`/`quay.io` and a
-**credential-free blob cache** for `repo.f5.com`. Opt a cluster in via `poc.yaml`:
+anonymous `registry:2` caches for `docker.io`/`ghcr.io`/`quay.io`/`nvcr.io` and a
+**credential-free blob cache** for `repo.f5.com`. The mirror table in
+`internal/cluster/registries.go` must match regcachectl's `Upstreams` order
+(ports are `port_base+i`), so `nvcr.io` is listed even though BNK never pulls
+from it. Opt a cluster in via `poc.yaml`:
 
 ```yaml
 cluster:
