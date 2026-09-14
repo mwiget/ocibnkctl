@@ -1,15 +1,4 @@
-# Slack / chat version
-
-Hi docs team, while moving ocibnkctl (a BNK demo-cluster CLI) to BNK 2.4.0 I collected 25 errata in the public 2.4 docs (clouddocs.f5.com/bigip-next-for-kubernetes/latest). Two gaps in the 2.4.0 release notes blocked a working deploy until we found them on a live cluster:
-- `USE_GATEWAY_SETTINGS=true` isn't mentioned at all. Without it on the CNE controller, Infra and GatewaySettings sit at "Waiting for controller".
-- The notes don't say which old CRDs are actually gone. They call F5BnkGateway "no longer valid", yet 2.4.0 still installs it, while the old L4Route and BNKNetPolicy CRDs are removed outright.
-
-Several other pages break copy/paste: shell and YAML examples that don't run, wrong apiVersions, and a sample iRule that can't execute. Two how-to pages also link to an internal staging host (clouddocs.f5networks.net/…/rananth-techdocs-4462/…). The full list, with page names and what to change, is here: https://github.com/mwiget/ocibnkctl/blob/main/docs/bnk-2.4.0-doc-errata.md
-Happy to walk through any of them. Who's the right owner, or where should I file a ticket?
-
----
-
-# Ticket version
+# BNK 2.4.0 public-doc errata: report for the F5 docs team
 
 **Title:** BNK 2.4 public docs: release notes omit USE_GATEWAY_SETTINGS and CRD removals, plus 25 errata (broken examples, wrong apiVersions, internal staging links, stale 2.3 content)
 
