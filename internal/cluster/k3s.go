@@ -79,6 +79,59 @@ var k3sServerArgs = []string{
 	"--tls-san=127.0.0.1",
 }
 
+// k3sBootHookDir holds per-node boot hooks: shell snippets a later
+// `cluster up` step (EnsureEdge) installs on a node so the node boot script
+// replays them on every container start. It lives on the container's
+// writable layer, not the /run tmpfs, so it survives a runtime restart.
+const k3sBootHookDir = "/etc/ocibnk/boot.d"
+
+// k3sNodeBootScript is every node container's entrypoint (`sh -c`, with the
+// k3s argv as "$@"). It applies the host fixups a k3s-in-a-container node
+// needs, then execs k3s. These used to be `docker exec`ed once after
+// `docker run`, but none of that state survives a container restart (Docker
+// Desktop restart, host reboot, `docker restart`): the rootfs comes back
+// rprivate, the VM-global core_pattern resets and the node netns is rebuilt
+// without the edge bridge. The cluster then never recovers on its own —
+// Calico's mount-bpffs init fails, so every pod sandbox stalls. Running the
+// fixups here re-applies them on every start, before k3s (and so kubelet):
+//   - rshared rootfs: Calico's mount-bpffs init container needs /sys to be a
+//     shared mount, but `docker run --privileged` mounts the rootfs rprivate.
+//     kind/k3d do the equivalent in their node entrypoints.
+//   - /var/run -> /run: the rancher/k3s image ships them as two directories,
+//     but containerd creates pod netns under /var/run/netns while the Multus
+//     thick daemon mounts host /run/netns (kind's node image symlinks the
+//     two). Without the symlink every Multus-attached pod fails sandbox
+//     creation with "no net namespace … found". On first start no pods exist
+//     yet, so /var/run is still the image's empty dir and replacing it is safe.
+//   - /etc/iproute2/rt_tables: BNK's f5-spk-csrc DaemonSet hostPath-mounts it
+//     with an implicit File type check; the image ships no iproute2 package,
+//     so without it the pod sits in ContainerCreating forever.
+//   - kernel.core_pattern: see k3sCorePattern. It is VM-global, so it resets
+//     whenever the VM restarts; every node rewrites it (idempotent).
+//   - hooks in k3sBootHookDir (the worker edge uplink, see enslaveEdgeUplink).
+//
+// A failing fixup is reported on the container log but never blocks k3s.
+func k3sNodeBootScript() string {
+	return `mount --make-rshared / || echo "ocibnk-boot: make rootfs rshared failed" >&2
+[ -L /var/run ] || { rm -rf /var/run && ln -s /run /var/run; } || echo "ocibnk-boot: symlink /var/run -> /run failed" >&2
+[ -f /etc/iproute2/rt_tables ] || { mkdir -p /etc/iproute2 && printf '%s' '` + k3sRouteTables + `' > /etc/iproute2/rt_tables; } || echo "ocibnk-boot: write rt_tables failed" >&2
+printf '%s' '` + k3sCorePattern + `' > /proc/sys/kernel/core_pattern || echo "ocibnk-boot: set core_pattern failed" >&2
+for hook in ` + k3sBootHookDir + `/*.sh; do
+  [ -f "$hook" ] || continue
+  sh "$hook" || echo "ocibnk-boot: hook $hook failed" >&2
+done
+exec /bin/k3s "$@"
+`
+}
+
+// bootEntrypointArgs returns the `<runtime> run` tail that starts nodeImage
+// through k3sNodeBootScript with k3sArgs passed on to k3s. --entrypoint must
+// precede the image; "ocibnk-boot" fills $0 so k3sArgs land in "$@".
+func bootEntrypointArgs(nodeImage string, k3sArgs ...string) []string {
+	args := []string{"--entrypoint", "/bin/sh", nodeImage, "-c", k3sNodeBootScript(), "ocibnk-boot"}
+	return append(args, k3sArgs...)
+}
+
 // mirrorArgs returns the `<runtime> run` flags that wire a node container to
 // the local pull-through cache fleet: the registries.yaml bind-mount plus the
 // host-gateway alias so the host-published caches resolve from inside the node
@@ -333,6 +386,11 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 	// depend on the runtime's flaky embedded-DNS proxy. See hostResolvers.
 	dns := dnsArgs()
 
+	apiPort, err := freeLoopbackPort()
+	if err != nil {
+		return fmt.Errorf("pick apiserver host port: %w", err)
+	}
+
 	server := k.serverName(name)
 	serverArgs := []string{
 		"run", "-d",
@@ -344,28 +402,14 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 		"--tmpfs", "/run",
 		"-e", "K3S_TOKEN=" + k.token(name),
 		"-e", "K3S_KUBECONFIG_MODE=644",
-		"-p", "127.0.0.1::6443",
+		"-p", fmt.Sprintf("127.0.0.1:%d:6443", apiPort),
 	}
 	serverArgs = append(serverArgs, dns...)
 	serverArgs = append(serverArgs, k.mirrorArgs()...)
-	serverArgs = append(serverArgs, nodeImage, "server", "--node-name", server)
-	serverArgs = append(serverArgs, k3sServerArgs...)
+	serverArgs = append(serverArgs, bootEntrypointArgs(nodeImage,
+		append([]string{"server", "--node-name", server}, k3sServerArgs...)...)...)
 	if err := k.runVisible(ctx, serverArgs...); err != nil {
 		return fmt.Errorf("start k3s server: %w", err)
-	}
-	if err := k.linkVarRun(ctx, server); err != nil {
-		return fmt.Errorf("k3s server: %w", err)
-	}
-	if err := k.makeRshared(ctx, server); err != nil {
-		return fmt.Errorf("k3s server: %w", err)
-	}
-	if err := k.writeRouteTables(ctx, server); err != nil {
-		return fmt.Errorf("k3s server: %w", err)
-	}
-	// core_pattern is VM-global (non-namespaced); setting it once on the
-	// server fixes BNK's crashagent for pods on both nodes.
-	if err := k.setCorePattern(ctx, server); err != nil {
-		return fmt.Errorf("k3s server: %w", err)
 	}
 	if err := k.waitAPIReady(ctx, server, 3*time.Minute); err != nil {
 		return fmt.Errorf("k3s server API not ready: %w", err)
@@ -386,10 +430,9 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 	return nil
 }
 
-// startAgent runs the index-th agent container and performs the two
-// post-start fixups every node needs (the /var/run symlink for Multus
-// and the rshared remount for Calico's mount-bpffs). It does NOT wait
-// for node registration — callers decide how many nodes to wait for.
+// startAgent runs the index-th agent container (its host fixups run in
+// k3sNodeBootScript). It does NOT wait for node registration — callers
+// decide how many nodes to wait for.
 func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage string, dns []string) error {
 	if nodeImage == "" {
 		nodeImage = k.DefaultNodeImage()
@@ -409,18 +452,9 @@ func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage 
 	}
 	agentArgs = append(agentArgs, dns...)
 	agentArgs = append(agentArgs, k.mirrorArgs()...)
-	agentArgs = append(agentArgs, nodeImage, "agent", "--node-name", agent)
+	agentArgs = append(agentArgs, bootEntrypointArgs(nodeImage, "agent", "--node-name", agent)...)
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
 		return fmt.Errorf("start k3s agent %s: %w", agent, err)
-	}
-	if err := k.linkVarRun(ctx, agent); err != nil {
-		return fmt.Errorf("k3s agent %s: %w", agent, err)
-	}
-	if err := k.makeRshared(ctx, agent); err != nil {
-		return fmt.Errorf("k3s agent %s: %w", agent, err)
-	}
-	if err := k.writeRouteTables(ctx, agent); err != nil {
-		return fmt.Errorf("k3s agent %s: %w", agent, err)
 	}
 	return nil
 }
@@ -459,140 +493,26 @@ func (k *K3s) RemoveWorker(ctx context.Context, name string, index int) error {
 	return nil
 }
 
-// linkVarRun makes /var/run a symlink to /run on the node. The
-// rancher/k3s image ships them as two separate directories, but
-// containerd creates pod netns under /var/run/netns while the Multus
-// thick-plugin daemon mounts host /run/netns (and kind's node image,
-// which the predecessor ran on, symlinks the two). Without the symlink
-// the paths diverge and every Multus-attached pod fails sandbox
-// creation with "no net namespace … found". Done right after container
-// start, before any pods (so netns) exist, so /var/run is still the
-// image's empty dir and replacing it is safe.
-func (k *K3s) linkVarRun(ctx context.Context, container string) error {
-	const script = `[ -L /var/run ] || { rm -rf /var/run && ln -s /run /var/run; }`
-	var lastErr error
-	for i := 0; i < 10; i++ {
-		c := k.run(ctx, "exec", container, "sh", "-c", script)
-		var errb bytes.Buffer
-		c.Stdout = io.Discard
-		c.Stderr = &errb
-		if err := c.Run(); err == nil {
-			return nil
-		} else if s := strings.TrimSpace(errb.String()); s != "" {
-			lastErr = fmt.Errorf("%s", s)
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("symlink /var/run -> /run in %s: %w", container, lastErr)
-}
-
-// makeRshared remounts the node container's rootfs as rshared so mount
-// propagation works for in-pod mounts — Calico's mount-bpffs init
-// container needs /sys to be a shared mount, but plain `docker run
-// --privileged` mounts the rootfs rprivate. kind/k3d do the equivalent
-// in their node entrypoints; the native backend does it explicitly.
-// Retried briefly to absorb the gap between `run -d` returning and the
-// container being exec-ready.
-func (k *K3s) makeRshared(ctx context.Context, container string) error {
-	var lastErr error
-	for i := 0; i < 10; i++ {
-		c := k.run(ctx, "exec", container, "mount", "--make-rshared", "/")
-		var errb bytes.Buffer
-		c.Stdout = io.Discard
-		c.Stderr = &errb
-		if err := c.Run(); err == nil {
-			return nil
-		} else if s := strings.TrimSpace(errb.String()); s != "" {
-			lastErr = fmt.Errorf("%s", s)
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("make rootfs rshared in %s: %w", container, lastErr)
-}
-
-// k3sRouteTables is the stock iproute2 routing-table name map. The
-// rancher/k3s image ships no iproute2 package, so /etc/iproute2/rt_tables
-// is absent on every node.
+// k3sRouteTables is the stock iproute2 routing-table name map, written to
+// /etc/iproute2/rt_tables by k3sNodeBootScript. The rancher/k3s image ships
+// no iproute2 package, so the file is otherwise absent on every node.
+// The boot script single-quotes it, so it must never contain a `'`.
 const k3sRouteTables = "#\n# reserved values\n#\n" +
 	"255\tlocal\n254\tmain\n253\tdefault\n0\tunspec\n" +
 	"#\n# local\n#\n#1\tinr.ruhep\n"
 
-// writeRouteTables creates /etc/iproute2/rt_tables on the node. BNK's
-// f5-spk-csrc DaemonSet hostPath-mounts that file with an implicit File
-// type check, so on a stock rancher/k3s node the mount fails forever
-// ("hostPath type check failed: /etc/iproute2/rt_tables is not a file")
-// and the pod never leaves ContainerCreating — silently, since the
-// DaemonSet just sits at 0 available. Same class of fixup as
-// makeRshared: the node container is not a real host and lacks files
-// BNK expects a host to have. Retried briefly to absorb the gap between
-// `run -d` returning and the container being exec-ready.
-func (k *K3s) writeRouteTables(ctx context.Context, container string) error {
-	var lastErr error
-	for i := 0; i < 10; i++ {
-		c := k.run(ctx, "exec", container, "sh", "-c",
-			"mkdir -p /etc/iproute2 && cat > /etc/iproute2/rt_tables")
-		c.Stdin = strings.NewReader(k3sRouteTables)
-		var errb bytes.Buffer
-		c.Stdout = io.Discard
-		c.Stderr = &errb
-		if err := c.Run(); err == nil {
-			return nil
-		} else if s := strings.TrimSpace(errb.String()); s != "" {
-			lastErr = fmt.Errorf("%s", s)
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
+// freeLoopbackPort picks a currently free TCP port on 127.0.0.1 for the
+// apiserver's host mapping. The port has to be explicit: with an ephemeral
+// `-p 127.0.0.1::6443` the runtime assigns a new host port on every container
+// start, so after a runtime restart artifacts/kubeconfig and ~/.kube/config
+// point at a dead port. An explicit mapping is kept across restarts.
+func freeLoopbackPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
 	}
-	return fmt.Errorf("write /etc/iproute2/rt_tables in %s: %w", container, lastErr)
-}
-
-// setCorePattern installs k3sCorePattern into the host kernel's global
-// core_pattern via the privileged node container. The linuxkit default
-// (`core`) makes BNK's crashagent abort and crash-loop the whole pod (see
-// the k3sCorePattern doc). Idempotent and retried briefly to absorb the gap
-// between `run -d` returning and the container being exec-ready.
-func (k *K3s) setCorePattern(ctx context.Context, container string) error {
-	// Single-quote the value: the pipe pattern contains `|`, spaces and
-	// `%` specifiers that the shell must not interpret. printf '%s' avoids
-	// echo's escaping quirks and appends no trailing newline.
-	script := fmt.Sprintf("printf '%%s' '%s' > /proc/sys/kernel/core_pattern", k3sCorePattern)
-	var lastErr error
-	for i := 0; i < 10; i++ {
-		c := k.run(ctx, "exec", container, "sh", "-c", script)
-		var errb bytes.Buffer
-		c.Stdout = io.Discard
-		c.Stderr = &errb
-		if err := c.Run(); err == nil {
-			return nil
-		} else if s := strings.TrimSpace(errb.String()); s != "" {
-			lastErr = fmt.Errorf("%s", s)
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("set core_pattern in %s: %w", container, lastErr)
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // ensureNetwork creates the per-cluster user-defined bridge if absent.

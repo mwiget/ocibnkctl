@@ -236,6 +236,18 @@ func EnsureMultus(ctx context.Context, r *Runner) error {
 			return fmt.Errorf("apply multus: %w", err)
 		}
 	}
+	// Upstream's init container is a plain `cp` over /opt/cni/bin/multus-shim.
+	// After a node restart the kubelet is already retrying pod sandboxes
+	// through the old shim, each call blocking on the not-yet-running Multus
+	// daemon. The file is busy, so `cp` fails with "Text file busy", the init
+	// container crash-loops, the daemon never starts, and every sandbox times
+	// out: a deadlock. Installing via a temp file + rename breaks it; rename
+	// replaces the directory entry, and only opening a running binary for
+	// writing is refused. Idempotent: no rollout when already patched.
+	if err := r.Kubectl(ctx, "-n", "kube-system", "patch", "daemonset/kube-multus-ds", "--type=json",
+		"-p", multusShimInstallPatch); err != nil {
+		return fmt.Errorf("patch multus shim install: %w", err)
+	}
 	// Upstream's 50Mi limit OOMKills under CNI churn; 500Mi holds. The requests
 	// follow `deploy shrink` when its policy is applied: e2e runs shrink before
 	// deploy cne installs Multus, so shrink can't cap it, and a fixed 200Mi here
@@ -249,6 +261,14 @@ func EnsureMultus(ctx context.Context, r *Runner) error {
 	return r.Kubectl(ctx, "-n", "kube-system", "rollout", "status",
 		"daemonset/kube-multus-ds", "--timeout=3m")
 }
+
+// multusShimInstallPatch replaces the Multus init container's plain `cp` of
+// the shim binary with copy-to-temp + rename, which succeeds even while the
+// old shim is executing (see EnsureMultus). /usr/bin/sh, cp and mv all ship
+// in the multus-cni thick image.
+const multusShimInstallPatch = `[{"op":"replace","path":"/spec/template/spec/initContainers/0/command","value":` +
+	`["/usr/bin/sh","-c","cp -f /usr/src/multus-cni/bin/multus-shim /host/opt/cni/bin/multus-shim.tmp && ` +
+	`mv -f /host/opt/cni/bin/multus-shim.tmp /host/opt/cni/bin/multus-shim"]}]`
 
 // multusResourcesPatch is the JSON patch for the Multus container: the 500Mi
 // memory limit plus the given CPU/memory requests.

@@ -207,6 +207,17 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	if err := r.Kubectl(ctx, "apply", "-f", version.CalicoManifestURL); err != nil {
 		return err
 	}
+	// Pin Calico's node address to the k8s node InternalIP instead of its
+	// default first-found interface scan. A dual-homed worker (cluster net +
+	// bnk-edge) can otherwise end up on its edge address, e.g. after a
+	// container-runtime restart. The control node isn't on bnk-edge, so
+	// Calico's node-to-node BGP mesh would never establish. k3s derives
+	// InternalIP from the default route, which the node boot script keeps on
+	// the cluster network. Idempotent: no rollout when already set.
+	if err := r.Kubectl(ctx, "-n", "kube-system", "set", "env", "daemonset/calico-node",
+		"IP_AUTODETECTION_METHOD=kubernetes-internal-ip"); err != nil {
+		return fmt.Errorf("pin calico node address to the node InternalIP: %w", err)
+	}
 	nadCRD, err := embedded.Templates.ReadFile("templates/nad-crd.yaml")
 	if err != nil {
 		return fmt.Errorf("read embedded nad-crd.yaml: %w", err)

@@ -172,13 +172,39 @@ func (d *DockerCLI) connectNetworkIP(ctx context.Context, network, container, ip
 	return nil
 }
 
-// enslaveEdgeUplink moves the worker's bnk-edge uplink (the interface
+// edgeBootHook is where enslaveEdgeUplink installs the uplink script on a
+// worker, so the node boot script (k3sNodeBootScript) replays it on every
+// container start.
+const edgeBootHook = k3sBootHookDir + "/10-edge.sh"
+
+// enslaveEdgeUplink installs edgeUplinkScript as the worker's edge boot hook
+// and runs it once now. The hook matters on restart: the runtime rebuilds
+// the worker netns with bnk-edge as a plain ethN holding the edge IP, no
+// br-bnk-bgp, and possibly the edge gateway as the default route. k3s
+// derives the node InternalIP from the default route, so without the replay
+// the worker registers its edge IP. Calico's node-to-node BGP to the control
+// node (which is not on bnk-edge) never establishes and TMM net1 has no
+// bridge. The hook runs before k3s starts, so all of that is back in place
+// first.
+func (d *DockerCLI) enslaveEdgeUplink(ctx context.Context, worker, clusterGW string, octet int) error {
+	return d.exec(ctx, worker, "sh", "-c", edgeHookInstallScript(clusterGW, octet))
+}
+
+// edgeHookInstallScript writes edgeUplinkScript to edgeBootHook (a quoted
+// heredoc, so nothing in it is expanded) and runs it.
+func edgeHookInstallScript(clusterGW string, octet int) string {
+	return "mkdir -p " + k3sBootHookDir + " && cat > " + edgeBootHook + " <<'OCIBNK_HOOK'\n" +
+		edgeUplinkScript(clusterGW, octet) + "\nOCIBNK_HOOK\n" +
+		"sh " + edgeBootHook
+}
+
+// edgeUplinkScript moves the worker's bnk-edge uplink (the interface
 // holding an EdgeSubnet IP) into br-bnk-bgp and relocates its IP onto the
 // bridge, so the node keeps an L3 handle on the segment while TMM net1 veths
 // added to the same bridge become L2-adjacent to FRR/origin/the other worker.
 // The awk excludes br-bnk-bgp itself, so a second run is a no-op (the uplink
-// no longer carries an edge IP). Done before any TMM pod attaches net1.
-func (d *DockerCLI) enslaveEdgeUplink(ctx context.Context, worker, clusterGW string, octet int) error {
+// no longer carries an edge IP). Runs before any TMM pod attaches net1.
+func edgeUplinkScript(clusterGW string, octet int) string {
 	edgeMatch := fmt.Sprintf(`$4 ~ /^192\.168\.%d\./`, octet)
 	script := `set -e
 ip link add name ` + edgeBridge + ` type bridge 2>/dev/null || true
@@ -205,7 +231,7 @@ done
 # the flush above otherwise leaves the node with no default → kubelet/CNI
 # can't reach the API service IP).
 ip route replace default via ` + clusterGW + ``
-	return d.exec(ctx, worker, "sh", "-c", script)
+	return script
 }
 
 // ensureFRR runs the external FRR container on the edge net and brings up

@@ -36,8 +36,11 @@ the probe is the source of truth, not the docs.
 implementing the `Provisioner` interface). It runs `rancher/k3s` server +
 agent containers directly on the host OCI runtime (docker or podman) via the
 runtime CLI — **no kind, no k3d, no third-party orchestrator binary**.
-`CreateCluster` starts the server, remounts each node's rootfs `rshared` (so
-Calico's `mount-bpffs` init works — plain `docker run` is `rprivate`), joins
+`CreateCluster` starts every node through a boot-script entrypoint
+(`k3sNodeBootScript`). On each container start it re-applies the host fixups:
+rootfs `rshared` for Calico's `mount-bpffs` (plain `docker run` is `rprivate`),
+`/var/run`, `rt_tables`, `core_pattern`, and boot hooks such as the worker edge
+bridge. A cluster therefore survives a runtime restart. It joins
 the agent over a per-cluster bridge network with a shared token, and extracts
 the kubeconfig via `docker exec`, rewriting it to the host-mapped API port.
 k3s's bundled flannel/traefik/servicelb are disabled so Calico is the CNI;

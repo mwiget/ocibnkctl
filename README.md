@@ -468,10 +468,27 @@ run directly as containers on the host OCI runtime, driven through the
 docker/podman CLI — there is **no third-party orchestrator binary** to
 install. `cluster up` starts a server (combined control-plane + worker)
 and an agent (the TMM worker), joins them over a per-cluster docker
-bridge network, remounts each node's rootfs `rshared` (so Calico's
-`mount-bpffs` init works), then layers Calico on top of k3s with its
-bundled flannel/traefik/servicelb disabled. The result is the same
-two-node, Calico-CNI, k8s-v1.30.14 shape the deploy pipeline expects.
+bridge network, then layers Calico on top of k3s with its bundled
+flannel/traefik/servicelb disabled. The result is the same two-node,
+Calico-CNI, k8s-v1.30.14 shape the deploy pipeline expects.
+
+**Surviving a runtime restart.** A node container isn't a real host, so each
+node needs a few fixups before k3s runs:
+- the rootfs remounted `rshared`, so Calico's `mount-bpffs` init works
+- the `/var/run` → `/run` symlink for Multus
+- `/etc/iproute2/rt_tables` and `kernel.core_pattern` for BNK pods
+- on workers, the bnk-edge uplink enslaved into `br-bnk-bgp`, with the default
+  route kept on the cluster network
+
+A Docker Desktop restart, host reboot or `docker restart` discards all of
+that state. So every node starts through a boot-script entrypoint that
+re-applies it before exec'ing k3s, and `cluster up` installs the edge setup
+as a boot hook the script replays. Calico's node address is pinned to the
+k8s InternalIP, and the Multus shim is installed via copy + rename, so its
+init container can't deadlock on a busy binary. The apiserver is published
+on a fixed loopback port chosen at creation, so kubeconfigs stay valid. The
+cluster comes back on its own after a restart. Clusters created before this change keep the old
+entrypoint; recreate them (`destroy` + `e2e`) to pick it up.
 
 Podman works through the same code path — set `cluster.provider: podman`
 in `poc.yaml` (or let `doctor`/`cluster up` auto-detect the runtime).
