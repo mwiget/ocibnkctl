@@ -981,9 +981,12 @@ Rating is a stable hint about what's testable in this demo-TMM shape:
 | — | [`udp-l4-loadbalance`](internal/scenarios/udpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=UDP — socat echo backend reached through the VIP |
 | — | [`grpc-loadbalance`](internal/scenarios/grpcroute) | 🟢 | bgp-peer-frr | `GRPCRoute` control plane + an `L4Route` (TCP) data plane — `grpcurl` list/unary through the L4 Gateway |
 | — | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) | 🟢 | bgp-peer-frr | address-less Gateway + `GatewaySettings` → Infra IPAM pool; VIP allocated, advertised, curled |
+| — | [`routing-template-multitenant`](internal/scenarios/routingtemplate) | 🟡 | — | F5 design *"Expose VLAN/Self-IPs in Routing template"* — two tagged tenant VLANs on one interface; `.vlans.<name>.{selfIPv4,selfIPv6,prefixLenV4,prefixLenV6,tag,vrf}` renders per TMM with each device's own self-IP (needs `selfip-dag`, i.e. the legacy SPK model) |
+| — | [`routing-config-tenant`](internal/scenarios/routingconfigtenant) | 🟡 | routing-template-multitenant | per-tenant `RoutingConfig` — `.tenant.spec.vrf` + a non-zero per-tenant `routeDomainID` in tenant scope; renders `ip vrf red` where the design doc's global-template example renders `<no value>` |
 
 How-to #s map to the [F5 BNK how-tos index](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/);
-the bottom four come from the Use-Cases / CRD pages. **#5** (DOCA Offloads on DPU),
+the bottom six come from the Use-Cases / CRD pages (the last two from the
+Routing/Infra CRD references plus an F5 design doc). **#5** (DOCA Offloads on DPU),
 **#11** (Active-Standby NIC bonding), **#12** (TMOS DNS / CIS) are omitted — they need
 DPU silicon, bondable physical NICs, and an upstream BIG-IP GTM respectively, none of
 which this shape provides.

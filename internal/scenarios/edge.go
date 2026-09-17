@@ -8,6 +8,7 @@ import (
 
 	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/deploy"
+	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
 // External edge fabric — the BGP peer (FRR) and upstream (origin) run as their
@@ -143,4 +144,41 @@ func oneLineEdge(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// RequireAnycastBGP is the precondition every data-plane scenario shares: they
+// reach their Gateway VIPs from inside the external FRR's netns, via routes
+// TMM advertises over BGP, and only anycast-bgp leaves net1's kernel IP in
+// place for ZeBOS to source that session from. Under selfip-dag / standby
+// (TMM_MAPRES_ADDL_VETHS_ON_DP=TRUE) mapres takes net1 onto the data plane as
+// interface 1.1 and flushes its kernel address, so no session can come up.
+//
+// Called at the top of Apply so the scenario fails in a second with the reason
+// instead of timing out in FRR polls several minutes later.
+func RequireAnycastBGP(ctx *Context, scenario string) error {
+	if ctx.PoC.BNK.IsAnycastBGP() {
+		return nil
+	}
+	return fmt.Errorf("%s needs bnk.tmm_dataplane_mode=%s (it curls Gateway VIPs from the "+
+		"external FRR's netns over BGP-learned routes); this PoC is %q, where mapres grabs "+
+		"net1 as interface 1.1 and flushes its kernel IP, so ZeBOS has no BGP source address",
+		scenario, poc.DataplaneAnycastBGP, ctx.PoC.BNK.DataplaneMode())
+}
+
+// NodeNetnsRun runs a command in an ephemeral netshoot joined to a k3s NODE
+// container's network namespace, with NET_ADMIN so it can create interfaces
+// there. That is where the per-node Multus bridges live (br-f5-tmm-dag,
+// br-bnk-bgp), so it is the only vantage point from which a tenant VLAN on
+// TMM's interface 1.1 is directly addressable.
+//
+// Links created this way live in the NODE's namespace and outlive the
+// throwaway container, so whatever creates them must also remove them.
+//
+// node is the k8s node name, which the k3s backend pins to the container name
+// (`--node-name` == container name), so it doubles as the docker target.
+func NodeNetnsRun(ctx *Context, node string, cmd ...string) (string, error) {
+	args := []string{"run", "--rm", "--network", "container:" + node,
+		"--cap-add", "NET_ADMIN", edgeToolsImage}
+	args = append(args, cmd...)
+	return runtimeCapture(ctx, args...)
 }

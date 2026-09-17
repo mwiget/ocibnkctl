@@ -291,3 +291,46 @@ func InjectPasswdConfAll(ctx context.Context, r *Runner) error {
 	}
 	return lastErr
 }
+
+// OcNOSAnycastNeighborScript is the `imish -f` script that (re-)installs the
+// whole anycast-bgp router-bgp block on one TMM: the external FRR neighbor,
+// its address-family activation, and the redistribute statements.
+//
+// It exists because deleting a GlobalRoutingConfig strips the neighbor and
+// redistribute statements out of OcNOS's RUNNING config, while the routing
+// ConfigMap (RenderAnycastZebosConfigMap) is only read at TMM start — so
+// anything that programs a GlobalRoutingConfig and then removes it leaves
+// BGP down until the TMM pod restarts. The routing-template-multitenant
+// scenario pushes this on Cleanup instead of bouncing the DaemonSet.
+//
+// Same imish -f rules as OcNOSRedistributeScript: no leading `configure
+// terminal` (the script already starts in config mode). `no bgp default
+// ipv4-unicast` is deliberately omitted — OcNOS XP-6.6.0 rejects it from a
+// -f script with `% Invalid input detected`, and the neighbor is explicitly
+// activated under address-family ipv4 anyway. Two trailing exits: one leaves
+// address-family, one leaves router-bgp.
+func OcNOSAnycastNeighborScript(peerIP string) string {
+	return fmt.Sprintf(
+		`printf 'route-map RMALL permit 10\nrouter bgp %[1]d\nneighbor %[2]s remote-as %[3]d\nneighbor %[2]s update-source net1\naddress-family ipv4 unicast\nneighbor %[2]s activate\nneighbor %[2]s soft-reconfiguration inbound\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nredistribute static route-map RMALL\nexit\nexit\n' > /tmp/ocibnkctl-neighbor.cfg; imish -f /tmp/ocibnkctl-neighbor.cfg`,
+		BGPTMMAS, peerIP, BGPPeerAS)
+}
+
+// RestoreAnycastNeighbors re-installs the anycast-bgp neighbor + redistribute
+// block on every Running TMM (see OcNOSAnycastNeighborScript for why). Best
+// effort per pod; returns the last error.
+func RestoreAnycastNeighbors(ctx context.Context, r *Runner, peerIP string) error {
+	pods, err := RunningTMMPods(ctx, r)
+	if err != nil {
+		return err
+	}
+	shCmd := OcNOSAnycastNeighborScript(peerIP)
+	var lastErr error
+	for _, pod := range pods {
+		if e := r.Kubectl(ctx, "-n", "default", "exec", pod,
+			"-c", "f5-tmm-routing", "--",
+			"sh", "-c", shCmd); e != nil {
+			lastErr = e
+		}
+	}
+	return lastErr
+}

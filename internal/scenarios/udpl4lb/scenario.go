@@ -74,6 +74,9 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
+	if err := scenarios.RequireAnycastBGP(ctx, "udp-l4-loadbalance"); err != nil {
+		return err
+	}
 	r := ctx.Runner
 	for _, f := range []string{
 		"01-namespace.yaml",

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/deploy"
+	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 )
 
@@ -48,6 +49,20 @@ func (s *scenario) Description() string {
 func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) { return nil, nil }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
+	// Every data-plane scenario chains off this one, so the mode check lives
+	// here. Only anycast-bgp leaves net1's kernel IP in place for ZeBOS to
+	// source BGP from: selfip-dag and standby set
+	// TMM_MAPRES_ADDL_VETHS_ON_DP=TRUE, mapres takes net1 onto the data plane
+	// as interface 1.1 and flushes its kernel address, so no BGP session can
+	// come up. Fail fast and say so rather than polling FRR for 4 minutes.
+	if !ctx.PoC.BNK.IsAnycastBGP() {
+		return fmt.Errorf("bgp-peer-frr needs bnk.tmm_dataplane_mode=%s: this PoC is %q, "+
+			"where mapres grabs net1 (interface 1.1) and flushes its kernel IP, leaving "+
+			"ZeBOS nothing to source BGP from. Every scenario that depends on this one is "+
+			"unavailable in that mode",
+			poc.DataplaneAnycastBGP, ctx.PoC.BNK.DataplaneMode())
+	}
+
 	pods, err := tmmPods(ctx)
 	if err != nil {
 		return fmt.Errorf("list f5-tmm pods: %w", err)

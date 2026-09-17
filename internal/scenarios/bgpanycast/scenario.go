@@ -56,8 +56,10 @@ against that one external FRR:
 // Manifests / Apply / Cleanup: nothing — every resource this scenario inspects
 // is owned by the deploy path + the cluster backend's external FRR.
 func (s *scenario) Manifests(*scenarios.Context) ([]string, error) { return nil, nil }
-func (s *scenario) Apply(*scenarios.Context) error                 { return nil }
-func (s *scenario) Cleanup(*scenarios.Context) error               { return nil }
+func (s *scenario) Apply(ctx *scenarios.Context) error {
+	return scenarios.RequireAnycastBGP(ctx, "bgp-anycast")
+}
+func (s *scenario) Cleanup(*scenarios.Context) error { return nil }
 
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	r := ctx.Runner

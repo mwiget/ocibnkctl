@@ -241,6 +241,22 @@ func WriteManifest(pocDir, name, file, body string) (string, error) {
 	return path, nil
 }
 
+// ReadManifest reads back a manifest WriteManifest produced. Scenarios whose
+// manifests are rendered (rather than embedded) use it in Apply so the bytes
+// applied are exactly the bytes on disk the operator can inspect — the
+// Scenario interface's "Apply must read what Manifests just wrote".
+func ReadManifest(pocDir, name, file string) (string, error) {
+	dir, err := EnsureScenarioDir(pocDir, name)
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(filepath.Join(dir, file))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
 // Discard is an io.Writer that drops everything — handy for tests
 // that don't want scenario chatter on stderr.
 var Discard io.Writer = io.Discard

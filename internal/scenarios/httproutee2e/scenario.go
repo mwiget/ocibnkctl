@@ -110,6 +110,9 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
+	if err := scenarios.RequireAnycastBGP(ctx, "http-routing-e2e"); err != nil {
+		return err
+	}
 	r := ctx.Runner
 
 	// Apply static manifests in order. GatewayClass is idempotent;

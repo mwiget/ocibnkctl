@@ -31,6 +31,8 @@ import (
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/grpcroute"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/httproutee2e"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/proxyprotocol"
+	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingconfigtenant"
+	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingtemplate"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/tcpl4lb"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/udpl4lb"
 )
@@ -68,13 +70,23 @@ func newScenarioListCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			items := scenarios.All()
 			sort.Slice(items, func(i, j int) bool { return items[i].Name() < items[j].Name() })
-			fmt.Fprintf(out, "%-22s %-7s %-22s %s\n", "NAME", "RATING", "DEPENDS-ON", "TITLE")
-			for _, s := range items {
-				deps := strings.Join(s.Dependencies(), ",")
-				if deps == "" {
-					deps = "-"
+			// Widths follow the content: a name or dependency list longer
+			// than the old fixed 22 used to shove the whole row out of
+			// alignment.
+			nameW, depsW := len("NAME"), len("DEPENDS-ON")
+			deps := make([]string, len(items))
+			for i, s := range items {
+				deps[i] = strings.Join(s.Dependencies(), ",")
+				if deps[i] == "" {
+					deps[i] = "-"
 				}
-				fmt.Fprintf(out, "%-22s %-7s %-22s %s\n", s.Name(), s.Rating(), deps, s.Title())
+				nameW = max(nameW, len(s.Name()))
+				depsW = max(depsW, len(deps[i]))
+			}
+			row := fmt.Sprintf("%%-%ds %%-7s %%-%ds %%s\n", nameW, depsW)
+			fmt.Fprintf(out, row, "NAME", "RATING", "DEPENDS-ON", "TITLE")
+			for i, s := range items {
+				fmt.Fprintf(out, row, s.Name(), s.Rating(), deps[i], s.Title())
 			}
 			if len(items) == 0 {
 				fmt.Fprintln(out, "(no scenarios registered)")
@@ -378,4 +390,3 @@ failure doesn't abort the rest.`,
 	cmd.Flags().BoolVar(&all, "all", false, "Clean every green-rated scenario in reverse dependency order")
 	return cmd
 }
-

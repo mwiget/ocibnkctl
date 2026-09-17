@@ -99,6 +99,9 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
+	if err := scenarios.RequireAnycastBGP(ctx, "proxy-protocol-l4"); err != nil {
+		return err
+	}
 	r := ctx.Runner
 	// Apply in numbered order so each object's dependencies are in
 	// place before it lands. The NetPolicy is last because it
