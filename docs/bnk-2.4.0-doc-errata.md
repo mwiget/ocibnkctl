@@ -23,7 +23,7 @@ In the summary, **[new]** marks an issue introduced in the 2.4 docs and
 
 ## Summary for the F5 docs team
 
-**Suggested issue title:** BNK 2.4 public docs: release notes omit USE_GATEWAY_SETTINGS and CRD removals, plus 24 errata (broken examples, wrong apiVersions, internal staging URLs, stale 2.3 content)
+**Suggested issue title:** BNK 2.4 public docs: release notes omit USE_GATEWAY_SETTINGS and CRD removals, plus 25 errata (broken examples, wrong apiVersions, internal staging URLs, stale 2.3 content)
 
 Item numbers (#N) refer to the detailed entries under [Details by item](#details-by-item), which carry the quotes, anchors and 2.3 comparison.
 
@@ -46,6 +46,11 @@ Item numbers (#N) refer to the detailed entries under [Details by item](#details
   - Full timeline in #25.
 - Impact: an operator who follows the Host install pages or the DPU upgrade guide gets a controller on which the new 2.4 network model silently does nothing.
 - Ask: document the variable in the release notes' breaking changes, both upgrade guides, every CNE-instance install page and the CNEInstance CRD reference. Say that it's required for Infra/GatewaySettings, and either make it the FLO default or explain why it isn't.
+- **And the reverse: WITH it, the legacy SPK CRs go silently dead (#26) [new].** The flag is a mode switch, not a feature toggle — 2.4 ships both network models and only one is live at a time. With `USE_GATEWAY_SETTINGS=true`, `F5SPKVlan` and `Vrf` CRs are accepted by the API server and the validation webhook and then never reconciled: `.status` absent, `READY` blank forever, no gRPC push, and TMM never told (not even an error — no `vlan name not found`). Verified on one cluster/one binary: an F5SPKVlan sat status-less for 109 minutes, then programmed within a second of the controller restarting with the flag `false`.
+  - Knock-on 1: the `.vlans` routing-template variable (F5 design "Expose VLAN/Self-IPs in Routing template") IS implemented in 2.4.0 GA but is fed by reconciled F5SPKVlans, so it is absent from the template context under `true`, and a template referencing it fails to render with `index of untyped nil` — leaving TMM unconfigured.
+  - Knock-on 2: under `true`, with a VRF from `Infra.spec.vrfs`, a schema-valid tenant `RoutingConfig` panics the controller (nil deref in `RoutingConfigReconciler`), which crash-loops `f5-cne-controller`, takes `f5-validation-svc` down with it and makes **every** F5 CR apply fail admission with 502. The same CR under `false` is handled cleanly.
+  - Meanwhile the F5SPKVlan CRD page and "Configure the Network" still instruct operators to apply these CRs, with no mention of the prerequisite (#11, #14, #23).
+  - Ask: say on each SPK CRD page and in "Configure the Network" that those CRs need the flag unset/false; give the CRs a status message when the controller runs in the other model instead of leaving READY blank; and fix the panic.
 
 **2. The release notes don't say which old CRDs are removed (#23, #7) [new]**
 - The notes use two names for one CRD:
@@ -721,3 +726,113 @@ Conclusions:
   to minutes (e.g. while the Infra quota populates on a fresh deploy). Here it
   was held for 4 to 6 minutes and cleared within 25 seconds of restoring the
   flag.
+
+### 26. `USE_GATEWAY_SETTINGS` also silently disables the legacy SPK network CRs (and `.vlans`)
+
+**Verdict:** Confirmed on a live 2.4.0 cluster (2026-09-16), by flipping the
+flag on one cluster with one binary · **Since:** new in 2.4 · **See also:** #21, #25, #11, #23
+
+#25 covers one direction: without `USE_GATEWAY_SETTINGS=true` the
+Infra/GatewaySettings model does nothing. The reverse is equally true and
+equally undocumented: **BNK 2.4 ships both network models and this one flag
+decides which is live. They are mutually exclusive.**
+
+| | `USE_GATEWAY_SETTINGS=true` | `USE_GATEWAY_SETTINGS=false` (default) |
+|---|---|---|
+| `Infra.spec.networks` / `.vrfs` | program TMM (`declTmm.vlan`, `declTmm.self_ip`) | quiet |
+| `F5SPKVlan`, `Vrf` | **accepted, then never reconciled** | `READY=True`, TMM programmed |
+| `.vlans` in a `RoutingTemplate` | **empty** | populated per TMM |
+| Address-less Gateway from the Infra IPAM pool | works | unavailable |
+
+**What the failure looks like.** An `F5SPKVlan` applied with
+`USE_GATEWAY_SETTINGS=true` is accepted by the API server, logs a validation
+webhook line, and then nothing:
+
+- `kubectl get f5-spk-vlans` shows `READY` and `MESSAGE` permanently blank;
+  `.status` is absent entirely (not `False` — absent).
+- No `Add F5SPKVlan CR`, no reconcile, no `gRPC - Send GRPC Message`, no
+  `getGRPCCompleteConfigKey vlanList-…` in the controller log.
+- TMM never receives it: no `declTmm.vlan` audit event, nothing in
+  `tmctl -d blade vlan_member_stat`, and — the tell — **no**
+  `ERROR: vlan name not found` either. TMM isn't failing to apply the VLAN;
+  it was never told one exists.
+- In `selfip-dag` shape the visible symptom is a TMM with a bare interface
+  `1.1` (mapres maps `net1` there and deliberately leaves it unconfigured for
+  the VLAN CR), no self-IP, and every TMM still in standby.
+
+Measured on one cluster, one binary (f5ingress `v14.91.12-0.4.7`): an
+`F5SPKVlan` sat status-less for 109 minutes, then reached
+`Programmed=True` / `"CR config sent to all grpc endpoints"` **within one
+second** of the controller restarting with `USE_GATEWAY_SETTINGS=false`, and
+TMM logged `declTmm.vlan` + `declTmm.self_ip` with `Error: No error`.
+
+**Why it matters for the docs.** Every published instruction to apply an
+`F5SPKVlan` omits the prerequisite:
+
+- the [F5SPKVlan CRD page](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/spk-vlan-crd.html)
+  is unchanged from 2.3, with no mention of the flag, of Infra, or of
+  deprecation (#11). It also doesn't document the `vrf` field the live CRD has.
+- [Configure the Network → Apply internal and external F5SPKVlan CR](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/network/bnk-configure-network.html#apply-internal-and-external-f5spkvlan-cr)
+  still walks the operator through applying two of them.
+- The migration appendix says SPK networking CRs "are compatible with BNK and
+  do not need format changes" and "should apply without changes" (#14). True
+  and misleading: they apply, and then nothing happens.
+- The release notes say only that Infra "consolidates `F5SPKVlan`,
+  `F5SPKStaticRoute`, `VRF`, and `VxLAN` CRDs" — "consolidates" is doing the
+  work of "and disables them when the flag is set" (#23).
+
+An operator following the current network guide on a 2.4.0 install with
+`USE_GATEWAY_SETTINGS=true` gets no error, a blank `READY` column, and no
+networking.
+
+**Knock-on: the `.vlans` routing-template variable.** The F5 design *"Expose
+VLAN/Self-IPs in Routing template"* adds
+`.vlans.<name>.{selfIPv4,selfIPv6,prefixLenV4,prefixLenV6,tag,vrf}`, keyed by
+`F5SPKVlanSpec.name`. It **is** implemented in 2.4.0 GA, but it is fed by
+reconciled `F5SPKVlan`s — so under `USE_GATEWAY_SETTINGS=true` it is simply
+absent from the template context, and a template that references it fails to
+render with `index of untyped nil`, leaving TMM unconfigured. Dumping the
+whole context with `{{ printf "%v" . }}` is the reliable way to tell the two
+cases apart:
+
+```
+# true  → map[global:… routeDomainID:0 secrets:…]
+# false → map[global:… routeDomainID:0 secrets:… vlans:map[tenant-red:map[
+#           prefixLenV4:24 prefixLenV6:112 selfIPv4:198.51.100.11
+#           selfIPv6:2001:db8:1::11 tag:2001 vrf:red] …]]
+```
+
+Note the design doc's own §2.1 "proof" renders `ip vrf <no value>` because it
+uses `.tenant.spec.vrf` in a **global** template; `.tenant` (and a non-zero
+`.routeDomainID`) exist only in a `RoutingConfig`'s tenant-scoped render.
+
+**Knock-on: a controller panic.** Under `USE_GATEWAY_SETTINGS=true`, with a
+VRF programmed via `Infra.spec.vrfs`, a schema-valid tenant `RoutingConfig`
+segfaults the controller:
+
+```
+panic: runtime error: invalid memory address or nil pointer dereference
+  [signal SIGSEGV code=0x1 addr=0x30]
+  internal/k8s.(*LoadBalancerController).RoutingConfigReconciler
+      /builds/f5ingress/f5ingress/internal/k8s/controller_routingconfig.go:562
+  ← syncRoutingConfig (controller_routingconfig.go:178)
+  ← sync (controller.go:4503) ← taskQueue.processItems (priority_queue.go:275)
+```
+
+`f5-cne-controller` then crash-loops, taking `f5-validation-svc` with it, so
+**every** F5 CR apply cluster-wide fails admission with
+`failed calling webhook "f5validate.f5net.com" … 502 Bad Gateway`. The same CR
+under `USE_GATEWAY_SETTINGS=false` is handled cleanly
+(`Programmed=True`, controller untouched), so the trigger is specific to the
+Infra-VRF path. A minimal repro was not isolated.
+
+**Suggested doc fixes.** State on the F5SPKVlan / F5SPKStaticRoute / Vrf CRD
+pages and in "Configure the Network" that these CRs require
+`USE_GATEWAY_SETTINGS` to be unset/false, and that Infra is the alternative —
+not a superset. Document the flag itself (#21 notes it appears in exactly one
+install example). Give `F5SPKVlan` CRs a `status` message when the controller
+is running in the other model, instead of leaving `READY` blank forever.
+
+**Reproduced by:** `ocibnkctl scenario run routing-template-multitenant` and
+`… routing-config-tenant` (both require `bnk.tmm_dataplane_mode: selfip-dag`,
+which renders `USE_GATEWAY_SETTINGS=false`).

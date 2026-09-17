@@ -290,5 +290,8 @@ CLAUDE.md stays short on purpose; the deep write-ups are checked in:
 - `docs/grpc-route-investigation.md` — worked example of how a scenario's
   rating gets established (and why GRPCRoute's data plane is still red).
 - `docs/rpi-e2e-performance.md` — measured small-host (`host_profile: small`) run.
+- `docs/handoff-tenant-vlans-2.4.0.md` — BNK 2.4.0 per-tenant VLAN self-IP
+  (`.vlans`) investigation: what is verified, the two blocked data-plane gaps
+  with signatures, the repro rig, and the open questions for F5 engineering.
 - `examples/two-node.yaml`, `examples/reports/` — a reference poc.yaml and a
   real e2e report tree.
