@@ -528,15 +528,28 @@ spec:
 	//    source that GatewaySettings reference for address-less Gateways
 	//    (F5BnkGateway pools are gone in 2.4). Same platform-level status as
 	//    the GatewayClass, so it lives here rather than in a scenario.
-	fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
-		deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
-	//    FLO guards the singleton with f5-single-infra-quota; a fast deploy
-	//    can reach this apply before the quota controller has populated it.
-	if err := applyWithQuotaRetry(ctx, r, deploy.RenderInfra("default"), "f5-single-infra-quota", 6*time.Minute, out); err != nil {
-		return fmt.Errorf("apply Infra: %w", err)
-	}
-	if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
-		return err
+	//
+	//    Skipped entirely in selfip-dag, which runs the LEGACY SPK network
+	//    model (USE_GATEWAY_SETTINGS=false). There the controller never
+	//    reconciles an Infra CR, so applying one only buys a guaranteed
+	//    3-minute wait and a failed deploy — and the IPAM pool it carries is
+	//    unusable in that mode anyway. See docs/bnk-2.4.0-doc-errata.md #26.
+	if p.BNK.IsSelfIPDAG() {
+		fmt.Fprintf(out, "      Skipping Infra %s: %s runs the legacy SPK network model "+
+			"(USE_GATEWAY_SETTINGS=false), where Infra/GatewaySettings are not reconciled.\n",
+			deploy.InfraName, poc.DataplaneSelfIPDAG)
+		fmt.Fprintln(out, "      Address-less Gateways (the fic-dynamic-ip scenario) are unavailable in this mode.")
+	} else {
+		fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
+			deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
+		//    FLO guards the singleton with f5-single-infra-quota; a fast deploy
+		//    can reach this apply before the quota controller has populated it.
+		if err := applyWithQuotaRetry(ctx, r, deploy.RenderInfra("default"), "f5-single-infra-quota", 6*time.Minute, out); err != nil {
+			return fmt.Errorf("apply Infra: %w", err)
+		}
+		if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
+			return err
+		}
 	}
 
 	// 5. TMM rollout strategy.
@@ -564,9 +577,24 @@ spec:
 		waitTMMNet1(ctx, r, deploy.DAGNADName, 3*time.Minute, out)
 		if err := r.Apply(ctx, deploy.RenderTMMVlan("default", selfIPs)); err != nil {
 			fmt.Fprintf(out, "      WARN: apply F5SPKVlan: %v (TMMs stay standby)\n", err)
-		} else {
-			fmt.Fprintf(out, "      %d TMM(s) active; each serves its own node's ingress\n", n)
+			break
 		}
+		// Applying the CR is not the same as programming TMM. BNK 2.4 only
+		// reconciles F5SPKVlan in the legacy SPK network model; under
+		// USE_GATEWAY_SETTINGS=true the CR is accepted and then silently
+		// ignored — no status, no gRPC push, TMM left with a bare interface
+		// 1.1 and no self-IP. Reporting "N TMM(s) active" without checking is
+		// how that stayed invisible, so wait for Programmed and say what
+		// actually happened.
+		if err := deploy.WaitVlanProgrammed(ctx, r, deploy.DAGVlanName, 2*time.Minute); err != nil {
+			fmt.Fprintf(out, "      WARN: F5SPKVlan %s did not reach Programmed: %v\n", deploy.DAGVlanName, err)
+			fmt.Fprintf(out, "      TMMs stay standby (no self-IP on interface %s). Check the CNE controller's\n", deploy.DAGInterface)
+			fmt.Fprintln(out, "      USE_GATEWAY_SETTINGS is false — the legacy SPK model is the only one that")
+			fmt.Fprintln(out, "      reconciles F5SPKVlan. See docs/bnk-2.4.0-doc-errata.md #26.")
+			break
+		}
+		fmt.Fprintf(out, "      F5SPKVlan %s Programmed; %d TMM(s) active, each serving its own node's ingress\n",
+			deploy.DAGVlanName, n)
 	case p.BNK.IsAnycastBGP():
 		// Every TMM peers the EXTERNAL bnk-edge FRR (created by `cluster up`,
 		// at EdgeFRRIP on the shared L2) over net1 and advertises its routes

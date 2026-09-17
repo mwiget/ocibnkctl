@@ -242,7 +242,7 @@ func TestValidateDataplaneMode(t *testing.T) {
 			t.Fatalf("expected conflict error, got: %v", r.Errors)
 		}
 	})
-	t.Run("legacy bool + matching selfip-dag: consistent, but rejected on 2.4 (F5SPKVlan gone)", func(t *testing.T) {
+	t.Run("legacy bool + matching selfip-dag: consistent, not a conflict", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.ActiveActive = true
 		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
@@ -251,19 +251,21 @@ func TestValidateDataplaneMode(t *testing.T) {
 		if strings.Contains(errs, "conflicts") {
 			t.Fatalf("bool + matching mode must not be a conflict, got: %v", r.Errors)
 		}
-		if !strings.Contains(errs, "F5SPKVlan") {
-			t.Fatalf("expected the 2.4 F5SPKVlan-removed error, got: %v", r.Errors)
-		}
 	})
-	t.Run("explicit selfip-dag rejected on 2.4 with the Infra hint", func(t *testing.T) {
+	// selfip-dag was a hard error on the reading that 2.4.0 removed F5SPKVlan.
+	// It did not: the CRD is installed and served, and f5devcentral/f5-bnk-udf
+	// drives TMM with F5SPKVlan in demo mode. The mode is allowed again, with
+	// a warning that the 2.4 self-IP binding is unverified.
+	t.Run("explicit selfip-dag allowed on 2.4 with an unverified-binding warning", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
 		r := p.Validate()
-		if r.Valid() {
-			t.Fatal("selfip-dag should be rejected on BNK 2.4, got clean")
+		if !r.Valid() {
+			t.Fatalf("selfip-dag should be valid on BNK 2.4, got: %v", r.Errors)
 		}
-		if !strings.Contains(strings.Join(r.Errors, "\n"), "Infra") {
-			t.Fatalf("expected Infra hint, got: %v", r.Errors)
+		warns := strings.Join(r.Warnings, "\n")
+		if !strings.Contains(warns, "USE_GATEWAY_SETTINGS=false") || !strings.Contains(warns, "fic-dynamic-ip") {
+			t.Fatalf("expected the legacy-SPK-model trade-off warning, got: %v", r.Warnings)
 		}
 	})
 	t.Run("anycast-bgp valid with single-host caveat warning", func(t *testing.T) {
@@ -277,15 +279,19 @@ func TestValidateDataplaneMode(t *testing.T) {
 			t.Fatalf("expected single-host caveat warning, got: %v", r.Warnings)
 		}
 	})
-	t.Run("legacy bool alone warns deprecation (and is rejected on 2.4 like selfip-dag)", func(t *testing.T) {
+	t.Run("legacy bool alone warns deprecation and aliases selfip-dag", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.ActiveActive = true
 		r := p.Validate()
-		if !strings.Contains(strings.Join(r.Errors, "\n"), "F5SPKVlan") {
-			t.Fatalf("legacy bool aliases selfip-dag and must hit the 2.4 error, got: %v", r.Errors)
+		if !r.Valid() {
+			t.Fatalf("legacy bool should be valid (deprecated, not rejected), got: %v", r.Errors)
 		}
-		if !strings.Contains(strings.Join(r.Warnings, "\n"), "deprecated") {
+		warns := strings.Join(r.Warnings, "\n")
+		if !strings.Contains(warns, "deprecated") {
 			t.Fatalf("expected deprecation warning, got: %v", r.Warnings)
+		}
+		if !strings.Contains(warns, "USE_GATEWAY_SETTINGS=false") {
+			t.Fatalf("legacy bool aliases selfip-dag and must carry its warning, got: %v", r.Warnings)
 		}
 	})
 }

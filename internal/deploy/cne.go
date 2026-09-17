@@ -34,6 +34,20 @@ type CNEInputs struct {
 	// grabs net1 as interface 1.1); anycast-bgp uses FALSE so net1 keeps
 	// its kernel IP for ZeBOS to bind BGP to.
 	MapresOnDP string
+	// UseGatewaySettings is the cneController env USE_GATEWAY_SETTINGS
+	// ("true"/"false"). It selects which of BNK 2.4's two mutually
+	// exclusive network models the controller reconciles:
+	//
+	//   true  — Infra + GatewaySettings. Needed for the platform Infra IPAM
+	//           pool (address-less Gateways, the fic-dynamic-ip scenario).
+	//           Legacy F5SPKVlan/Vrf CRs are accepted and then ignored.
+	//   false — legacy SPK. F5SPKVlan/Vrf reconcile and program TMM, and the
+	//           RoutingTemplate `.vlans` variable is populated per TMM.
+	//
+	// selfip-dag drives TMM through an F5SPKVlan, so it MUST have false;
+	// every other mode wants true. See the long comment in
+	// templates/cne-instance.yaml.tmpl.
+	UseGatewaySettings string
 }
 
 // RenderCNEInstance builds the CNEInstance YAML for a PoC. Demo
@@ -49,6 +63,8 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 		TMMNodeLabelVal: v,
 		MetricSubsystem: p.BNK.MetricSubsystemEnabled(),
 		MapresOnDP:      "TRUE",
+		// Infra/GatewaySettings is the default; selfip-dag flips it below.
+		UseGatewaySettings: "true",
 	}
 	// Dispatch NAD + mapres by data-plane mode:
 	//   standby     — no NAD, mapres TRUE (BNK's stock HA shape).
@@ -59,6 +75,11 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 	switch p.BNK.DataplaneMode() {
 	case poc.DataplaneSelfIPDAG:
 		in.NetworkAttachments = []string{DAGNADName}
+		// The F5SPKVlan this mode renders is only reconciled in the legacy
+		// SPK model; with USE_GATEWAY_SETTINGS=true the controller accepts
+		// the CR and silently never programs it, leaving TMM with a bare
+		// interface 1.1 and no self-IP.
+		in.UseGatewaySettings = "false"
 	case poc.DataplaneAnycastBGP:
 		in.NetworkAttachments = []string{BGPNADName}
 		in.MapresOnDP = "FALSE"

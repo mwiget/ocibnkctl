@@ -135,16 +135,21 @@ func (p *PoC) Validate() ValidationResult {
 			"bnk.tmm_active_active is deprecated: it aliases to tmm_dataplane_mode: %q — "+
 				"prefer setting tmm_dataplane_mode explicitly.", DataplaneSelfIPDAG))
 	}
-	// selfip-dag programs TMM's net1 through an F5SPKVlan, which BNK 2.4.0
-	// removed (folded into the gateway.k8s.f5.com Infra CRD). The mode has
-	// not been ported to Infra yet, so refuse it up front rather than let
-	// `deploy cne` fail at the F5SPKVlan apply after a 20-minute rollout.
+	// selfip-dag drives TMM through an F5SPKVlan, which BNK 2.4.0 only
+	// reconciles in the legacy SPK model — so this mode renders the
+	// CNEInstance with USE_GATEWAY_SETTINGS=false (see deploy.RenderCNEInstance).
+	// That switch is cluster-wide and mutually exclusive: it silences
+	// Infra/GatewaySettings, and with it the platform IPAM pool that
+	// address-less Gateways allocate from. Warn rather than reject — the mode
+	// works, it just costs the Infra-dependent scenarios.
 	if p.BNK.IsSelfIPDAG() {
-		r.Errors = append(r.Errors, fmt.Sprintf(
-			"bnk.tmm_dataplane_mode=%s (or the legacy tmm_active_active bool) renders an "+
-				"F5SPKVlan, which BNK 2.4.0 removed in favour of the Infra CRD; the mode is not "+
-				"ported yet — use tmm_dataplane_mode: %s (the default) or %s",
-			DataplaneSelfIPDAG, DataplaneAnycastBGP, DataplaneStandby))
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"bnk.tmm_dataplane_mode=%s selects BNK 2.4's LEGACY SPK network model "+
+				"(USE_GATEWAY_SETTINGS=false) so its F5SPKVlan is reconciled. That disables "+
+				"Infra/GatewaySettings cluster-wide: the fic-dynamic-ip scenario (address-less "+
+				"Gateway from the platform IPAM pool) will not work, and the BGP/edge scenarios "+
+				"assume %s. In exchange the RoutingTemplate `.vlans` variable is populated.",
+			DataplaneSelfIPDAG, DataplaneAnycastBGP))
 	}
 	if p.BNK.IsAnycastBGP() {
 		r.Warnings = append(r.Warnings,

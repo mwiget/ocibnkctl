@@ -88,14 +88,28 @@ spec:
       env:
       - name: "TMM_DEFAULT_MTU"
         value: "1500"
-      # BNK 2.4 gates the Gateway-API network model (Infra + GatewaySettings,
-      # the replacement for F5BnkGateway pools) behind this switch — without
-      # it the controller never picks up an Infra CR ("Waiting for
-      # controller"). Static-address Gateways work either way; `deploy cne`
-      # applies the platform Infra CR so address-less Gateways can be
-      # allocated from its IPAM pool (see deploy.RenderInfra).
+      # BNK 2.4 ships BOTH network models and this switch picks which one the
+      # controller actually reconciles. They are mutually exclusive:
+      #
+      #   true  — Infra + GatewaySettings (the F5BnkGateway-pool replacement).
+      #           Infra.spec.networks/vrfs program TMM; address-less Gateways
+      #           allocate from the platform Infra IPAM pool (deploy.RenderInfra,
+      #           the fic-dynamic-ip scenario). The LEGACY SPK CRs (F5SPKVlan,
+      #           Vrf) are still accepted by the API server and the validation
+      #           webhook, then never reconciled — no .status, no gRPC push, TMM
+      #           never hears about them — and the RoutingTemplate `.vlans`
+      #           variable stays empty because nothing populates it.
+      #   false — legacy SPK model. F5SPKVlan/Vrf reconcile normally
+      #           (READY=True, "CR config sent to all grpc endpoints",
+      #           declTmm.vlan + declTmm.self_ip on TMM) and `.vlans` is
+      #           populated per TMM. Infra/GatewaySettings go quiet.
+      #
+      # Verified on one cluster, one binary (f5ingress v14.91.12-0.4.7), by
+      # flipping this var: see docs/bnk-2.4.0-doc-errata.md. selfip-dag needs
+      # false — it drives TMM through an F5SPKVlan — which is why that mode
+      # silently produced a bare interface 1.1 while this was hardcoded true.
       - name: "USE_GATEWAY_SETTINGS"
-        value: "true"
+        value: "{{ .UseGatewaySettings }}"
     tmm:
       # TMM scheduling is driven by the `app=f5-tmm` label that
       # `ocibnkctl cluster up` applies to the worker node — FLO's

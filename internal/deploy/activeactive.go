@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Active/active multi-TMM data-plane constants.
@@ -308,4 +309,39 @@ func downloadAndVerify(ctx context.Context, url, wantHex string) ([]byte, error)
 func sha256Sum(b []byte) []byte {
 	s := sha256.Sum256(b)
 	return s[:]
+}
+
+// WaitVlanProgrammed blocks until the named F5SPKVlan reports
+// Programmed=True, i.e. the controller actually pushed it to every TMM
+// ("CR config sent to all grpc endpoints").
+//
+// Applying the CR proves nothing on its own: BNK 2.4 ships two mutually
+// exclusive network models and only the legacy SPK one (cneController env
+// USE_GATEWAY_SETTINGS=false) reconciles F5SPKVlan. Under
+// Infra/GatewaySettings the CR is accepted by the API server and the
+// validation webhook and then ignored forever — `.status` stays absent, READY
+// blank, and TMM is never told the VLAN exists (not even an error). See
+// docs/bnk-2.4.0-doc-errata.md #26.
+func WaitVlanProgrammed(ctx context.Context, r *Runner, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		out, _ := r.KubectlCapture(ctx, "-n", "default", "get", "f5-spk-vlans", name,
+			"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}`)
+		last = strings.TrimSpace(out)
+		if last == "True" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if last == "" {
+				return fmt.Errorf("no Programmed condition after %s (status never written)", timeout)
+			}
+			return fmt.Errorf("Programmed=%s after %s", last, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }

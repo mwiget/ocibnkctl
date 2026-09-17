@@ -57,12 +57,19 @@ func TestRenderCNEInstance_DataplaneMode(t *testing.T) {
 		bnk        poc.BNK
 		wantNAD    string // "" → no networkAttachments block
 		wantMapres string
+		// USE_GATEWAY_SETTINGS picks which of BNK 2.4's two network models
+		// the controller reconciles. selfip-dag drives TMM through an
+		// F5SPKVlan, which is ONLY reconciled in the legacy SPK model — with
+		// "true" the CR is accepted and silently never programmed, leaving
+		// TMM with a bare interface 1.1. Every other mode wants the Infra +
+		// GatewaySettings model (platform IPAM pool, fic-dynamic-ip).
+		wantGWS string
 	}{
-		{"default is anycast-bgp", poc.BNK{}, BGPNADName, `value: "FALSE"`},
-		{"explicit standby", poc.BNK{TMMDataplaneMode: poc.DataplaneStandby}, "", `value: "TRUE"`},
-		{"selfip-dag", poc.BNK{TMMDataplaneMode: poc.DataplaneSelfIPDAG}, DAGNADName, `value: "TRUE"`},
-		{"legacy bool == selfip-dag", poc.BNK{ActiveActive: true}, DAGNADName, `value: "TRUE"`},
-		{"anycast-bgp", poc.BNK{TMMDataplaneMode: poc.DataplaneAnycastBGP}, BGPNADName, `value: "FALSE"`},
+		{"default is anycast-bgp", poc.BNK{}, BGPNADName, `value: "FALSE"`, `"true"`},
+		{"explicit standby", poc.BNK{TMMDataplaneMode: poc.DataplaneStandby}, "", `value: "TRUE"`, `"true"`},
+		{"selfip-dag", poc.BNK{TMMDataplaneMode: poc.DataplaneSelfIPDAG}, DAGNADName, `value: "TRUE"`, `"false"`},
+		{"legacy bool == selfip-dag", poc.BNK{ActiveActive: true}, DAGNADName, `value: "TRUE"`, `"false"`},
+		{"anycast-bgp", poc.BNK{TMMDataplaneMode: poc.DataplaneAnycastBGP}, BGPNADName, `value: "FALSE"`, `"true"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,6 +86,15 @@ func TestRenderCNEInstance_DataplaneMode(t *testing.T) {
 			}
 			if !strings.Contains(got, c.wantMapres) {
 				t.Errorf("want mapres %s:\n%s", c.wantMapres, got)
+			}
+			// The env block renders as: - name: "USE_GATEWAY_SETTINGS"
+			//                             value: "<want>"
+			i := strings.Index(got, `"USE_GATEWAY_SETTINGS"`)
+			if i < 0 {
+				t.Fatalf("USE_GATEWAY_SETTINGS not rendered:\n%s", got)
+			}
+			if tail := got[i:]; !strings.Contains(tail[:120], "value: "+c.wantGWS) {
+				t.Errorf("want USE_GATEWAY_SETTINGS %s, got:\n%s", c.wantGWS, tail[:120])
 			}
 		})
 	}

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/deploy"
+	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 )
 
@@ -97,6 +98,16 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	r := ctx.Runner
+	// The whole point of this scenario is the platform Infra IPAM pool, which
+	// only exists under the Infra/GatewaySettings model. selfip-dag renders
+	// USE_GATEWAY_SETTINGS=false, where `deploy cne` skips the Infra CR
+	// entirely — the Gateway would sit at AddressNotAssigned forever.
+	if ctx.PoC.BNK.IsSelfIPDAG() {
+		return fmt.Errorf("fic-dynamic-ip needs the Infra/GatewaySettings model "+
+			"(USE_GATEWAY_SETTINGS=true); bnk.tmm_dataplane_mode=%s runs the legacy SPK "+
+			"model, where no platform Infra CR is applied and address-less Gateways "+
+			"cannot be allocated an address", poc.DataplaneSelfIPDAG)
+	}
 	for _, f := range []string{
 		"01-namespace.yaml",
 		"02-gatewaysettings.yaml",
