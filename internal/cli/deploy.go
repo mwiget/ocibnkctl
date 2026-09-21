@@ -417,6 +417,19 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default", p.Cluster.EdgeNet())); err != nil {
 			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
 		}
+		// Pre-seed the OcNOS routing template BEFORE the CNEInstance exists,
+		// so FLO's TMM DaemonSet mounts the final config on its very first
+		// boot. Step [6/6] used to apply this only after TMM was already up,
+		// which cost a full second rollout (~170s — the dominant term in this
+		// phase). Applying it here is free: the content depends only on the
+		// edge FRR's IP, which `cluster up` fixed long before now. If FLO
+		// later reasserts its own copy, [6/6] still detects the drift and
+		// falls back to the re-roll, so this is a fast path, not a new
+		// requirement.
+		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default",
+			cluster.EdgeFRRIP(p.Cluster.EdgeNet()), "")); err != nil {
+			fmt.Fprintf(out, "      WARN: pre-seed OcNOS template: %v (falling back to a TMM re-roll in [6/6])\n", err)
+		}
 	}
 
 	// 1. CNEInstance.
@@ -610,14 +623,21 @@ spec:
 		waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
 		// vip="" → advertise via `redistribute kernel` (FLO installs the
 		// Gateway VIP /32 as a kernel route once a workload Gateway exists).
-		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default", peerIP, "")); err != nil {
+		applyOut, err := r.ApplyCapture(ctx, deploy.RenderAnycastZebosConfigMap("default", peerIP, ""))
+		if err != nil {
 			fmt.Fprintf(out, "      WARN: apply OcNOS ConfigMap: %v (TMMs won't peer)\n", err)
 		} else {
-			// One rollout restart so TMM reloads the routing template it now
-			// mounts. Safe to re-run: FLO bakes the bnk-bgp NAD annotation
-			// into the f5-tmm DaemonSet's pod template (from
+			// The template was pre-seeded in [0/4], so TMM normally booted
+			// with it already mounted and there is nothing to reload —
+			// re-rolling the DaemonSet here would just rebuild every TMM for
+			// no config change. Only roll when this apply actually mutated
+			// the ConfigMap (FLO reasserted its own copy after we seeded it).
+			// Safe to re-run: FLO bakes the bnk-bgp NAD annotation into the
+			// f5-tmm DaemonSet's pod template (from
 			// CNEInstance.spec.networkAttachments), so restarted pods keep net1.
-			if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "daemonset/f5-tmm"); err != nil {
+			if strings.Contains(applyOut, "unchanged") {
+				fmt.Fprintln(out, "      OcNOS template already current (pre-seeded in [0/4]) — skipping TMM re-roll")
+			} else if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "daemonset/f5-tmm"); err != nil {
 				fmt.Fprintf(out, "      WARN: rollout restart f5-tmm: %v\n", err)
 			}
 			// TMM pods roll one-at-a-time (DaemonSet maxUnavailable=1) and

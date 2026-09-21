@@ -93,6 +93,23 @@ func (r *Runner) ApplyInNamespace(ctx context.Context, namespace, manifest strin
 	return nil
 }
 
+// ApplyCapture is Apply but also returns kubectl's combined output, so
+// callers can tell a no-op apply ("... unchanged") from a real mutation
+// ("... configured"/"created"). The anycast-bgp path uses this to skip a
+// TMM re-roll when the routing template it pre-seeded is already current.
+func (r *Runner) ApplyCapture(ctx context.Context, manifest string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Env = r.env()
+	cmd.Stdin = strings.NewReader(manifest)
+	var out bytes.Buffer
+	cmd.Stdout = io.MultiWriter(r.Out, &out)
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Run(); err != nil {
+		return out.String(), fmt.Errorf("kubectl apply: %w\n%s", err, out.String())
+	}
+	return out.String(), nil
+}
+
 // Kubectl runs an arbitrary kubectl subcommand and streams output.
 func (r *Runner) Kubectl(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
