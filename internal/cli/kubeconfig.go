@@ -67,12 +67,22 @@ func installGlobalKubeconfig(out io.Writer, repo, srcPath string) error {
 		// cluster up requires) authorizes this; the backup keeps it
 		// reversible. Opt out entirely with --skip-kubeconfig.
 		bak := dst + ".ocibnkctl-bak"
-		if err := os.Rename(dst, bak); err != nil {
-			return fmt.Errorf("back up %s: %w", dst, err)
-		}
 		state.Action = "overwrote"
 		state.Backup = bak
-		fmt.Fprintf(out, "      backed up existing config → %s\n", bak)
+		if _, bakErr := os.Stat(bak); bakErr == nil {
+			// A backup is already parked here from an earlier cluster up
+			// (this PoC's state file was cleared, a different PoC, or
+			// another ctl tool that manages ~/.kube/config). THAT file is
+			// the user's real config; the one at dst is a kubeconfig one
+			// of us wrote for a cluster. Renaming over the backup would
+			// swap the original for a throwaway and lose it for good, so
+			// keep the existing backup and just let dst be overwritten.
+			fmt.Fprintf(out, "      keeping existing backup %s (dst is a cluster config, not yours)\n", bak)
+		} else if err := os.Rename(dst, bak); err != nil {
+			return fmt.Errorf("back up %s: %w", dst, err)
+		} else {
+			fmt.Fprintf(out, "      backed up existing config → %s\n", bak)
+		}
 	} else {
 		state.Action = "created"
 	}

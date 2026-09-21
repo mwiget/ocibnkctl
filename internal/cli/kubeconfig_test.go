@@ -99,3 +99,44 @@ func TestGlobalKubeconfig_IdempotentRefresh(t *testing.T) {
 		t.Fatalf("config missing after refresh: %v", err)
 	}
 }
+
+// A second PoC's `cluster up` must not clobber an existing backup. The
+// file already parked at .ocibnkctl-bak is the user's real config; the
+// one at ~/.kube/config is a cluster kubeconfig an earlier cluster up
+// (another PoC, or another ctl tool that manages ~/.kube/config) left
+// behind. Renaming over the backup swapped the original for a throwaway
+// and lost it permanently — destroy would then "restore" a dead
+// cluster's config.
+func TestGlobalKubeconfig_SecondUpDoesNotClobberBackup(t *testing.T) {
+	repo, src, home := setupKube(t)
+	dst := filepath.Join(home, ".kube", "config")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// State as left by an earlier PoC: the user's original parked in the
+	// backup, a cluster kubeconfig sitting at ~/.kube/config, and no
+	// state file for THIS repo.
+	bak := dst + ".ocibnkctl-bak"
+	if err := os.WriteFile(bak, []byte("MY-ORIGINAL-CONFIG\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("OTHER-CLUSTER-CONFIG\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installGlobalKubeconfig(io.Discard, repo, src); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(bak); string(b) != "MY-ORIGINAL-CONFIG\n" {
+		t.Fatalf("backup clobbered: %q, want the user's original", b)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "KUBECONFIG-FROM-CLUSTER\n" {
+		t.Fatalf("dst = %q, want this PoC's kubeconfig", b)
+	}
+
+	// Destroy still hands the user their real config back.
+	removeGlobalKubeconfig(io.Discard, repo)
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "MY-ORIGINAL-CONFIG\n" {
+		t.Fatalf("original not restored: %q err=%v", b, err)
+	}
+}
