@@ -1,0 +1,1 @@
+One command scaffolds a self-contained project folder. The declarative state, an operator guide for the agent, and a place for the license keys. Then we launch Claude Code inside it, on a local model served by llama dot cpp. Nothing leaves the machine.

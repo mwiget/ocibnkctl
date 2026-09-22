@@ -1,0 +1,40 @@
+title: "F5 BIG-IP Next for Kubernetes 2.4.0 on plain Docker, driven by an AI agent on a local model"
+privacy: unlisted
+video_id: xjUwpZgMPs4
+thumbnail_at: 1.0
+captions: /home/mwiget/src/ocibnkctl/docs/video/v2/build/ocibnkctl-bnk-2.4.0.srt
+video: /home/mwiget/src/ocibnkctl/docs/video/v2/build/ocibnkctl-bnk-2.4.0.mp4
+tags:
+  - F5
+  - BIG-IP Next
+  - Kubernetes
+  - k3s
+  - Docker
+  - Claude Code
+  - local LLM
+  - agentic
+description: |
+  ocibnkctl deploys a full F5 BIG-IP Next for Kubernetes 2.4.0 stack on plain
+  Docker, one host, no kind, no k3d, no DPU. Here a live Claude Code session,
+  running on a local model (Qwen3.8 27B served by llama.cpp, so nothing leaves
+  the machine), drives it end to end: scaffold, doctor, license keys, deploy,
+  15 of 15 F5 how-to scenarios green, bnkscope, and a clean teardown.
+
+  Nothing is staged. The first deploy attempt really did hit a subnet already
+  owned by another lab on the same host; the agent found the network holding
+  it, left it alone, moved to a free subnet and resumed.
+
+  https://github.com/mwiget/ocibnkctl
+
+  Chapters:
+  00:00 Introduction
+  00:08 BNK on one host
+  00:28 Scaffold and launch the agent
+  00:45 Doctor and license keys
+  01:08 Deploy BNK 2.4.0
+  01:46 15 F5 how-to scenarios
+  02:21 bnkscope
+  02:35 Tear it down
+  02:49 Close
+
+  Captions are available as a toggleable track.

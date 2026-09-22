@@ -1,0 +1,1 @@
+The agent reads the guide first, then runs doctor. The container runtime, kube control and helm, and the CPU and memory floor, all checked. We point it at the two F5 license files. It copies them into place without ever printing them, and validate passes.

@@ -56,23 +56,22 @@ much shorter pipeline.
 
 ## Demo
 
-[![Watch the demo on YouTube](https://img.youtube.com/vi/uUyO17K6r5M/hqdefault.jpg)](https://youtu.be/uUyO17K6r5M)
+[![Watch the demo on YouTube](https://img.youtube.com/vi/xjUwpZgMPs4/hqdefault.jpg)](https://youtu.be/xjUwpZgMPs4)
 
-▶ **[Watch the ~3-minute demo on YouTube](https://youtu.be/uUyO17K6r5M)** — a real,
-**live Claude Code session on a local model** drives `ocibnkctl` end to end:
-scaffold the PoC → deploy F5 BIG-IP Next → inspect every pod → diagnose a
-stuck pod → run the scenario suite → bnk-forge auto-registration
-with live Traffic Flow → teardown.
+▶ **[Watch the 3-minute demo on YouTube](https://youtu.be/xjUwpZgMPs4)**. A real,
+**live Claude Code session on a local model** (Qwen3.8 27B served by llama.cpp)
+drives `ocibnkctl` end to end on **BNK 2.4.0**: scaffold the PoC → doctor →
+license keys → deploy → 15/15 how-to scenarios green → bnkscope → teardown.
+The first deploy attempt hit a subnet already owned by another lab on the same
+host; the agent diagnosed it and moved to a free one. That moment is left in.
 
-> The video was recorded in June 2026 on **BNK 2.3.0**, with an earlier
-> ocibnkctl. The workflow is the same on 2.4.0, but details on screen differ:
-> the cluster then scheduled BNK pods on the control node too, the scenarios
-> used the 2.3 F5BnkGateway model, and the suite was smaller than today's 15
-> green scenarios.
+The production pipeline (slides on the F5 template, narration, assembly) is in
+[`docs/video/v2/`](docs/video/v2/), and the running order in
+[`docs/video/AGENDA.md`](docs/video/AGENDA.md).
 
-The whole production pipeline (headless asciinema capture, Kokoro voiceover,
-playwright slides + bnk-forge UI shots, ffmpeg assembly) is in
-[`docs/video/live-session/`](docs/video/live-session/).
+> Superseded, kept live: the June 2026 cut on **BNK 2.3.0**
+> ([youtu.be/uUyO17K6r5M](https://youtu.be/uUyO17K6r5M), Kokoro voice, bnk-forge),
+> built from [`docs/video/live-session/`](docs/video/live-session/).
 
 ## What this tool does
 

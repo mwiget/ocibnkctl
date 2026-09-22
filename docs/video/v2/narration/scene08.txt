@@ -1,0 +1,1 @@
+When you're done, one more prompt tears it all down. The containers and the networks are gone, and the kube config is back exactly the way it was.

@@ -1,0 +1,1 @@
+Handed the same kube config, bnkscope sees a BNK cluster. The platform is healthy, with fifteen gateways programmed, and Traffic Flow draws what the scenarios built. Gateways, routes, and backends.

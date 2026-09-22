@@ -1,0 +1,1 @@
+F5 BIG-IP Next for Kubernetes, version 2.4.0. On plain Docker, driven by an AI agent on a local model.

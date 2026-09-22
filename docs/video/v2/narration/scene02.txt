@@ -1,0 +1,1 @@
+Everything runs as containers on one host. A Kubernetes control node, a worker dedicated to TMM, and a BGP edge router with its origins. No kind, no k-three-d, no DPU. Ten cores is the floor. And on a tight host, the deploy shrinks its own footprint, all the way down to a four-core Raspberry Pi 5.
