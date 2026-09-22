@@ -28,7 +28,7 @@ CLI, and proves itself against F5's own how-to articles.
 **Format.** One chapter, about 3:00. A real, live agent session driven over
 `tmux send-keys` and recorded with asciinema, the same way as the June cut. Every chapter
 opens on a deck slide, so the live terminal always lands against a claim that has already been stated.
-Captions ship as a sidecar `.srt`.
+No captions: they cover the terminal and slide content.
 
 ---
 
