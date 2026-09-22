@@ -1,6 +1,6 @@
 title: "F5 BIG-IP Next for Kubernetes 2.4.0 on plain Docker, driven by an AI agent on a local model"
 privacy: unlisted
-video_id: xjUwpZgMPs4
+video_id: iZQ2l1kQ1UQ
 thumbnail_at: 1.0
 captions: /home/mwiget/src/ocibnkctl/docs/video/v2/build/ocibnkctl-bnk-2.4.0.srt
 video: /home/mwiget/src/ocibnkctl/docs/video/v2/build/ocibnkctl-bnk-2.4.0.mp4
@@ -12,29 +12,73 @@ tags:
   - Docker
   - Claude Code
   - local LLM
+  - llama.cpp
+  - Qwen
+  - Gateway API
+  - end-to-end testing
   - agentic
 description: |
-  ocibnkctl deploys a full F5 BIG-IP Next for Kubernetes 2.4.0 stack on plain
-  Docker, one host, no kind, no k3d, no DPU. Here a live Claude Code session,
-  running on a local model (Qwen3.8 27B served by llama.cpp, so nothing leaves
-  the machine), drives it end to end: scaffold, doctor, license keys, deploy,
-  15 of 15 F5 how-to scenarios green, bnkscope, and a clean teardown.
+  A full F5 BIG-IP Next for Kubernetes (BNK) 2.4.0 stack, built, tested and torn
+  down on a single machine, by an AI agent that runs entirely on local hardware.
 
-  Nothing is staged. The first deploy attempt really did hit a subnet already
-  owned by another lab on the same host; the agent found the network holding
-  it, left it alone, moved to a free subnet and resumed.
+  WHAT YOU SEE
+  - Claude Code, the agentic coding CLI, pointed at a LOCAL model instead of a
+    cloud API: Qwen3.8 27B (Q8_0 GGUF, with an MTP draft model for speculative
+    decoding) served by llama.cpp's llama-server, which speaks the Anthropic
+    Messages API directly. Claude Code only needs ANTHROPIC_BASE_URL set to it.
+    No prompt, no license key and no cluster data leaves the machine.
+  - The host is a Linux workstation (Intel Core i7-14700, 28 threads, NVIDIA RTX
+    PRO 5000 for the model). ocibnkctl runs the same way on a MacBook with Docker
+    Desktop or Colima: 10 cores is the floor, and on tighter hosts it shrinks the
+    BNK footprint by itself, down to a 4-core Raspberry Pi 5.
+  - ocibnkctl, a single Go binary, builds the local BNK cluster: k3s nodes run
+    directly as Docker containers (no kind, no k3d, no DPU), with a dedicated
+    worker for TMM, an FRR edge router peering BGP with TMM, and origin servers.
 
-  https://github.com/mwiget/ocibnkctl
+  THE SESSION, END TO END
+  1. ocibnkctl init scaffolds a self-contained PoC folder: poc.yaml as the
+     source of truth, AGENTS.md as the operator guide the agent reads first,
+     and a keys/ folder for the F5 license files.
+  2. The agent runs ocibnkctl doctor (container runtime, kubectl, helm, CPU and
+     memory floor), copies the two F5 license files into place without ever
+     printing them, and validates the PoC.
+  3. One prompt deploys BNK 2.4.0: cluster up, cert-manager, the F5 Lifecycle
+     Operator (FLO), and the CNE instance with TMM in demo mode.
+     The first attempt fails for a real reason: another lab on the same host
+     already owns the edge subnet. The agent finds the network holding it,
+     leaves it alone, moves this cluster to a free subnet and resumes. The
+     deploy then completes in about five minutes; k9s shows every F5 pod on
+     the TMM worker node.
+  4. The agent runs the end-to-end test suite: 15 scenarios, each mapped to an
+     F5 BNK how-to article. Each applies real config and asserts the result;
+     the data-plane ones send real traffic through TMM. HTTPRoute, gRPC, TCP and UDP load balancing via the
+     Gateway API, external pools, dynamic VIP allocation, Proxy Protocol
+     iRules, BGP peering and anycast, AI token counting and semantic caching,
+     CWC admin access, core file collection and cluster-wide watch.
+     15 of 15 pass, and the agent walks through one report assertion by
+     assertion, from the Gateway CRs to curls answered through the data plane.
+  5. bnkscope, a local BNK troubleshooting console, shows the platform healthy
+     and draws the traffic flow the scenarios built: gateways, routes, backends.
+  6. One prompt tears it all down: containers, networks, and the kubeconfig
+     put back exactly the way it was.
+
+  Nothing is staged or mocked. The terminal is an asciinema recording of the
+  live session; the narration is in the author's own voice, cloned locally
+  with F5-TTS.
+
+  ocibnkctl:   https://github.com/mwiget/ocibnkctl
+  bnkscope:    https://github.com/mwiget/bnkscope
+  regcachectl: https://github.com/mwiget/regcachectl (warm image pulls)
 
   Chapters:
   00:00 Introduction
-  00:08 BNK on one host
-  00:28 Scaffold and launch the agent
-  00:45 Doctor and license keys
-  01:08 Deploy BNK 2.4.0
-  01:46 15 F5 how-to scenarios
-  02:21 bnkscope
-  02:35 Tear it down
-  02:49 Close
+  00:10 BNK on one host: what runs where
+  00:37 Scaffold the PoC and launch Claude Code on the local model
+  01:01 Doctor and the F5 license keys
+  01:34 Deploy BNK 2.4.0, including the agent fixing a real subnet collision
+  02:27 15 end-to-end scenarios, and one report walked through
+  03:14 bnkscope: health and traffic flow
+  03:36 Tear it down
+  03:57 Close
 
   Captions are available as a toggleable track.

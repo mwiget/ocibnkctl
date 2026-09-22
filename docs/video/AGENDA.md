@@ -2,7 +2,7 @@
 
 > **Status: outline approved 2026-09-22** — local model, ~3:00, no TMM scale-out, Pi as a slide mention, amber scenarios out, published unlisted.
 >
-> **Published:** [youtu.be/xjUwpZgMPs4](https://youtu.be/xjUwpZgMPs4) (unlisted, 2:56).
+> **Published:** [youtu.be/iZQ2l1kQ1UQ](https://youtu.be/iZQ2l1kQ1UQ) (unlisted, 4:05).
 >
 > Replaces the June 2026 cut ([youtu.be/uUyO17K6r5M](https://youtu.be/uUyO17K6r5M),
 > ~3 min, BNK 2.3.0, Kokoro `af_heart`, bnk-forge). That cut stays live and
@@ -72,7 +72,7 @@ against fifteen of F5's own how-to articles, and hands it back clean."
 ## Decisions (2026-09-22)
 
 - Agent: Claude Code on local `qwen3-coder` via ollama — nothing leaves the machine.
-- Length ~3:00; TMM scale-out dropped.
+- Length ~4:00 after review (slower voice, more room per beat); TMM scale-out dropped.
 - Raspberry Pi 5: mentioned on slide 1 only (no re-run).
 - Amber tenant-VLAN scenarios: left out.
 - Publish unlisted; README switches to the new link and lists the June cut as superseded.

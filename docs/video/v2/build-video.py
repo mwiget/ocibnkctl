@@ -28,41 +28,42 @@ import wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W, H, FPS = 1920, 1080, 30
-LEAD, GAP = 1.0, 0.9
+LEAD, GAP = 1.6, 1.8
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 
 # Region boundaries are cast timestamps (see casts/beats.log and the text
 # search in the README). A part: (kind, spec, weight, hold, banner)
 SEGMENTS = [
     dict(vo=["scene01"], parts=[("slide", "title", 1, 0, None)]),
-    dict(vo=["scene02"], parts=[("slide", "one-host", 1, 0, None)]),
-    dict(vo=["scene03"], parts=[
-        ("cast", ("full", 0.0, 16.4), 1, 3.5,
-         "$ ocibnkctl init demo   ·   $ claude   (local model: qwen3.8-27b on llama.cpp)")]),
-    dict(vo=["scene04"], extra=5, parts=[
-        ("cast", ("full", 16.5, 122.4), 1, 3.0,
+    dict(vo=["scene02"], extra=3, parts=[("slide", "one-host", 1, 0, None)]),
+    dict(vo=["scene03"], extra=4, parts=[
+        ("cast", ("full", 0.0, 7.9), 1, 5.0, "$ ocibnkctl init demo"),
+        ("cast", ("full", 7.9, 16.4), 1, 6.0,
+         "$ claude      (local model: qwen3.8-27b on llama.cpp)")]),
+    dict(vo=["scene04"], extra=12, parts=[
+        ("cast", ("full", 16.5, 122.4), 1, 5.0,
          "YOU > Read AGENTS.md and poc.yaml, then run ocibnkctl doctor ..."),
-        ("cast", ("full", 122.5, 282.9), 1, 3.0,
+        ("cast", ("full", 122.5, 282.9), 1, 5.0,
          "YOU > The two F5 license files are in ~/license ... never print their contents"),
     ]),
-    dict(vo=["scene05"], extra=8, parts=[
-        ("cast", ("full", 283.0, 400.0), 3, 2.5,
+    dict(vo=["scene05"], extra=18, parts=[
+        ("cast", ("full", 283.0, 400.0), 3, 5.0,
          "YOU > Go ahead and deploy BNK end to end. I confirm the cluster name: demo."),
-        ("cast", ("full", 400.0, 530.0), 3, 2.5, None),
-        ("cast", ("full", 530.0, 905.0), 2.5, 3.0, None),
-        ("cast", ("k9s", 0.0, 1e9), 2.5, 2.5, "$ k9s -A"),
+        ("cast", ("full", 400.0, 530.0), 3, 5.0, None),
+        ("cast", ("full", 530.0, 905.0), 2.5, 5.0, None),
+        ("cast", ("k9s", 0.0, 43.0), 2.5, 5.0, "$ k9s -A"),
     ]),
-    dict(vo=["scene06"], extra=7, parts=[
+    dict(vo=["scene06"], extra=15, parts=[
         ("slide", "scenarios", 10, 0, None),
-        ("cast", ("full", 972.7, 1532.6), 9, 4.0, "YOU > Yes, run all the green scenarios."),
-        ("cast", ("full", 1532.7, 1669.4), 8, 4.0,
+        ("cast", ("full", 972.7, 1532.6), 9, 5.0, "YOU > Yes, run all the green scenarios."),
+        ("cast", ("full", 1532.7, 1669.4), 8, 6.0,
          "YOU > Where do the reports live? Open the http-routing-e2e report ..."),
     ]),
     # the capture's video opens on a loading page; its two settled stills are the claim
-    dict(vo=["scene07"], parts=[("slide", "@bnkscope/01-bnk-health.png", 1, 0, None),
+    dict(vo=["scene07"], extra=5, parts=[("slide", "@bnkscope/01-bnk-health.png", 1, 0, None),
                                 ("slide", "@bnkscope/02-traffic-flow.png", 1.2, 0, None)]),
-    dict(vo=["scene08"], extra=3, parts=[
-        ("cast", ("full", 1669.5, 1718.0), 1, 3.5,
+    dict(vo=["scene08"], extra=7, parts=[
+        ("cast", ("full", 1669.5, 1718.0), 1, 5.0,
          "YOU > We're done. Tear it all down. I confirm the cluster name: demo.")]),
     dict(vo=["scene09"], parts=[("slide", "close", 1, 0, None)], gap=2.0),
 ]
@@ -119,7 +120,7 @@ def banner_filter(text, work, i):
     tf = os.path.join(work, f"banner{i}.txt")
     open(tf, "w").write(text)
     return (f",drawtext=fontfile={FONT}:textfile={tf}:fontsize=30:fontcolor=white:"
-            f"box=1:boxcolor=0x0F142A@0.92:boxborderw=18:x=(w-tw)/2:y=36:enable='lt(t,3.8)'")
+            f"box=1:boxcolor=0x0F142A@0.92:boxborderw=18:x=(w-tw)/2:y=36:enable='lt(t,4.5)'")
 
 
 def build_part(kind, spec, target, hold, banner, a, work, i):
@@ -189,6 +190,7 @@ def main():
         vo = [os.path.join(a.vo, f"{s}.wav") for s in seg["vo"]]
         vdur = sum(wav_dur(v) for v in vo)
         total = LEAD + vdur + seg.get("gap", GAP) + seg.get("extra", 0)
+        print(f"seg{si + 1} starts {int(t // 60)}:{int(t % 60):02d}")
         weights = sum(p[2] for p in seg["parts"])
         for pi, (kind, spec, wgt, hold, banner) in enumerate(seg["parts"]):
             pt = total * wgt / weights

@@ -56,9 +56,9 @@ much shorter pipeline.
 
 ## Demo
 
-[![Watch the demo on YouTube](https://img.youtube.com/vi/xjUwpZgMPs4/hqdefault.jpg)](https://youtu.be/xjUwpZgMPs4)
+[![Watch the demo on YouTube](https://img.youtube.com/vi/iZQ2l1kQ1UQ/hqdefault.jpg)](https://youtu.be/iZQ2l1kQ1UQ)
 
-▶ **[Watch the 3-minute demo on YouTube](https://youtu.be/xjUwpZgMPs4)**. A real,
+▶ **[Watch the 4-minute demo on YouTube](https://youtu.be/iZQ2l1kQ1UQ)**. A real,
 **live Claude Code session on a local model** (Qwen3.8 27B served by llama.cpp)
 drives `ocibnkctl` end to end on **BNK 2.4.0**: scaffold the PoC → doctor →
 license keys → deploy → 15/15 how-to scenarios green → bnkscope → teardown.
