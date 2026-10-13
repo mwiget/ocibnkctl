@@ -23,7 +23,7 @@ In the summary, **[new]** marks an issue introduced in the 2.4 docs and
 
 ## Summary for the F5 docs team
 
-**Suggested issue title:** BNK 2.4 public docs: release notes omit USE_GATEWAY_SETTINGS and CRD removals, plus 25 errata (broken examples, wrong apiVersions, internal staging URLs, stale 2.3 content)
+**Suggested issue title:** BNK 2.4 public docs: release notes omit USE_GATEWAY_SETTINGS and CRD removals, plus 26 errata (broken examples, wrong apiVersions, internal staging URLs, stale 2.3 content)
 
 Item numbers (#N) refer to the detailed entries under [Details by item](#details-by-item), which carry the quotes, anchors and 2.3 comparison.
 
@@ -104,6 +104,10 @@ Item numbers (#N) refer to the detailed entries under [Details by item](#details
 - **#5 [2.3]** The [DPU upgrade guide's CNEInstance](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/releases/bnk-dpu-upgrade-2.3.x-to-2.4.0-using-flo.html#apply-the-cne-instance) is the 2.3.x example with a version bump.
   - It has `cnegatewayclass-cr-2.4.0.yaml`, the kustomize label, `f5-alpha`/`f5-utils`, `arm-ca-cluster-issuer` and `far-secret`.
   - It doesn't match the [install doc](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/install/install-a-cne-instance-using-flo.html#create-a-manifest-for-the-cne-instance-workloads), and it omits `USE_GATEWAY_SETTINGS=true`.
+- **#27 [2.3]** Every install track says the StorageClass must support ReadWriteMany, and [Create storage class](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/prepare-your-computer-and-cluster/create-a-storage-class.html#create-storage-class) says FLO "creates a PersistentVolumeClaim (PVC) with RWX access mode".
+  - On a live 2.4.0 cluster with an RWO-only class, the full FLO install plus TODA logging deployed cleanly: dSSM, Observer, cluster-wide-controller and `f5-toda-fluentd` all request RWO and bind.
+  - Only CoreMond's PVC defaults to RWX, and its how-to already offers `advanced.coremon.hostPath: true` as the way out.
+  - The [Host Helm upgrade guide](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/releases/bnk-host-upgrade-2.3.x-to-2.4.0-using-helm.html#upgrade-the-toda-fluentd) itself shows `ReadWriteOnce` for CWC and fluentd.
 - #23, #21, #25 and #7 are covered in the first section above.
 
 ### Stale or inconsistent versions and metadata
@@ -836,3 +840,91 @@ is running in the other model, instead of leaving `READY` blank forever.
 **Reproduced by:** `ocibnkctl scenario run routing-template-multitenant` and
 `… routing-config-tenant` (both require `bnk.tmm_dataplane_mode: selfip-dag`,
 which renders `USE_GATEWAY_SETTINGS=false`).
+
+### 27. Storage: the docs require ReadWriteMany, but FLO's PVCs are ReadWriteOnce (only CoreMond needs RWX)
+
+**Verdict:** Confirmed on a live 2.4.0 cluster (2026-10-13) with an RWO-only
+StorageClass · **Since:** carried over from 2.3 (every RWX statement below is
+on the matching 2.3 page) · **See also:** #5, #9
+
+**What the docs say.** Every install track asks for an RWX-capable class:
+
+- [Create storage class](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/prepare-your-computer-and-cluster/create-a-storage-class.html#create-storage-class)
+  (DPU FLO track) recommends an NFS-backed class "that supports the
+  ReadWriteMany (RWX) access mode. RWX is required because TMM pods and
+  Observer pods run on different nodes … local node storage is not suitable",
+  and states that "The F5 Lifecycle Operator (FLO) creates a
+  PersistentVolumeClaim (PVC) with RWX access mode".
+- The same note — "must define a type of storage that supports: Simultaneous
+  mounting by multiple workloads across different nodes [and] The
+  ReadWriteMany (RWX) access mode" — appears in:
+  - Host FLO [Install a CNE instance → Create a manifest for the CNE-instance workloads](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-self-managed-flo/install/install-a-cne-instance-using-flo.html#create-a-manifest-for-the-cne-instance-workloads)
+  - Host Helm [Install the F5 CRDs and the CNE core](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-the-f5-crds-and-the-cne-core-using-helm.html#create-an-override-values-file-for-f5-toda-fluentd),
+    four times: the override values for
+    [Core-File Collector](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-the-f5-crds-and-the-cne-core-using-helm.html#create-an-override-values-file-for-f5-core-file-collector),
+    [TODA Fluentd](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-the-f5-crds-and-the-cne-core-using-helm.html#create-an-override-values-file-for-f5-toda-fluentd),
+    [TODA Stats](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-the-f5-crds-and-the-cne-core-using-helm.html#bnk-cluster-only-create-an-override-values-file-for-f5-toda-stats-observer)
+    and [CWC](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-the-f5-crds-and-the-cne-core-using-helm.html#create-an-override-values-file-for-f5-cwc)
+  - Host Helm [Install a CNE instance](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-a-cne-instance-using-helm.html#create-an-override-values-file-for-the-f5ingress-chart),
+    twice: [f5ingress](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-a-cne-instance-using-helm.html#create-an-override-values-file-for-the-f5ingress-chart)
+    and [TODA Stats (CNF)](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-host-cnfs-self-managed-helm/install/install-a-cne-instance-using-helm.html#cnf-cluster-only-create-an-override-values-file-for-f5-toda-stats-observer)
+- The DPU [CNE-instance example](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/install/bnk-dpu-self-managed-flo/install/install-a-cne-instance-using-flo.html#create-a-manifest-for-the-cne-instance-workloads)
+  sets `storageClassName: nfs` without repeating the note.
+
+**The docs contradict themselves.** The [Host Helm upgrade guide](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/releases/bnk-host-upgrade-2.3.x-to-2.4.0-using-helm.html)
+shows `accessMode: ReadWriteOnce` in [Upgrade the CWC](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/releases/bnk-host-upgrade-2.3.x-to-2.4.0-using-helm.html#upgrade-the-cwc)
+(with `storageClass: managed-nfs-storage`), and the fluentd chart's own NOTES
+in [Upgrade the Toda-fluentd](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/releases/bnk-host-upgrade-2.3.x-to-2.4.0-using-helm.html#upgrade-the-toda-fluentd)
+print `Persistent volume claim created with: accessModes: "ReadWriteOnce"`.
+
+**What FLO actually creates.** Deployed 2.4.0 (release manifest `2.4.0`, FLO
+`v2.30.0-0.5.2`, f5-toda-fluentd `2.10.7-0.0.2`) onto a k3s cluster whose
+only provisioner is `rancher.io/local-path`, which rejects RWX outright — a
+probe RWX claim failed with `NodePath only supports ReadWriteOnce and
+ReadWriteOncePod (1.22+) access modes`. The full FLO install completed, then
+`spec.telemetry.loggingSubsystem.enabled: true` was set on the CNEInstance to
+bring up TODA. Every claim FLO created requests RWO and bound:
+
+| PVC (`f5-cne-core` unless noted) | Access mode | Status |
+|---|---|---|
+| `data-f5-dssm-db-0/1/2` (CNEInstance namespace) | RWO | Bound |
+| `cluster-wide-controller` | RWO | Bound |
+| `stats-pvc-f5-observer-0` | RWO | Bound |
+| `stats-pvc-f5-observer-receiver-0` | RWO | Bound |
+| `f5-toda-fluentd` (3Gi; appears once logging is enabled) | RWO | Bound |
+
+`f5-toda-fluentd` reached 1/1 Running about 70 s after the patch, and the
+only `ProvisioningFailed` event in the cluster was the probe's. TMM itself
+has no PVC; it doesn't share a volume with Observer.
+
+**The one RWX consumer is CoreMond.** With `coreCollection.enabled: true`,
+FLO's CoreMond CR defaults to `persistence.accessMode: ReadWriteMany`
+(`coremond-pvc`), which stays Pending on an RWO-only class. The
+[core-file how-to](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-coremond.html#store-core-files-on-host-instead-of-pvcs)
+already offers the way out — `advanced.coremon.hostPath: true`, "eliminating
+the need for ReadWriteMany volumes" — but no install page links to it. This
+was observed by ocibnkctl's `core-file-collection` scenario, not re-measured
+in this run.
+
+**Not validated anywhere.** Neither FLO nor the charts check the class's
+access modes up front; a wrong class surfaces later as a Pending PVC (and,
+for CoreMond, as `CNEInstance.status.conditions[CoremondAvailable]=False`).
+
+**Limits of this check:** one TMM worker. With several workers each RWO volume
+pins its pod to the node it was provisioned on (`WaitForFirstConsumer`), which
+should still schedule but wasn't exercised.
+
+**Suggested doc fixes.**
+- Replace "RWX is required" with what each component requests: RWO for dSSM,
+  Observer, cluster-wide-controller, CWC and TODA Fluentd; RWX only for CoreMond
+  with PVC persistence.
+- Drop "FLO creates a PersistentVolumeClaim (PVC) with RWX access mode" from
+  Create storage class, and correct the TMM/Observer rationale.
+- Point the RWX note at the CoreMond `hostPath` option, so clusters without
+  shared storage have a documented path.
+- Make the upgrade guide and install pages agree on the access mode.
+
+**Reproduced by:** an `ocibnkctl e2e` run (k3s `local-path`/`standard`
+classes, RWO only), then
+`kubectl patch cneinstance bnk-instance --type merge -p '{"spec":{"telemetry":{"loggingSubsystem":{"enabled":true}}}}'`
+and `kubectl get pvc -A`.
