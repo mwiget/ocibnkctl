@@ -20,6 +20,11 @@ func (v ValidationResult) Valid() bool { return len(v.Errors) == 0 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$`)
 
+// aiGatewayConsoleURL is the pattern FLO's CRD enforces on
+// CNEInstance.spec.aiGateway.consoleURL; checking it here fails at validate
+// instead of at `deploy cne` with an API-server rejection.
+var aiGatewayConsoleURL = regexp.MustCompile(`^https?://[^/\s]+(/.*)?$`)
+
 // Validate runs every schema-level check. References to keys/ files are
 // verified separately by the CLI (it needs the PoC repo path).
 func (p *PoC) Validate() ValidationResult {
@@ -157,6 +162,21 @@ func (p *PoC) Validate() ValidationResult {
 				"shared-L2 underlay + an upstream ToR receiving all TMM sessions — on a single host "+
 				"the per-node bnk-bgp bridges are isolated, so the demo validates the anycast MODEL "+
 				"(each TMM advertises its VIP /32 to a co-located peer), not multi-node fan-out.")
+	}
+
+	if gw := p.BNK.AIGateway; gw.Enabled || gw.AIMetrics || gw.ConsoleURL != "" {
+		if !gw.Enabled {
+			r.Warnings = append(r.Warnings,
+				"bnk.ai_gateway: ai_metrics/console_url are set but enabled is false — the AI gateway is not deployed.")
+		}
+		if gw.ConsoleURL != "" && !aiGatewayConsoleURL.MatchString(gw.ConsoleURL) {
+			r.Errors = append(r.Errors, fmt.Sprintf(
+				"bnk.ai_gateway.console_url %q: must be an http(s) URL such as https://console.example.com", gw.ConsoleURL))
+		}
+		if gw.Enabled && gw.AIMetrics && p.BNK.IsSmallHost() {
+			r.Warnings = append(r.Warnings,
+				"bnk.ai_gateway.ai_metrics on host_profile=small: ClickHouse and the logging subsystem's fluentd add pods a 4-core host may not fit.")
+		}
 	}
 
 	if p.BNKForge.Enabled {

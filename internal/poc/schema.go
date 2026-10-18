@@ -223,6 +223,30 @@ type BNK struct {
 	// Use DataplaneMode()/IsSelfIPDAG()/IsAnycastBGP() rather than this
 	// field directly — they fold in the legacy ActiveActive bool.
 	TMMDataplaneMode string `yaml:"tmm_dataplane_mode,omitempty"`
+	// AIGateway turns on BNK's AI/LLM gateway (BNK 2.4.1+). FLO renders it
+	// from CNEInstance.spec.aiGateway: the console Deployment + NodePort, the
+	// f5-aigateway-admin login Secret, the aigw-dns-resolver TMM resolves
+	// provider hostnames through and, with AIMetrics, ClickHouse plus the
+	// fluentd HSL receiver TMM logs one record per request to. Opt-in:
+	// unset → no aiGateway block, no change.
+	AIGateway AIGateway `yaml:"ai_gateway,omitempty"`
+}
+
+// AIGateway is the poc.yaml shape of CNEInstance.spec.aiGateway.
+//
+// FLO keeps the gateway's governance data in DSSM through a Sentinel, so it
+// silently skips the gateway when DSSM runs as a Redis Cluster; ocibnkctl
+// always deploys the default Sentinel pair, so that never applies here.
+type AIGateway struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// AIMetrics stores per-request records in ClickHouse. The records reach
+	// it through the platform fluentd, so this also turns on
+	// CNEInstance.telemetry.loggingSubsystem (see LoggingSubsystemEnabled).
+	AIMetrics bool `yaml:"ai_metrics,omitempty"`
+	// ConsoleURL is the URL users open the console at; FLO hands it to
+	// NextAuth as NEXTAUTH_URL. FLO defaults it to http://localhost:3000,
+	// which only works through a port-forward on that port.
+	ConsoleURL string `yaml:"console_url,omitempty"`
 }
 
 // Host profile values for BNK.HostProfile.
@@ -303,6 +327,14 @@ func (b BNK) ResolveHostProfile(cores, stdFloor int) (profile string, autoSmall 
 // profile disables it to shed TMM's observer sidecar; everything else
 // keeps the metrics pipeline on.
 func (b BNK) MetricSubsystemEnabled() bool { return !b.IsSmallHost() }
+
+// LoggingSubsystemEnabled is the value for
+// CNEInstance.spec.telemetry.loggingSubsystem.enabled. It stays off except
+// when the AI gateway stores metrics: its HSL receiver runs inside the
+// platform fluentd that this subsystem deploys.
+func (b BNK) LoggingSubsystemEnabled() bool {
+	return b.AIGateway.Enabled && b.AIGateway.AIMetrics
+}
 
 // BNKForge mirrors dpubnkctl's bnk_forge block. Auto-populated by
 // `ocibnkctl init` when $OCIBNKCTL_BNK_FORGE_PATH or ~/git/bnk-forge

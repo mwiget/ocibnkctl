@@ -42,8 +42,10 @@ spec:
   # DPU/SR-IOV (not demo mode).
   storageClassName: standard
   telemetry:
+    # Off by default; on only for the AI gateway's metrics, whose HSL
+    # receiver runs inside the fluentd this subsystem deploys.
     loggingSubsystem:
-      enabled: false
+      enabled: {{.LoggingSubsystem}}
     # metricSubsystem drives TMM's observer/tmStats sidecar (~700m/1Gi) and
     # the cluster metrics pipeline (observer / observer-receiver / otel).
     # The small-host (4-core) profile disables it: the f5-tmm-pod-manager
@@ -52,6 +54,18 @@ spec:
     # the TMM pod from 4.1c to ~3.4c so it fits a single 4-core node.
     metricSubsystem:
       enabled: {{.MetricSubsystem}}
+{{- if .AIGateway.Enabled}}
+  # BNK 2.4.1 AI/LLM gateway. FLO renders the AIGateway CR f5-aigateway from
+  # this: console (NodePort, port 3000), the f5-aigateway-admin login Secret,
+  # aigw-dns-resolver for provider hostnames and, with aiMetrics, ClickHouse
+  # plus the fluentd HSL receiver. Needs DSSM's default Sentinel pair.
+  aiGateway:
+    enabled: true
+    aiMetrics: {{.AIGateway.AIMetrics}}
+{{- if .AIGateway.ConsoleURL}}
+    consoleURL: "{{.AIGateway.ConsoleURL}}"
+{{- end}}
+{{- end}}
   certificate:
     clusterIssuer: bnk-ca-cluster-issuer
   deploymentSize: "{{.DeploymentSize}}"

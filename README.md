@@ -47,6 +47,7 @@ much shorter pipeline.
 - [Repo layout (a PoC created by `ocibnkctl init`)](#repo-layout-a-poc-created-by-ocibnkctl-init)
   - [Cluster access — the `~/.kube/config` lifecycle](#cluster-access--the-kubeconfig-lifecycle)
   - [Browse the cluster with k9s](#browse-the-cluster-with-k9s)
+- [AI/LLM gateway (BNK 2.4.1)](#aillm-gateway-bnk-241)
 - [Scaling TMM nodes](#scaling-tmm-nodes)
 - [Network topology](#network-topology)
 - [Scenarios — testing F5 how-tos against the running cluster](#scenarios--testing-f5-how-tos-against-the-running-cluster)
@@ -808,6 +809,52 @@ k9s                       # picks up ~/.kube/config automatically — no export
 
 In k9s: `0` shows all namespaces, `/f5-` filters to the F5 pods, `l` tails
 TMM's logs, `s` shells into a container.
+
+## AI/LLM gateway (BNK 2.4.1)
+
+BNK 2.4.1 ships an AI/LLM gateway that runs inside TMM, plus a web console to
+configure it. It is opt-in in `poc.yaml`:
+
+```yaml
+bnk:
+  ai_gateway:
+    enabled: true
+    ai_metrics: true      # optional: per-request records in ClickHouse
+    console_url: ""       # optional: the URL users open the console at
+```
+
+`deploy cne` renders this as `CNEInstance.spec.aiGateway`, and FLO installs
+the rest from the release manifest (`f5-aigateway-ui`, `clickhouse-server`):
+
+- **Console** — Deployment + **NodePort** Service `f5-aigateway-console`
+  (container port 3000), talking to the f5ingress API at
+  `f5-cne-controller-api:8443`.
+- **Login** — Secret `f5-aigateway-admin`, user `admin`, generated password.
+- **`aigw-dns-resolver`** — the DNS cache TMM resolves provider hostnames
+  through; without it TMM resets every request to a hostname provider.
+- **With `ai_metrics`** — ClickHouse (`f5-aigateway-clickhouse`), a schema
+  Job, an HSL receiver in the platform fluentd and the `aigw-hslpub` publisher
+  TMM logs one record per request to. ocibnkctl turns on
+  `telemetry.loggingSubsystem` for this; it stays off otherwise.
+
+Open the console and sign in:
+
+```bash
+kubectl get secret f5-aigateway-admin -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl port-forward svc/f5-aigateway-console 3000:3000
+# → http://localhost:3000, user admin
+```
+
+The port-forward on 3000 matches FLO's default `console_url`
+(`http://localhost:3000`), which the console uses for its sign-in redirects.
+Reaching it any other way (e.g. the NodePort) needs `console_url` set to that
+address.
+
+Known 2.4.1 gaps: route attachment can fail because the controller lacks
+AppPolicy create/delete (fixed after FLO `v2.30.0-0.11.4`, not yet in a
+release), and console sign-in is local only (no OIDC in the CNEInstance).
+FLO skips the gateway when DSSM runs as a Redis Cluster; ocibnkctl always
+deploys the default Sentinel pair, so that does not apply here.
 
 ## Scaling TMM nodes
 

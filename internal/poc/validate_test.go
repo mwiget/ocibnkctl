@@ -295,3 +295,34 @@ func TestValidateDataplaneMode(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateAIGateway(t *testing.T) {
+	cases := []struct {
+		name     string
+		gw       AIGateway
+		small    bool
+		wantErr  string
+		wantWarn string
+	}{
+		{name: "enabled", gw: AIGateway{Enabled: true, AIMetrics: true, ConsoleURL: "https://console.example.com"}},
+		{name: "bad console URL", gw: AIGateway{Enabled: true, ConsoleURL: "console.example.com"}, wantErr: "console_url"},
+		{name: "settings without enabled", gw: AIGateway{AIMetrics: true}, wantWarn: "enabled is false"},
+		{name: "metrics on small host", gw: AIGateway{Enabled: true, AIMetrics: true}, small: true, wantWarn: "ai_metrics on host_profile=small"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := goodPoC(t)
+			p.BNK.AIGateway = c.gw
+			if c.small {
+				p.BNK.HostProfile = HostProfileSmall
+			}
+			r := p.Validate()
+			if got := strings.Join(r.Errors, "\n"); (c.wantErr == "") != (got == "") || !strings.Contains(got, c.wantErr) {
+				t.Errorf("errors = %v, want %q", r.Errors, c.wantErr)
+			}
+			if c.wantWarn != "" && !strings.Contains(strings.Join(r.Warnings, "\n"), c.wantWarn) {
+				t.Errorf("warnings = %v, want %q", r.Warnings, c.wantWarn)
+			}
+		})
+	}
+}

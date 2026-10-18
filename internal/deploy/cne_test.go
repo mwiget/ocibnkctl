@@ -136,3 +136,61 @@ func TestRenderCNEInstance_MetricSubsystemByProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderCNEInstance_AIGateway(t *testing.T) {
+	cases := []struct {
+		name    string
+		gw      poc.AIGateway
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "off by default",
+			want:    []string{"loggingSubsystem:\n      enabled: false"},
+			notWant: []string{"aiGateway:"},
+		},
+		{
+			name:    "console only",
+			gw:      poc.AIGateway{Enabled: true},
+			want:    []string{"aiGateway:\n    enabled: true\n    aiMetrics: false\n", "loggingSubsystem:\n      enabled: false"},
+			notWant: []string{"consoleURL:"},
+		},
+		{
+			// Metrics flow through the platform fluentd, so they need the
+			// logging subsystem on.
+			name: "metrics and console URL",
+			gw:   poc.AIGateway{Enabled: true, AIMetrics: true, ConsoleURL: "http://192.168.99.10:30300"},
+			want: []string{
+				"aiMetrics: true",
+				`consoleURL: "http://192.168.99.10:30300"`,
+				"loggingSubsystem:\n      enabled: true",
+			},
+		},
+		{
+			// Settings without enabled render nothing, logging included.
+			name:    "metrics without enabled",
+			gw:      poc.AIGateway{AIMetrics: true},
+			want:    []string{"loggingSubsystem:\n      enabled: false"},
+			notWant: []string{"aiGateway:"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := &poc.PoC{BNK: poc.BNK{AIGateway: c.gw}}
+			got, err := RenderCNEInstance(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("want %q in render:\n%s", w, got)
+				}
+			}
+			for _, w := range c.notWant {
+				if strings.Contains(got, w) {
+					t.Errorf("render must not contain %q:\n%s", w, got)
+				}
+			}
+		})
+	}
+}
