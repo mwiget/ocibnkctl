@@ -1,0 +1,27 @@
+{
+  "date": "18 October 2026",
+  "host_label": "gx10 · arm64 · agent",
+  "ref_label": "lake1 · x86_64",
+  "assertions": [
+    {"description": "TMM has the demo-llm virtual server on 203.0.113.140:80", "gx10": true, "ref": true},
+    {"description": "edge learned 203.0.113.140/32 from TMM over BGP", "gx10": true, "ref": true},
+    {"description": "virtual key + allowed model → 200 with a usage block", "gx10": true, "ref": true},
+    {"description": "wrong key → 401", "gx10": true, "ref": true},
+    {"description": "no key → 401", "gx10": true, "ref": true},
+    {"description": "model outside the key’s scope → 403", "gx10": true, "ref": true},
+    {"description": "ClickHouse: a record per request (200, 401, 403)", "gx10": true, "ref": true}
+  ],
+  "agent_lines": [
+    "fresh clone, Claude Code reading AGENTS.md; 19 tool calls",
+    "run 1 stopped at cluster up: a stale PoC held the edge subnet",
+    "it set edge_octet in its own poc.yaml, left the other PoC alone, re-ran",
+    "the 2.4.1 route race hit; the scenario restarted the controller once"
+  ],
+  "timing_lines": [
+    "10m31s from empty host to all green (run 2)",
+    "BNK install (deploy cne) 4m19s",
+    "bgp-peer-frr 30s · llm-gateway 4m59s, incl. the restart",
+    "on a deployed cluster: llm-gateway re-run 15 s (lake1)"
+  ],
+  "notes": "The agent’s first run failed after 40 seconds: a stale PoC’s docker network on that host held the default edge subnet. It found that read-only, changed only its own poc.yaml, and re-ran. Run 2 went from an empty host to all nine assertions green in ten and a half minutes; on that fresh cluster the 2.4.1 route race hit and the scenario’s one controller restart cleared it. lake1 is the x86_64 reference: all seven green, fifteen seconds on an already deployed cluster. Sources: the run reports reports/2026-10-18T17-19-22Z (gx10) and 2026-10-18T17-10-46Z (lake1), and the agent’s journal entry."
+}
