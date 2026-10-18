@@ -205,6 +205,11 @@ they are; the operator reads them.
 - Models and routes of every tenant share namespace `default`; the setup
   script prefixes their object names with the tenant.
 
+**If `cluster up` fails with "Pool overlaps",** another PoC's docker network
+(possibly a stale one) holds the edge subnet: set `cluster.edge_octet` in this
+PoC's `poc.yaml` to a free octet and re-run. Never remove another PoC's
+networks or containers.
+
 **If it fails,** read the failing assertion's `got` first. Typical causes: no
 `bgp-peer-frr` session (run it first), `bnk.ai_gateway` not enabled (edit
 `poc.yaml`, then `ocibnkctl deploy cne`), the VIP not learned (the race

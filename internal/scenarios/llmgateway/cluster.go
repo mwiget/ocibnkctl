@@ -165,8 +165,12 @@ func hasVirtualServer(ctx *scenarios.Context) bool {
 
 func profileProgrammed(ctx *scenarios.Context) string {
 	out, _ := ctx.Runner.KubectlCapture(ctx.Ctx, "-n", floNS, "get", "aigatewayprofiles.inference.k8s.f5.com", Route,
-		"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}: {.status.conditions[?(@.type=="Programmed")].message}`)
-	return "AIGatewayProfile Programmed=" + strings.TrimSpace(out)
+		"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}|{.status.conditions[?(@.type=="Programmed")].message}`)
+	st, msg, _ := strings.Cut(strings.TrimSpace(out), "|")
+	if st == "" {
+		return "AIGatewayProfile " + Route + " not Programmed yet (no condition)"
+	}
+	return fmt.Sprintf("AIGatewayProfile %s Programmed=%s: %s", Route, st, msg)
 }
 
 // ensureVirtualServer waits for TMM to have the route's virtual server. In

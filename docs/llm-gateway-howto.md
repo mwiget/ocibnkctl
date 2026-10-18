@@ -161,8 +161,16 @@ you to where the passwords and the virtual key are rather than printing them,
 and it never reads `keys/`.
 
 Non-interactive (CI, a remote box): `claude -p "<the request above>"` from the
-PoC directory runs the same workflow and prints the agent's report;
-permissions follow your Claude Code settings.
+PoC directory runs the same workflow and prints the agent's report. What the
+agent may run is decided by your Claude Code permission settings; note that
+`--allowedTools` only adds to them, so in `auto` or permissive modes it does
+not confine the agent. Run it on a machine where that is acceptable.
+
+What it looked like on an arm64 lab box (fresh clone, October 2026): the
+agent checked the host, ran `e2e`, found that a stale PoC's docker network
+already held the default edge subnet, set `edge_octet` in its own `poc.yaml`
+without touching the other PoC, re-ran, and reported 9/9 assertions green in
+10½ minutes, including the controller restart for the 2.4.1 route race below.
 
 ## Open the console
 
@@ -257,6 +265,7 @@ run, which used the mock only.
 | `llm-gateway needs bnk.ai_gateway.enabled` | PoC created without the profile | Add the `ai_gateway` block to `poc.yaml`, `ocibnkctl deploy cne`, then the scenario |
 | A setup step says *"the name is taken by another tenant"* | Models and routes of all tenants share namespace `default` | Use a different tenant; the script prefixes object names with it |
 | ClickHouse assertion missing | `ai_metrics: false` | Expected: metering is off. Set it true and `ocibnkctl deploy cne` |
+| `cluster up` fails with *"Pool overlaps with other one on this address space"* | Another (maybe stale) PoC's docker network holds the edge subnet `192.168.99.0/24` | Set `cluster.edge_octet` to a free octet in `poc.yaml` (e.g. `98`), or destroy the old PoC. `docker network ls` shows them |
 | Host under 10 cores | Resource floor | `init` writes `host_profile: small` on tight hosts and `e2e` adds `deploy shrink` automatically. ClickHouse adds pods: with `ai_metrics: false` the gateway, console and keys still work |
 
 Details on anything else: `kubectl -n llm-demo logs job/llm-setup`,
@@ -297,7 +306,8 @@ F5 internal (F5 network or SSO; not reachable for customers):
 
 What was verified, and how: BNK 2.4.1 (release manifest
 `f5-bigip-k8s-manifest:2.4.1`, FLO `v2.30.0-0.11.4`,
-`f5-aigateway-ui:v0.11.0`, `clickhouse-server:24.8`) on an x86_64 lab host,
-October 2026, with the mock LLM. Every behaviour above is asserted by the
+`f5-aigateway-ui:v0.11.0`, `clickhouse-server:24.8`) on an x86_64 lab host
+and, from a fresh clone driven by Claude Code through `AGENTS.md`, on an arm64
+lab host, October 2026, with the mock LLM. Every behaviour above is asserted by the
 `llm-gateway` scenario or was observed on that cluster, except where a
 section says otherwise.
