@@ -5,7 +5,7 @@ all: build-all
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BNK     := 2.4.0
+BNK     := 2.4.1
 
 LDFLAGS := -X 'github.com/mwiget/ocibnkctl/internal/version.Version=$(VERSION)' \
            -X 'github.com/mwiget/ocibnkctl/internal/version.Commit=$(COMMIT)' \
@@ -32,32 +32,32 @@ build-all: build build-linux-arm64
 
 # --- release artifacts --------------------------------------------------
 #
-# Tagging convention. The binary is hard-pinned to BNK 2.4.0
-# (BNKVersion=2.4.0, baked into ldflags here and in .goreleaser.yaml), so
-# every release tag carries the `v2.4.0` prefix. Tool-level changes that
+# Tagging convention. The binary is hard-pinned to BNK 2.4.1
+# (BNKVersion=2.4.1, baked into ldflags here and in .goreleaser.yaml), so
+# every release tag carries the `v2.4.1` prefix. Tool-level changes that
 # need a fresh binary — bug fixes, new scenarios, doc bumps — get an
 # incrementing suffix, NOT a new MAJOR.MINOR.PATCH:
 #
-#   v2.4.0       first cut for BNK 2.4.0
-#   v2.4.0-1     next binary, same BNK release
-#   v2.4.0-2     ...and so on
+#   v2.4.1       first cut for BNK 2.4.1
+#   v2.4.1-1     next binary, same BNK release
+#   v2.4.1-2     ...and so on
 #
-# Prior BNK release lines live on `release/2.3.2`, `release/2.3.1` and
-# `release/2.3.0`; backport fixes there and tag v2.3.N-M off that branch.
+# Prior BNK release lines live on `release/2.4.0`, `release/2.3.2`,
+# `release/2.3.1` and `release/2.3.0`; backport fixes there and tag v<BNK>-M off that branch.
 #
 # This mirrors github.com/mwiget/dpubnkctl. Pushing any `v*` tag triggers
 # the GitHub Actions goreleaser workflow (.github/workflows/release.yml),
 # which is the canonical release path:
 #
-#   git tag v2.4.0 && git push origin v2.4.0
+#   git tag v2.4.1 && git push origin v2.4.1
 #
 # The `make release` targets below are the manual fallback — they produce
 # the same versioned, sha256-checksummed binaries locally. Run from a
-# clean checkout of the tag so $(VERSION) resolves (e.g. to v2.4.0):
+# clean checkout of the tag so $(VERSION) resolves (e.g. to v2.4.1):
 #
-#   git checkout v2.4.0
+#   git checkout v2.4.1
 #   make release
-#   gh release upload v2.4.0 bin/ocibnkctl-v2.4.0-* --clobber
+#   gh release upload v2.4.1 bin/ocibnkctl-v2.4.1-* --clobber
 release-linux-amd64:
 	@mkdir -p bin
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
