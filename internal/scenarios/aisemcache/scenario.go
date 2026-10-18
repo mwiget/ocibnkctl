@@ -303,8 +303,18 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	// HTTP_REQUEST log statement — only the CLIENT_ACCEPTED init line with
 	// the annotated modelcache server survives — so that line is now the
 	// proof the iRule ran; the HTTP_REQUEST line is surfaced informationally.
-	hasIRule := strings.Contains(tmmLogs, "scn-semcache-gateway-scn-semcache-semantic-cache") &&
-		strings.Contains(tmmLogs, "Client initialized with modelcache_server=")
+	// The rule's name suffix is the controller's to choose: 2.4.0 logged
+	// "<gw>-<ns>-semantic-cache", 2.4.1 (f5ingress v14.91.12-0.18.0) logs
+	// "<gw>-<ns>-sc", so match the gateway/namespace prefix and the init
+	// line on the same log line.
+	hasIRule := false
+	for _, line := range strings.Split(tmmLogs, "\n") {
+		if strings.Contains(line, "Rule scn-semcache-gateway-scn-semcache-") &&
+			strings.Contains(line, "Client initialized with modelcache_server=") {
+			hasIRule = true
+			break
+		}
+	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "TMM semantic-cache iRule fired (CLIENT_ACCEPTED init with the annotated modelcache server)",
 		OK:          hasIRule,

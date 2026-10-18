@@ -942,7 +942,7 @@ state, write a JSON+md report under `reports/<timestamp>/scenarios/`.
 > external `bnk-edge` FRR). Measured 2026-06-22 on a Linux host (`edge_octet`
 > 95); `ai-token-counting-dssm` added + verified live 2026-06-25. The data-plane scenarios reach Gateway VIPs by curling from the external
 > FRR's netns over BGP-learned routes — TMM's eth0 TCP hook is bypassed
-> entirely. All 15 scenarios are green on BNK 2.4.0 (`fic-dynamic-ip` turned green
+> entirely. All 15 scenarios are green on BNK 2.4.0 and 2.4.1 (`fic-dynamic-ip` turned green
 > with 2.4's GatewaySettings/Infra IPAM — see below).
 
 ```bash
