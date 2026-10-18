@@ -21,7 +21,10 @@ type PoC struct {
 	Networks   Networks `yaml:"networks"`
 	BNK        BNK      `yaml:"bnk"`
 	BNKForge   BNKForge `yaml:"bnk_forge,omitempty"`
-	Status     Status   `yaml:"status"`
+	// Scenarios, when set, is what `e2e --with-scenarios` runs (deps first)
+	// instead of every green scenario. `init --profile` writes it.
+	Scenarios []string `yaml:"scenarios,omitempty"`
+	Status    Status   `yaml:"status"`
 }
 
 type Metadata struct {

@@ -74,3 +74,57 @@ func TestInit_RefusesNonDirectoryTarget(t *testing.T) {
 		t.Fatal("init must refuse a target that is a plain file")
 	}
 }
+
+func runInitArgs(t *testing.T, target string, extra ...string) (string, error) {
+	t.Helper()
+	cmd := newInitCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(append([]string{"demo", "--dir", target, "--no-git"}, extra...))
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestInit_ProfileLLMGateway(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "demo")
+	out, err := runInitArgs(t, target, "--profile", "llm-gateway")
+	if err != nil {
+		t.Fatalf("init --profile llm-gateway: %v\n%s", err, out)
+	}
+	p, err := poc.Load(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gw := p.BNK.AIGateway; !gw.Enabled || !gw.AIMetrics {
+		t.Errorf("ai_gateway = %+v, want enabled with metrics", gw)
+	}
+	if !p.BNK.IsAnycastBGP() {
+		t.Errorf("data plane = %q, want anycast-bgp (clients reach the VIP over BGP)", p.BNK.DataplaneMode())
+	}
+	if strings.Join(p.Scenarios, ",") != "bgp-peer-frr,llm-gateway" {
+		t.Errorf("scenarios = %v", p.Scenarios)
+	}
+	if !strings.Contains(out, "--with-scenarios") {
+		t.Errorf("Next: should point at e2e --with-scenarios:\n%s", out)
+	}
+	if r := p.Validate(); !r.Valid() {
+		t.Errorf("profile PoC must validate: %v", r.Errors)
+	}
+}
+
+func TestInit_ProfileFromEnvAndUnknown(t *testing.T) {
+	t.Setenv(envProfile, "llm-gateway")
+	target := filepath.Join(t.TempDir(), "demo")
+	if out, err := runInitArgs(t, target); err != nil {
+		t.Fatalf("init with %s: %v\n%s", envProfile, err, out)
+	}
+	if p, _ := poc.Load(target); !p.BNK.AIGateway.Enabled {
+		t.Errorf("%s=llm-gateway did not enable the AI gateway", envProfile)
+	}
+
+	out, err := runInitArgs(t, filepath.Join(t.TempDir(), "demo"), "--profile", "nope")
+	if err == nil || !strings.Contains(err.Error(), "llm-gateway") {
+		t.Errorf("unknown profile must fail and list the valid ones; err=%v\n%s", err, out)
+	}
+}
