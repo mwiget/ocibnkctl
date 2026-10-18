@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
@@ -75,5 +76,26 @@ func TestTopoSortByDeps_DetectsCycle(t *testing.T) {
 	}
 	if _, err := topoSortByDeps(in); err == nil {
 		t.Errorf("expected cycle error, got nil")
+	}
+}
+
+func TestWithScenariosSet(t *testing.T) {
+	all, err := withScenariosSet(nil)
+	if err != nil || len(all) < 5 {
+		t.Fatalf("no list must mean every green scenario; got %d, %v", len(all), err)
+	}
+	got, err := withScenariosSet([]string{"llm-gateway"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name())
+	}
+	if strings.Join(names, ",") != "bgp-peer-frr,llm-gateway" {
+		t.Errorf("llm-gateway must pull in its dependency first; got %v", names)
+	}
+	if _, err := withScenariosSet([]string{"no-such-scenario"}); err == nil {
+		t.Error("an unknown scenario name must be an error")
 	}
 }

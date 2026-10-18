@@ -509,12 +509,11 @@ func runScenariosForE2E(ctx context.Context, out io.Writer, repo, reportDir stri
 		ReportStamp: stamp,
 	}
 
-	// Same green-only + topo-sort policy as `scenario run --all`.
-	var greens []scenarios.Scenario
-	for _, s := range scenarios.All() {
-		if s.Rating() == scenarios.Green {
-			greens = append(greens, s)
-		}
+	// Same green-only + topo-sort policy as `scenario run --all`, narrowed
+	// to poc.yaml's scenarios list when it has one (an `init --profile` PoC).
+	greens, err := withScenariosSet(p.Scenarios)
+	if err != nil {
+		return err
 	}
 	if len(greens) == 0 {
 		fmt.Fprintln(out, "no green-rated scenarios registered")

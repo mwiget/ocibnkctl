@@ -1,0 +1,33 @@
+# Runs llm-setup.sh (ConfigMap llm-setup, created from the embedded script)
+# inside the cluster, where the AI gateway API Service resolves. The platform
+# admin password comes from FLO's Secret, copied into this namespace by the
+# scenario so the Job never sees it on a command line.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-setup
+  namespace: llm-demo
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: setup
+        image: curlimages/curl:8.10.1
+        command: ["sh", "/setup/llm-setup.sh"]
+        env:
+        - name: ADMIN_PASSWORD
+          valueFrom: {secretKeyRef: {name: llm-admin, key: password}}
+        - {name: TENANT, value: "{{.Tenant}}"}
+        - {name: VIP, value: "{{.VIP}}"}
+        - {name: MODEL, value: "{{.Model}}"}
+        - {name: PROVIDER_URL, value: "{{.ProviderURL}}"}
+        - name: PROVIDER_KEY
+          valueFrom: {secretKeyRef: {name: llm-provider, key: api-key}}
+        volumeMounts:
+        - {name: setup, mountPath: /setup}
+      volumes:
+      - name: setup
+        configMap: {name: llm-setup}

@@ -23,6 +23,13 @@ type CNEInputs struct {
 	// The small-host profile sets it false to shed TMM's observer sidecar
 	// (see poc.BNK.MetricSubsystemEnabled).
 	MetricSubsystem bool
+	// LoggingSubsystem is CNEInstance.spec.telemetry.loggingSubsystem.enabled.
+	// Off unless the AI gateway stores metrics, whose HSL receiver runs in
+	// the fluentd it deploys (see poc.BNK.LoggingSubsystemEnabled).
+	LoggingSubsystem bool
+	// AIGateway is CNEInstance.spec.aiGateway; the block is only rendered
+	// when AIGateway.Enabled.
+	AIGateway poc.AIGateway
 	// NetworkAttachments is CNEInstance.spec.networkAttachments — the
 	// Multus NAD(s) FLO attaches to every TMM pod. Empty in the default
 	// demo shape; selfip-dag sets it to the DAG bridge NAD so mapres can
@@ -56,13 +63,15 @@ type CNEInputs struct {
 func RenderCNEInstance(p *poc.PoC) (string, error) {
 	k, v := p.BNK.TMMLabel()
 	in := CNEInputs{
-		InstanceName:    "bnk-instance",
-		ManifestVersion: version.CNEManifestVersion,
-		DeploymentSize:  "Small",
-		TMMNodeLabelKey: k,
-		TMMNodeLabelVal: v,
-		MetricSubsystem: p.BNK.MetricSubsystemEnabled(),
-		MapresOnDP:      "TRUE",
+		InstanceName:     "bnk-instance",
+		ManifestVersion:  version.CNEManifestVersion,
+		DeploymentSize:   "Small",
+		TMMNodeLabelKey:  k,
+		TMMNodeLabelVal:  v,
+		MetricSubsystem:  p.BNK.MetricSubsystemEnabled(),
+		LoggingSubsystem: p.BNK.LoggingSubsystemEnabled(),
+		AIGateway:        p.BNK.AIGateway,
+		MapresOnDP:       "TRUE",
 		// Infra/GatewaySettings is the default; selfip-dag flips it below.
 		UseGatewaySettings: "true",
 	}

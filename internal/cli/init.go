@@ -20,9 +20,10 @@ import (
 
 func newInitCmd() *cobra.Command {
 	var (
-		dir      string
-		customer string
-		noGit    bool
+		dir         string
+		customer    string
+		noGit       bool
+		profileName string
 	)
 	cmd := &cobra.Command{
 		Use:   "init <poc-name>",
@@ -56,7 +57,14 @@ invalid value is an error, never a silent fallback:
                                                  clusters distinct octets
   OCIBNKCTL_HOST_PROFILE  bnk.host_profile       standard | small
                                                  (overrides host auto-detect)
-  OCIBNKCTL_TEEMS_RELAY   cluster.teems_relay    true | false`,
+  OCIBNKCTL_TEEMS_RELAY   cluster.teems_relay    true | false
+  OCIBNKCTL_PROFILE       --profile              (--profile wins)
+
+Profiles seed poc.yaml for one use case (edit it afterwards as usual):
+
+  llm-gateway   BNK 2.4.1 AI/LLM gateway demo — bnk.ai_gateway with metrics;
+                e2e --with-scenarios then runs bgp-peer-frr + llm-gateway
+                (mock LLM, virtual keys, console). See docs/llm-gateway-howto.md.`,
 		Args: initArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -113,6 +121,11 @@ invalid value is an error, never a silent fallback:
 			// Build poc.yaml, including bnk-forge auto-detect.
 			p := poc.New(name)
 			p.Metadata.Customer = customer
+			// The profile first, so host auto-detect and OCIBNKCTL_* still win.
+			pr, err := applyProfile(p, profileName, cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
 			if forgePath := detectBNKForge(); forgePath != "" {
 				p.BNKForge.Enabled = true
 				p.BNKForge.RepoPath = forgePath
@@ -163,6 +176,10 @@ invalid value is an error, never a silent fallback:
 			fmt.Fprintln(out, "  cp /path/to/f5-far-auth-key.tgz keys/")
 			fmt.Fprintln(out, "  cp /path/to/license.jwt          keys/.jwt")
 			fmt.Fprintln(out, "  ocibnkctl validate")
+			if pr != nil {
+				fmt.Fprintf(out, "  "+pr.next+"\n", name)
+				return nil
+			}
 			fmt.Fprintf(out, "  ocibnkctl e2e --yolo --confirm-cluster %s\n", name)
 			return nil
 		},
@@ -170,6 +187,7 @@ invalid value is an error, never a silent fallback:
 	cmd.Flags().StringVar(&dir, "dir", "", "target directory (default ./<poc-name>)")
 	cmd.Flags().StringVar(&customer, "customer", "", "customer name recorded in poc.yaml.metadata.customer")
 	cmd.Flags().BoolVar(&noGit, "no-git", false, "skip git init")
+	cmd.Flags().StringVar(&profileName, "profile", "", "seed poc.yaml for a use case: "+strings.Join(profileNames(), ", "))
 	return cmd
 }
 

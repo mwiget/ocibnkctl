@@ -30,6 +30,7 @@ import (
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/ficdynamicip"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/grpcroute"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/httproutee2e"
+	_ "github.com/mwiget/ocibnkctl/internal/scenarios/llmgateway"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/proxyprotocol"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingconfigtenant"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingtemplate"
@@ -389,4 +390,45 @@ failure doesn't abort the rest.`,
 	cmd.Flags().StringVar(&pocDir, "poc", "", "PoC repo path (default: current directory)")
 	cmd.Flags().BoolVar(&all, "all", false, "Clean every green-rated scenario in reverse dependency order")
 	return cmd
+}
+
+// withScenariosSet is what `e2e --with-scenarios` runs: every green scenario,
+// or, when poc.yaml lists scenarios (an `init --profile` PoC), those plus the
+// dependencies they name, transitively. The caller topo-sorts the result.
+func withScenariosSet(names []string) ([]scenarios.Scenario, error) {
+	if len(names) == 0 {
+		var greens []scenarios.Scenario
+		for _, s := range scenarios.All() {
+			if s.Rating() == scenarios.Green {
+				greens = append(greens, s)
+			}
+		}
+		return greens, nil
+	}
+	var out []scenarios.Scenario
+	seen := map[string]bool{}
+	var add func(string) error
+	add = func(n string) error {
+		if seen[n] {
+			return nil
+		}
+		seen[n] = true
+		s := scenarios.Find(n)
+		if s == nil {
+			return fmt.Errorf("poc.yaml scenarios: unknown scenario %q (see `ocibnkctl scenario list`)", n)
+		}
+		for _, d := range s.Dependencies() {
+			if err := add(d); err != nil {
+				return err
+			}
+		}
+		out = append(out, s)
+		return nil
+	}
+	for _, n := range names {
+		if err := add(n); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
