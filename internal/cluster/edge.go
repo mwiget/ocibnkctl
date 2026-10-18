@@ -368,5 +368,5 @@ func (d *DockerCLI) removeContainer(ctx context.Context, name string) error {
 	if !exists {
 		return nil
 	}
-	return d.run(ctx, "rm", "-f", name)
+	return d.run(ctx, "rm", "-f", "-v", name)
 }

@@ -487,7 +487,7 @@ func (k *K3s) RemoveWorker(ctx context.Context, name string, index int) error {
 		fmt.Fprintf(k.Out, "agent node %q not present — nothing to remove\n", agent)
 		return nil
 	}
-	if err := k.runVisible(ctx, "rm", "-f", agent); err != nil {
+	if err := k.runVisible(ctx, "rm", "-f", "-v", agent); err != nil {
 		return fmt.Errorf("remove k3s agent %s: %w", agent, err)
 	}
 	return nil
@@ -625,7 +625,11 @@ func (k *K3s) DeleteCluster(ctx context.Context, name string) error {
 		return err
 	}
 	if fields := strings.Fields(ids); len(fields) > 0 {
-		if err := k.runVisible(ctx, append([]string{"rm", "-f"}, fields...)...); err != nil {
+		// -v: rancher/k3s declares VOLUMEs (/var/lib/rancher/k3s,
+		// /var/lib/kubelet, /var/lib/cni, /var/log), several GB per node
+		// with its images; without it every destroy leaks them (1.2 TB had
+		// piled up on lake1 by 2026-10-18).
+		if err := k.runVisible(ctx, append([]string{"rm", "-f", "-v"}, fields...)...); err != nil {
 			return fmt.Errorf("remove k3s containers: %w", err)
 		}
 	} else {
