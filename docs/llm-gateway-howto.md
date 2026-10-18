@@ -40,15 +40,17 @@ What the demo shows, all through **TMM**, F5's data plane:
 ## What gets deployed
 
 ```
-  client (edge)                                 k3s cluster (Docker containers)
- ┌──────────────┐  BGP /32   ┌─────────────────────────────────────────────────────────────┐
- │ bnk-edge-frr │◀──────────▶│ TMM ── virtual key ─ model scope ─ meter ──▶ mock-llm       │
- │  curl → VIP  │  HTTP :80  │  ▲  203.0.113.140                        (OpenAI API, no GPU)│
- └──────────────┘            │  │ config                │ one record per request            │
-                             │ f5-cne-controller ◀── console (Polaris AI)   ClickHouse       │
-                             │  (AI gateway API)        ▲  port 3000                         │
-                             └──────────────────────────┼───────────────────────────────────┘
-                                       you ── kubectl port-forward ── http://localhost:3000
+  client (edge)     k3s cluster (Docker containers), BNK 2.4.1 via FLO
+ ┌──────────────┐  ┌──────────────────────────────────────────────────────────────────┐
+ │ bnk-edge-frr │  │ TMM: virtual key, model scope, meter ───> mock-llm               │
+ │  curl ───────┼──│> 203.0.113.140:80                (OpenAI API, no GPU)            │
+ │   over BGP   │  │   ^ config          │ one record per request                     │
+ └──────────────┘  │   │                 v                                            │
+                   │ f5-cne-controller              ClickHouse                        │
+                   │ (AI gateway API)                                                 │
+                   │   ^                                                              │
+                   │ console "Polaris AI" :3000 <── port-forward <── you              │
+                   └──────────────────────────────────────────────────────────────────┘
 ```
 
 - **`ocibnkctl`** builds a k3s cluster out of Docker containers (one control

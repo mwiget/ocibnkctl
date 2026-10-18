@@ -13,11 +13,11 @@ driven** — `internal/version.Version` defaults to `dev` and is stamped from th
 tag by goreleaser / the Makefile `LDFLAGS`; there is no version constant to edit.
 
 ```
-ocibnkctl tag  ──goreleaser──▶  GitHub release (binaries + checksums)
+ocibnkctl tag  ──goreleaser──>  GitHub release (binaries + checksums)
       │
-      └── runner.Dockerfile downloads that binary ──▶  ghcr.io/mwiget/ocibnkctl-tools-runner@sha256:…
+      └── runner.Dockerfile downloads that binary ──>  ghcr.io/mwiget/ocibnkctl-tools-runner@sha256:…
                                                               │
-                                    bnkctl-index pins the digest ──▶ artifact/pack + blueprint bump
+                                    bnkctl-index pins the digest ──> artifact/pack + blueprint bump
                                                               │
                                               BNK Forge syncs source + reimports blueprint release
 ```
