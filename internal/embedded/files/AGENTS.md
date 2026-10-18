@@ -145,6 +145,73 @@ control-plane verifies but data-plane plumbing is partially missing;
 scenarios depend on `bgp-peer-frr`, which installs Multus + an FRR BGP
 peer on demand (the base cluster has no Multus).
 
+## LLM gateway demo (BNK 2.4.1 AI gateway)
+
+A PoC created with `ocibnkctl init <name> --profile llm-gateway` (or any PoC
+with `bnk.ai_gateway.enabled: true`) deploys BNK's AI/LLM gateway: TMM
+enforces virtual keys and per-key model scope on OpenAI-style requests and
+meters every request into ClickHouse; a web console manages tenants,
+providers, models, routes, keys and shows spend. FLO installs all of it from
+`CNEInstance.spec.aiGateway`. The full guide is `docs/llm-gateway-howto.md` in
+the ocibnkctl repo.
+
+**The run.** The profile writes `scenarios: [bgp-peer-frr, llm-gateway]` into
+`poc.yaml`, so one command deploys and proves the demo (~20–30 min first
+time):
+
+```
+ocibnkctl doctor
+ocibnkctl e2e --yolo --confirm-cluster <name> --with-scenarios
+```
+
+On an already deployed PoC: `ocibnkctl scenario run bgp-peer-frr` then
+`ocibnkctl scenario run llm-gateway` (~15 s when warm).
+
+**What `llm-gateway` does.** Deploys `mock-llm` (OpenAI-compatible, no GPU, no
+API key) in namespace `llm-demo`; runs `llm-setup.sh` as a Job against the AI
+gateway API (tenant `demo`, a provider key pointing at the mock, model
+`gpt-4o-mini`, principal `demo-app`, route `demo-llm` on `203.0.113.140:80`,
+a virtual key scoped to that model); then, from the edge FRR's netns (a
+client outside the cluster), checks 200 / 401 / 401 / 403 and the ClickHouse
+records. Each step of the setup script is idempotent; re-running issues a new
+virtual key.
+
+**Report to the operator, after a green run:** the assertion list from the
+scenario output, then the "Try it yourself" block it prints (console
+port-forward, which Secret holds the tenant password, a ready `curl`). Do not
+paste the password or the virtual key into the chat yourself — point to where
+they are; the operator reads them.
+
+**Secrets this demo creates — never print, commit or transmit their values:**
+`artifacts/llm-gateway/virtual-key` (mode 0600), Secrets
+`aitenant-<tenant>-admin` (console sign-in, per tenant) and
+`f5-aigateway-admin` (platform API admin) in namespace `default`.
+
+**Known behaviour in BNK 2.4.1 (expected, handled):**
+
+- A new route can stick: f5ingress fails the Gateway apply with "AI profile
+  … is not prepared yet" and never retries, so TMM has no virtual server.
+  The scenario detects it and restarts `f5-cne-controller` once — say so in
+  your report if its output mentions the restart.
+- The console signs in **per tenant**: user `admin`, password in Secret
+  `aitenant-<tenant>-admin`. `f5-aigateway-admin` is the API's platform
+  admin and does not work on the tenant sign-in page.
+- The console's sign-in redirects go to `http://localhost:3000` (FLO's
+  default `consoleURL`). Reach it with `kubectl port-forward
+  svc/f5-aigateway-console 3000:3000`; from another machine, tunnel local
+  port 3000 to that port-forward with `ssh -L`.
+- The console is branded "Polaris AI" in 2.4.1; it is the shipped
+  `repo.f5.com/images/f5-aigateway-ui` image.
+- Models and routes of every tenant share namespace `default`; the setup
+  script prefixes their object names with the tenant.
+
+**If it fails,** read the failing assertion's `got` first. Typical causes: no
+`bgp-peer-frr` session (run it first), `bnk.ai_gateway` not enabled (edit
+`poc.yaml`, then `ocibnkctl deploy cne`), the VIP not learned (the race
+above, or BGP), ClickHouse records missing (`ai_metrics: false`). Then
+`kubectl -n llm-demo logs job/llm-setup` and the AIGatewayProfile status:
+`kubectl get aigatewayprofiles.inference.k8s.f5.com -o wide`.
+
 ## bnk-forge (optional)
 
 If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists when
