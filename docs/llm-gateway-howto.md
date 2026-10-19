@@ -2,11 +2,13 @@
 
 A self-contained demo of the **AI/LLM gateway in BIG-IP Next for Kubernetes
 (BNK) 2.4.1**, on one machine with Docker. No GPU, no LLM API key, no access
-to anything beyond F5's normal image registry. Two paths, same result:
+to anything beyond F5's normal image registry. Three paths:
 
-- **Manual:** five commands, about 30 minutes the first time.
+- **Manual with ocibnkctl:** five commands, about 30 minutes the first time.
 - **Agent-assisted:** a CLI coding agent (Claude Code, or any agent that reads
   `AGENTS.md`) runs and explains it for you.
+- **On your own BNK 2.4.1 cluster, without ocibnkctl:** the changes to make
+  by hand on a cluster installed with FLO.
 
 What the demo shows, all through **TMM**, F5's data plane:
 
@@ -30,6 +32,7 @@ What the demo shows, all through **TMM**, F5's data plane:
 - [Before you start](#before-you-start)
 - [Path 1: manual](#path-1-manual)
 - [Path 2: agent-assisted](#path-2-agent-assisted)
+- [Path 3: your own BNK cluster, without ocibnkctl](#path-3-your-own-bnk-cluster-without-ocibnkctl)
 - [Open the console](#open-the-console)
 - [Tenants and accounts](#tenants-and-accounts)
 - [Send your own requests](#send-your-own-requests)
@@ -174,6 +177,128 @@ agent checked the host, ran `e2e`, found that a stale PoC's docker network
 already held the default edge subnet, set `edge_octet` in its own `poc.yaml`
 without touching the other PoC, re-ran, and reported 9/9 assertions green in
 10½ minutes, including the controller restart for the 2.4.1 route race below.
+
+## Path 3: your own BNK cluster, without ocibnkctl
+
+For a BNK **2.4.1** cluster installed with FLO the usual way (FLO, then a
+CNEInstance). This is everything ocibnkctl does for the gateway, as manual
+steps. Every field and default below is from FLO `v2.30.0-0.11.4`, the
+operator in the 2.4.1 release manifest.
+
+**1. Check the prerequisites.**
+
+| Needs | Why | Check |
+|---|---|---|
+| BNK 2.4.1 (release manifest `2.4.1`, FLO `v2.30.0-0.11.4`) | the AI gateway, its console image `f5-aigateway-ui:v0.11.0` and the `inference.k8s.f5.com` CRDs ship in 2.4.1 | `kubectl -n f5-operators get deploy -o wide` |
+| DSSM deployed, in the default Sentinel mode | the gateway keeps tenants, keys and budgets in DSSM. FLO **skips the gateway silently** (one log warning) when DSSM is disabled or `spec.sessionStore.clustered` is set | `kubectl get pods \| grep f5-dssm-sentinel` |
+| `telemetry.loggingSubsystem` on (the default) | only if you want metering: the request records reach ClickHouse through the platform fluentd | the CNEInstance does not set `loggingSubsystem.enabled: false` |
+
+**2. Turn the gateway on in the CNEInstance.** One block in `spec`:
+
+```yaml
+spec:
+  aiGateway:
+    enabled: true          # console, gateway API, DNS resolver
+    aiMetrics: true        # optional: ClickHouse + per-request records
+    consoleURL: ""         # optional: the URL users open the console at
+```
+
+```bash
+kubectl patch cneinstance <name> -n <namespace> --type merge \
+  -p '{"spec":{"aiGateway":{"enabled":true,"aiMetrics":true}}}'
+```
+
+| Field | Default | Effect |
+|---|---|---|
+| `enabled` | `false` | FLO creates the `AIGateway` CR `f5-aigateway`, which renders the rest |
+| `aiMetrics` | `false` | adds ClickHouse 24.8, its schema Job, the HSL receiver in fluentd, and the `aigw-hslpub` publisher TMM logs to. Turning it off later keeps the stored data |
+| `consoleURL` | `http://localhost:3000` | becomes the console's `NEXTAUTH_URL`; sign-in redirects go there. Must match `^https?://host…`. Leave it unset to use a port-forward on local port 3000 |
+
+That is the only change FLO needs. With it, FLO installs, in the CNEInstance's
+namespace:
+
+- the console: Deployment and NodePort Service `f5-aigateway-console` (port 3000);
+- the gateway API: f5-cne-controller restarted with the AI gateway enabled,
+  behind Service `f5-cne-controller-api` (port 8443), with its DSSM client
+  certificate and extra RBAC;
+- `aigw-dns-resolver`, the DNS cache TMM resolves provider hostnames through;
+- Secret `f5-aigateway-admin`, the platform admin (user `admin`);
+- with `aiMetrics`: StatefulSet `f5-aigateway-clickhouse`, Secret
+  `f5-aigateway-clickhouse-auth`, the receiver pipeline and Service
+  `f5-aigateway-hsl-receiver` in fluentd's namespace (`f5-cne-core` by default),
+  and the HSL publisher `aigw-hslpub`.
+
+Wait for it:
+
+```bash
+kubectl get aigateway f5-aigateway -n <namespace>        # Accepted, Reconciled, Available = True
+kubectl get cnecontroller -A -o jsonpath='{..conditions[?(@.type=="AIGatewayDNSResolverReady")].status}'
+kubectl get crd | grep inference.k8s.f5.com              # aigatewayprofiles, aiproviders, aimodels, aitenants, aicredentials
+```
+
+**3. Create a GatewayClass, if the cluster has none.** FLO does not create
+one. Routes made in the console need a GatewayClass handled by this cluster's
+controller; its `controllerName` is `f5.com/<cneinstance-namespace>-f5-cne-controller`:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: bnk-gatewayclass
+spec:
+  controllerName: f5.com/default-f5-cne-controller   # CNEInstance in namespace "default"
+```
+
+`kubectl get gatewayclass` shows `ACCEPTED True` once f5-cne-controller has
+picked it up.
+
+**4. Make a gateway address reachable.** Each route is a Gateway with one
+address, served by TMM. Clients reach it the way they reach any BNK Gateway
+on this cluster: through the cluster's existing data-plane design (VLANs and
+self-IPs, or BGP from TMM). Nothing about this is specific to the AI gateway.
+The ocibnkctl demo uses TMM's BGP to an edge router; on your cluster, pick an
+address from the range your other Gateways use.
+
+**5. Create a tenant, then configure it.** Open the console as the platform
+admin, create a tenant, read its admin password, and do the rest in the
+tenant's console (see [Tenants and accounts](#tenants-and-accounts)):
+
+```bash
+kubectl port-forward -n <namespace> svc/f5-aigateway-console 3000:3000
+kubectl get secret f5-aigateway-admin -n <namespace> -o jsonpath='{.data.password}' | base64 -d; echo
+#   http://localhost:3000 → "Sign in as platform admin" → Tenants → Create tenant
+kubectl get secret aitenant-<tenant>-admin -n <namespace> -o jsonpath='{.data.password}' | base64 -d; echo
+#   sign in to the tenant as admin, then: Providers → Models → Routes → Users → Virtual Keys
+```
+
+In the tenant: add a **provider** (vendor, API key, base URL), a **model** on
+it, a **route** with the GatewayClass from step 3 and the address from step 4,
+a **principal**, and a **virtual key** scoped to the model. Clients then call
+`http://<address>/v1/chat/completions` with `Authorization: Bearer <virtual key>`.
+
+To script it instead, the same calls are in
+[`llm-setup.sh`](../internal/scenarios/llmgateway/manifests/llm-setup.sh);
+run it from a pod in the cluster with the platform admin's password.
+
+**6. Check the route reached TMM.** In 2.4.1 a new route, or a change to its
+models or providers, can stop at *"AI profile … is not prepared yet"* and
+never be retried; the AIGatewayProfile then reports
+`Programmed=False: waiting for Gateway … to reconcile the prepared AI profile`
+and requests to the address get no answer.
+
+```bash
+kubectl get aigatewayprofiles.inference.k8s.f5.com -n <namespace>
+kubectl rollout restart deploy/f5-cne-controller -n <namespace>   # if it is stuck
+```
+
+One restart usually clears it. If it does not (seen with several providers
+on one route), delete the route in the console, wait until its Gateway and
+AIGatewayProfile are gone (one to three minutes, they have finalizers), create
+it again, and restart f5-cne-controller once more. The profile's `Programmed`
+condition can lag behind: if TMM serves the address, the route works.
+
+**What ocibnkctl adds on top, and you don't need:** the k3s cluster, BNK
+itself, the edge router and test client, the mock LLM, and the checks.
 
 ## Open the console
 
