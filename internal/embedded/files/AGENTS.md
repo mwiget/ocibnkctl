@@ -217,6 +217,14 @@ above, or BGP), ClickHouse records missing (`ai_metrics: false`). Then
 `kubectl -n llm-demo logs job/llm-setup` and the AIGatewayProfile status:
 `kubectl get aigatewayprofiles.inference.k8s.f5.com -o wide`.
 
+**Beyond the demo.** For a real provider, a customer's own BNK cluster, or
+the gateway configured as YAML instead of through the console, the howto
+has the steps: Path 3 (prerequisites, including the `aigw-dns-resolver`
+and TMM egress route a public provider needs), "Configure with kubectl"
+(every custom resource), client-side errors under Troubleshooting, and
+"Limits in 2.4.1". Check a claim against those before telling the user a
+feature exists.
+
 ## bnk-forge (optional)
 
 If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists when
