@@ -24,9 +24,11 @@ ocibnkctl tag  ──goreleaser──>  GitHub release (binaries + checksums)
 
 ## Tag naming
 
-Tags are `v2.3.2-N` — BNK is hard-pinned to 2.3.2, and `N` is the ocibnkctl
-packaging counter (`git tag --sort=-creatordate | head`). Bump `N` for every
-release.
+The binary is hard-pinned to one BNK release, so every tag carries the
+`v<BNK>` prefix: the first release of a BNK line is the bare version
+(`v2.4.1`), and later tool-level releases add a packaging counter `N`
+(`v2.4.1-1`, `v2.4.1-2`, …). Find the last one with
+`git tag -l 'v2.4.1*' --sort=-v:refname | head -1` and bump `N`.
 
 ## Step 1 — tag + publish the binaries
 
@@ -34,10 +36,10 @@ From a clean `main` that has the changes you want to ship:
 
 ```bash
 git checkout main && git pull
-git tag -a v2.3.2-1 -m "ocibnkctl v2.3.2-1"
-git push origin v2.3.2-1           # release.yml runs goreleaser
+git tag -a v2.4.1-2 -m "ocibnkctl v2.4.1-2"
+git push origin v2.4.1-2           # release.yml runs goreleaser
 gh run watch                        # wait for the release job to finish
-gh release view v2.3.2-1            # confirm the tar.gz + checksums.txt assets exist
+gh release view v2.4.1-2            # confirm the tar.gz + checksums.txt assets exist
 ```
 
 The runner image (next step) downloads the binary **from this release**, so the
@@ -60,9 +62,9 @@ band (the target downloads + checksum-verifies the released binary, so pass the
 same version):
 
 ```bash
-make runner-image RUNNER_VERSION=2.3.2-1 \
+make runner-image RUNNER_VERSION=2.4.1-2 \
   RUNNER_PLATFORM=linux/amd64,linux/arm64 PUSH=1
-docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.3.2-1 \
+docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.4.1-2 \
   --format '{{.Manifest.Digest}}'
 ```
 
