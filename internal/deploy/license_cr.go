@@ -25,6 +25,11 @@ type LicenseInputs struct {
 	Namespace     string // defaults to SharedComponentNamespace
 	OperationMode string // "connected" | "disconnected"
 	JWT           string // raw JWT (single line, no quotes)
+	// JWKSConfigMap, when set, adds spec.jwksConfigMapRef so CWC verifies
+	// the JWT against that ConfigMap's JWKS instead of its built-in keys.
+	// See RenderJWKSConfigMap.
+	JWKSConfigMap string
+	JWKSKey       string // key inside JWKSConfigMap; defaults to JWKSConfigMapKey
 }
 
 // RenderLicenseCR substitutes the embedded license-cr template. The JWT
@@ -40,6 +45,9 @@ func RenderLicenseCR(in LicenseInputs) (string, error) {
 	if in.OperationMode == "" {
 		in.OperationMode = "connected"
 	}
+	if in.JWKSConfigMap != "" && in.JWKSKey == "" {
+		in.JWKSKey = JWKSConfigMapKey
+	}
 	if strings.ContainsAny(in.JWT, "\r\n") {
 		return "", fmt.Errorf("JWT contains newlines (got %d bytes); paste as a single line", len(in.JWT))
 	}
@@ -54,6 +62,39 @@ func RenderLicenseCR(in LicenseInputs) (string, error) {
 	var b bytes.Buffer
 	if err := t.Execute(&b, in); err != nil {
 		return "", err
+	}
+	return b.String(), nil
+}
+
+// JWKSConfigMapName / JWKSConfigMapKey name the ConfigMap that carries the
+// TEEM test-environment JWKS, per the TEEM team's recipe.
+const (
+	JWKSConfigMapName = "cwc-jwks-cm"
+	JWKSConfigMapKey  = "key"
+)
+
+// RenderJWKSConfigMap returns the ConfigMap that lets CWC verify a tst JWT.
+//
+// CWC's built-in tst signing certs expired, so tst JWTs failed verification
+// server-side and only prod JWTs worked. TEEM published fresh tst JWKS certs
+// (2026-10-12) at https://product-tst.apis.f5networks.net/ee/v1/keys/jwks;
+// a License CR that points spec.jwksConfigMapRef at this ConfigMap makes CWC
+// use them. CWC reads the ConfigMap from its own POD_NAMESPACE, so namespace
+// must be the CWC namespace (SharedComponentNamespace). The JWKS is embedded
+// as templates/jwks-tst.json — refresh that file when TEEM rotates keys.
+func RenderJWKSConfigMap(namespace string) (string, error) {
+	if namespace == "" {
+		namespace = SharedComponentNamespace
+	}
+	raw, err := embedded.Templates.ReadFile("templates/jwks-tst.json")
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s\n  namespace: %s\ndata:\n  %s: |\n",
+		JWKSConfigMapName, namespace, JWKSConfigMapKey)
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		b.WriteString("    " + line + "\n")
 	}
 	return b.String(), nil
 }

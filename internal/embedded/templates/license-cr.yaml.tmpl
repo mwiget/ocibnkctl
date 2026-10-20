@@ -6,3 +6,8 @@ metadata:
 spec:
   operationMode: "{{.OperationMode}}"
   jwt: "{{.JWT}}"
+{{- if .JWKSConfigMap}}
+  jwksConfigMapRef:
+    name: {{.JWKSConfigMap}}
+    key: {{.JWKSKey}}
+{{- end}}
