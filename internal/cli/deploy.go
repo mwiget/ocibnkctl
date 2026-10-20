@@ -481,7 +481,23 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 			"crd/licenses.k8s.f5net.com", 3*time.Minute); err != nil {
 			return fmt.Errorf("license CRD did not become Established: %w", err)
 		}
-		cr, err := deploy.RenderLicenseCR(deploy.LicenseInputs{JWT: jwt})
+		lic := deploy.LicenseInputs{JWT: jwt}
+		// A tst JWT needs TEEM's current tst JWKS: CWC's built-in tst
+		// certs expired, so without the override the License never
+		// verifies. Prod JWTs keep CWC's defaults.
+		if info, err := deploy.InspectJWT(jwtPath); err == nil && info.Type == "tst" {
+			cm, err := deploy.RenderJWKSConfigMap(deploy.SharedComponentNamespace)
+			if err != nil {
+				return err
+			}
+			if err := r.Apply(ctx, cm); err != nil {
+				return fmt.Errorf("apply JWKS ConfigMap: %w", err)
+			}
+			lic.JWKSConfigMap = deploy.JWKSConfigMapName
+			fmt.Fprintf(out, "      tst JWT — applied %s/%s, License CR references it.\n",
+				deploy.SharedComponentNamespace, deploy.JWKSConfigMapName)
+		}
+		cr, err := deploy.RenderLicenseCR(lic)
 		if err != nil {
 			return err
 		}
