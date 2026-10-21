@@ -32,6 +32,12 @@ type K3s struct {
 	// pulls through the local regcachectl pull-through caches. Empty = today's
 	// behaviour (direct pulls).
 	RegistriesYAMLPath string
+	// ExtraCAPath, when set, is the absolute host path of a PEM bundle (see
+	// poc.yaml cluster.extra_ca_certs) bind-mounted into every server/agent
+	// node under /etc/ssl/certs. k3s's embedded containerd is Go, and Go's
+	// Linux root pool reads every file in /etc/ssl/certs, so the bundle is
+	// trusted alongside the stock ca-certificates.crt. Empty = stock trust.
+	ExtraCAPath string
 }
 
 const (
@@ -144,6 +150,18 @@ func (k *K3s) mirrorArgs() []string {
 		"--add-host", "host.docker.internal:host-gateway",
 		"-v", k.RegistriesYAMLPath + ":/etc/rancher/k3s/registries.yaml:ro",
 	}
+}
+
+// k3sExtraCAMount is where the extra CA bundle lands inside a node.
+const k3sExtraCAMount = "/etc/ssl/certs/ocibnkctl-extra-ca.pem"
+
+// caArgs returns the `<runtime> run` flags that add the extra CA bundle to a
+// node's trust store. Empty when ExtraCAPath is unset.
+func (k *K3s) caArgs() []string {
+	if k.ExtraCAPath == "" {
+		return nil
+	}
+	return []string{"-v", k.ExtraCAPath + ":" + k3sExtraCAMount + ":ro"}
 }
 
 func (k *K3s) rt() string {
@@ -406,6 +424,7 @@ func (k *K3s) CreateCluster(ctx context.Context, name, _, nodeImage string, work
 	}
 	serverArgs = append(serverArgs, dns...)
 	serverArgs = append(serverArgs, k.mirrorArgs()...)
+	serverArgs = append(serverArgs, k.caArgs()...)
 	serverArgs = append(serverArgs, bootEntrypointArgs(nodeImage,
 		append([]string{"server", "--node-name", server}, k3sServerArgs...)...)...)
 	if err := k.runVisible(ctx, serverArgs...); err != nil {
@@ -452,6 +471,7 @@ func (k *K3s) startAgent(ctx context.Context, name string, index int, nodeImage 
 	}
 	agentArgs = append(agentArgs, dns...)
 	agentArgs = append(agentArgs, k.mirrorArgs()...)
+	agentArgs = append(agentArgs, k.caArgs()...)
 	agentArgs = append(agentArgs, bootEntrypointArgs(nodeImage, "agent", "--node-name", agent)...)
 	if err := k.runVisible(ctx, agentArgs...); err != nil {
 		return fmt.Errorf("start k3s agent %s: %w", agent, err)

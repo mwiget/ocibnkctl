@@ -149,6 +149,12 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	} else if msg != "" {
 		fmt.Fprintf(out, "      %s\n", msg)
 	}
+	// Opt-in: trust extra CAs (a TLS-inspecting proxy's) on every node.
+	if msg, err := applyExtraCA(prov, p, repo); err != nil {
+		return err
+	} else if msg != "" {
+		fmt.Fprintf(out, "      %s\n", msg)
+	}
 
 	// 2. Render the backend config + create cluster (idempotent).
 	cfgName := prov.ConfigArtifact()

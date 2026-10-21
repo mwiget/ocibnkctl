@@ -77,6 +77,16 @@ type Cluster struct {
 	// with the real upstream as a fallback, and bind-mounts it into every node.
 	// Opt-in: unset → today's direct-pull behaviour, no change.
 	RegistryCache RegistryCache `yaml:"registry_cache,omitempty"`
+	// ExtraCACerts lists PEM files (paths relative to the PoC repo, e.g.
+	// keys/netskope-ca.pem) whose certificates every k3s node trusts in
+	// addition to the image's stock bundle. For hosts behind a TLS-inspecting
+	// proxy (Netskope, Zscaler) that re-signs registry traffic: without it
+	// node containerd rejects the proxy's certificate and image pulls fail
+	// with "x509: certificate signed by unknown authority". `cluster up` and
+	// `scale` concatenate the files into artifacts/extra-ca.pem and bind-mount
+	// it into /etc/ssl/certs on every node. Applies to nodes created after it
+	// is set; existing nodes keep their trust store.
+	ExtraCACerts []string `yaml:"extra_ca_certs,omitempty"`
 	// TEEMSRelay opts this cluster into the host-side TEEMS egress relay — a
 	// workaround for hosts where FORWARDED pod egress is lossy but host-
 	// originated egress is fine (e.g. a Hetzner box that drops a fraction of
