@@ -44,7 +44,7 @@ var profiles = map[string]profile{
 		},
 		scenarios: []string{"bgp-peer-frr", "llm-gateway"},
 		next:      "ocibnkctl e2e --yolo --confirm-cluster %s --with-scenarios",
-		hint:      `./ask.sh "hello"    # then: a prompt through the gateway, as tenant demo`,
+		hint:      `./console.sh; ./demo-password.sh; ./ask.sh "hello"    # then: console, tenant demo sign-in, a prompt`,
 	},
 }
 

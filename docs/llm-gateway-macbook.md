@@ -147,10 +147,17 @@ gateway address **`203.0.113.140`**, and a virtual key for `demo-app` in
 ## 5. Open the console (port forwarding)
 
 The console runs in the cluster. `kubectl port-forward` makes it reachable on
-the Mac's `localhost:3000`:
+the Mac's `localhost:3000`. The profile puts `console.sh` in the PoC for that
+(and `demo-password.sh`, `admin-password.sh` for steps 6 and 8):
 
 ```bash
 cd ~/lab/llm
+./console.sh            # prints the sign-in hints, then forwards until Ctrl-C
+```
+
+By hand, it is:
+
+```bash
 export KUBECONFIG=$PWD/artifacts/kubeconfig
 kubectl port-forward svc/f5-aigateway-console 3000:3000
 ```
@@ -166,6 +173,8 @@ Each tenant has a local admin, user `admin`, whose password is in Secret
 `aitenant-<tenant>-admin`. For the demo tenant:
 
 ```bash
+./demo-password.sh             # another tenant: ./demo-password.sh acme
+# by hand:
 kubectl get secret aitenant-demo-admin -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
@@ -184,8 +193,8 @@ What to look at: the **dashboard** (requests, errors, tokens, cost, latency),
 ## 7. Send prompts with ask.sh
 
 The profile puts `ask.sh` in the PoC directory (ocibnkctl after v2.4.1-3;
-on v2.4.1-3, copy it from `internal/embedded/profiles/llm-gateway/ask.sh` in
-the repo). It sends one prompt as `demo-app`, with its virtual key, through
+on v2.4.1-3, copy the scripts from `internal/embedded/profiles/llm-gateway/`
+in the repo). It sends one prompt as `demo-app`, with its virtual key, through
 TMM, from a throwaway curl container on the edge router's network, which is
 outside the cluster the way a real client is. It needs `docker` and `jq`.
 
@@ -220,6 +229,8 @@ The **platform admin** sits above the tenants: it creates and deletes
 tenants and sets their SSO. Its password is in Secret `f5-aigateway-admin`:
 
 ```bash
+./admin-password.sh
+# by hand:
 kubectl get secret f5-aigateway-admin -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
@@ -251,7 +262,8 @@ chats or commit them. The PoC's `keys/` and `artifacts/` are gitignored.
 | `doctor`: `runtime memory … < 24 GiB floor` | Expected below 24 GB | Nothing: `e2e` runs `deploy shrink`. Under 18 GB, also `ai_metrics: false` |
 | Pods `Pending`, `Insufficient memory` | Docker VM too small, or another cluster running | 18 GB for Docker, and only this cluster |
 | Console: *"wrong username or password"* | Tenant `lab` (the default) instead of `demo`, the wrong button, or the other admin's password | [Step 6](#6-sign-in-as-tenant-demo) / [step 8](#8-sign-in-as-platform-admin); the table above |
-| Console page dead after a while | The port-forward stopped | Start `kubectl port-forward …` again |
+| Console page dead after a while | The port-forward stopped | `./console.sh` again |
+| `console.sh`: `localhost:3000 is already in use` | An earlier forward still runs | Use it, or stop it (`pkill -f 'port-forward svc/f5-aigateway-console'`) |
 | `ask.sh`: `no virtual key` | The `llm-gateway` scenario hasn't run | `ocibnkctl scenario run llm-gateway` |
 
 ## Tear down
