@@ -591,7 +591,8 @@ kubectl get secret aitenant-demo-admin -o jsonpath='{.data.password}' | base64 -
 kubectl port-forward svc/f5-aigateway-console 3000:3000
 ```
 
-Open <http://localhost:3000>, enter tenant `demo`, then `admin` and the
+Open <http://localhost:3000>, enter tenant `demo` (the page proposes `lab`:
+replace it), choose **Sign in as tenant admin**, then `admin` and the
 password. Use **localhost:3000** exactly: the console's sign-in redirects go
 there by default (FLO's `consoleURL`).
 
@@ -634,6 +635,8 @@ routes, keys and spend, and its own console sign-in. Inside a tenant,
 - Each tenant's **local admin** (user `admin`, Secret
   `aitenant-<tenant>-admin`, minted when the tenant is created and never
   regenerated): enter the tenant name, then "Sign in as tenant admin".
+  The sign-in page proposes tenant `lab`, which doesn't exist here:
+  replace it (with `demo` for the scenario's tenant).
 
 Every other person signs in through the tenant's **SSO**: once OIDC is set
 for the tenant, a sign-in is joined to the principal whose **email** matches
@@ -717,7 +720,7 @@ run, which used the mock only.
 |---|---|---|
 | `TMM has the demo-llm virtual server` fails, or the AIGatewayProfile says *"waiting for Gateway … to reconcile the prepared AI profile"* | f5ingress 2.4.1: a new route's Gateway apply fails with *"AI profile … is not prepared yet"* and is not retried | The scenario restarts `f5-cne-controller` once by itself. By hand: `kubectl rollout restart deploy/f5-cne-controller` |
 | `edge FRR learned …/32` fails | No BGP session, or the virtual server is missing (row above) | `ocibnkctl scenario run bgp-peer-frr`, then re-run `llm-gateway` |
-| Console sign-in refused | Wrong password for the tenant | Use `aitenant-<tenant>-admin`. `f5-aigateway-admin` is the API's platform admin and is not accepted on the tenant page |
+| Console sign-in refused | Wrong tenant on the sign-in page, or the wrong password for it | The page proposes tenant `lab`: replace it with yours (`demo`). Use `aitenant-<tenant>-admin`. `f5-aigateway-admin` is the API's platform admin and is not accepted on the tenant page |
 | Console redirects to a dead page | Not on `http://localhost:3000` | Port-forward to local port 3000, or set `bnk.ai_gateway.console_url` in `poc.yaml` and `ocibnkctl deploy cne` |
 | `llm-gateway needs bnk.ai_gateway.enabled` | PoC created without the profile | Add the `ai_gateway` block to `poc.yaml`, `ocibnkctl deploy cne`, then the scenario |
 | A setup step says *"the name is taken by another tenant"* | Models and routes of all tenants share namespace `default` | Use a different tenant; the script prefixes object names with it |
