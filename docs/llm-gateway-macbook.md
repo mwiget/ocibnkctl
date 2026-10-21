@@ -5,8 +5,8 @@ Pro with Docker Desktop: a k3s cluster with BNK and TMM, F5's console, a mock
 LLM, virtual keys and request metering. No GPU or LLM API key needed.
 
 Measured on 2026-10-21 on a **MacBook Pro, Apple M4 Pro, 12 cores, 24 GB,
-macOS 26.7**, Docker Desktop (engine 29.8), on the F5 network behind
-Netskope, with ocibnkctl v2.4.1-3 (the scripts: v2.4.1-4). The general guide, with every option and
+macOS 26.7**, Docker Desktop (engine 29.8), behind a Netskope
+TLS-inspecting proxy, with ocibnkctl v2.4.1-3 (the scripts: v2.4.1-4). The general guide, with every option and
 the API, is [llm-gateway-howto.md](llm-gateway-howto.md).
 
 ## Contents
@@ -272,7 +272,7 @@ cp /path/to/f5-far-auth-key.tgz keys/   # FAR image-pull key from F5
 cp ~/.jwt keys/.jwt                     # BNK license token (a test token works)
 ```
 
-**Behind Netskope (the F5 network), trust its CA on the cluster nodes.**
+**Behind a TLS-inspecting proxy such as Netskope, trust its CA on the cluster nodes.**
 Netskope re-signs HTTPS. The Mac trusts its CA; the k3s nodes don't, and image
 pulls fail with `x509: certificate signed by unknown authority`. Export the
 CA from the keychain and list it in `poc.yaml`:
