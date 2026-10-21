@@ -75,6 +75,11 @@ What the demo shows, all through **TMM**, F5's data plane:
 
 ## Before you start
 
+**On a MacBook (Apple silicon, Docker Desktop)?** Follow
+[llm-gateway-macbook.md](llm-gateway-macbook.md): Docker memory, the
+Netskope CA, `console.sh`, sign-in and `ask.sh`, step by step with measured
+numbers.
+
 | Need | Detail |
 |---|---|
 | Machine | Linux (x86_64 or arm64) or macOS (Apple silicon) with Docker. **10 cores, 24 GB** for Docker (macOS: the Docker Desktop VM). Smaller hosts work with the small-host profile, slower — see [Troubleshooting](#troubleshooting). |
@@ -128,6 +133,9 @@ OK   ClickHouse otel.aigw_requests has records for tenant demo (200, 401, 403)
 ```
 
 followed by a **Try it yourself** block with the exact commands for your PoC.
+The profile also puts four scripts in the PoC directory: `console.sh`,
+`demo-password.sh`, `admin-password.sh` ([Open the console](#open-the-console))
+and `ask.sh` ([Send your own requests](#send-your-own-requests)).
 Every run writes `reports/<timestamp>/run-llmdemo-<stamp>.md` and a JSON copy.
 
 Re-run just the demo on a deployed cluster (about 15 seconds):
@@ -583,11 +591,21 @@ lab manual, not run by the `llm-gateway` scenario.
 ## Open the console
 
 Sign-in is **per tenant**. The demo tenant is `demo`, user `admin`; its
-password is in a Secret that FLO creates for each tenant.
+password is in a Secret that FLO creates for each tenant. The profile puts
+three scripts in the PoC for this:
+
+```bash
+./console.sh             # forward the console to localhost:3000 (Ctrl-C stops it)
+./demo-password.sh       # tenant demo's admin password; ./demo-password.sh acme for another tenant
+./admin-password.sh      # the platform admin's password
+```
+
+By hand, they run:
 
 ```bash
 export KUBECONFIG=$PWD/artifacts/kubeconfig
 kubectl get secret aitenant-demo-admin -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl get secret f5-aigateway-admin -o jsonpath='{.data.password}' | base64 -d; echo
 kubectl port-forward svc/f5-aigateway-console 3000:3000
 ```
 
@@ -619,7 +637,7 @@ routes, keys and spend, and its own console sign-in. Inside a tenant,
 | What | In the console | Through the API | Who may |
 |---|---|---|---|
 | Create a tenant | **Tenants → Create tenant** | `POST /api/v1/tenants` `{name, displayName}` | platform admin only |
-| Its first sign-in | — (the console never shows the password) | — | read Secret `aitenant-<tenant>-admin` with `kubectl` |
+| Its first sign-in | — (the console never shows the password) | — | `./demo-password.sh <tenant>`, or read Secret `aitenant-<tenant>-admin` with `kubectl` |
 | Single sign-on (OIDC) for a tenant | shown on **Tenant settings** ("Local admin only" or the issuer); no form to set it | `PUT /api/v1/tenants/{t}/auth` | platform admin only |
 | Organizations, teams | **Organizations**, **Teams** (budget, rate limit, model access per team) | `POST …/governance/orgs`, `…/teams` | tenant admin |
 | Users, agents, services | **Users** (name, kind, team, email, role, model scope) | `POST …/governance/principals` | team admin and up |
@@ -627,13 +645,13 @@ routes, keys and spend, and its own console sign-in. Inside a tenant,
 
 **Signing in.** There are two kinds of console account, and only two:
 
-- The **platform admin** (user `admin`, Secret `f5-aigateway-admin`): the
-  "Sign in as platform admin" button. Creates and deletes tenants and sets
+- The **platform admin** (user `admin`, Secret `f5-aigateway-admin`,
+  `./admin-password.sh`): the "Sign in as platform admin" button. Creates and deletes tenants and sets
   their SSO. Its API token also reaches every tenant's objects (this is how
   the setup script works), but its password is refused on a tenant's own
   sign-in page (401).
 - Each tenant's **local admin** (user `admin`, Secret
-  `aitenant-<tenant>-admin`, minted when the tenant is created and never
+  `aitenant-<tenant>-admin`, `./demo-password.sh <tenant>`, minted when the tenant is created and never
   regenerated): enter the tenant name, then "Sign in as tenant admin".
   The sign-in page proposes tenant `lab`, which doesn't exist here:
   replace it (with `demo` for the scenario's tenant).
@@ -659,9 +677,23 @@ names with the tenant.
 
 ## Send your own requests
 
-The gateway address `203.0.113.140` is reachable from the edge network, where
-the scenario's client runs. The demo's virtual key is in
-`artifacts/llm-gateway/virtual-key` (mode 0600).
+`init --profile llm-gateway` puts `ask.sh` in the PoC directory. It sends one
+prompt as tenant `demo`'s principal `demo-app`, through TMM, from the edge
+network outside the cluster, and prints the reply (needs `docker` and `jq`):
+
+```bash
+./ask.sh "what is BNK?"            # the reply, then "-- gpt-4o-mini, 62 tokens"
+./ask.sh "hi" gpt-5                # HTTP 403: Model not allowed for this virtual key
+KEY=sk-... ./ask.sh "hi"           # another principal's virtual key
+RAW=1 ./ask.sh "hi"                # the full JSON response
+```
+
+The mock answers with canned text; with a [real provider](#use-a-real-provider)
+behind the model, the same script gets real answers.
+
+What it does, by hand: the gateway address `203.0.113.140` is reachable from
+the edge network, where the scenario's client runs. The demo's virtual key is
+in `artifacts/llm-gateway/virtual-key` (mode 0600).
 
 ```bash
 edge() {   # curl from the edge, outside the cluster

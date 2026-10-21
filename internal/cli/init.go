@@ -151,6 +151,11 @@ Profiles seed poc.yaml for one use case (edit it afterwards as usual):
 			if err := p.Save(abs); err != nil {
 				return err
 			}
+			if pr != nil {
+				if err := copyProfileFiles(abs, pr.name); err != nil {
+					return fmt.Errorf("profile %s files: %w", pr.name, err)
+				}
+			}
 
 			// Initial journal entry.
 			j := fmt.Sprintf("# %s — PoC initialized\n\nCreated with ocibnkctl. Next: drop keys/ files (FAR tgz + JWT), then `ocibnkctl validate` and `ocibnkctl e2e --yolo --confirm-cluster %s`.\n",
@@ -178,6 +183,9 @@ Profiles seed poc.yaml for one use case (edit it afterwards as usual):
 			fmt.Fprintln(out, "  ocibnkctl validate")
 			if pr != nil {
 				fmt.Fprintf(out, "  "+pr.next+"\n", name)
+				if pr.hint != "" {
+					fmt.Fprintln(out, "  "+pr.hint)
+				}
 				return nil
 			}
 			fmt.Fprintf(out, "  ocibnkctl e2e --yolo --confirm-cluster %s\n", name)

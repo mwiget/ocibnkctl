@@ -111,6 +111,29 @@ func TestInit_ProfileLLMGateway(t *testing.T) {
 	if r := p.Validate(); !r.Valid() {
 		t.Errorf("profile PoC must validate: %v", r.Errors)
 	}
+	// the profile's scripts, executable, and the hint pointing at them
+	for _, f := range []string{"ask.sh", "console.sh", "demo-password.sh", "admin-password.sh"} {
+		st, err := os.Stat(filepath.Join(target, f))
+		if err != nil {
+			t.Fatalf("%s not copied: %v", f, err)
+		}
+		if st.Mode().Perm()&0o100 == 0 {
+			t.Errorf("%s mode = %v, want executable", f, st.Mode().Perm())
+		}
+	}
+	if !strings.Contains(out, "./ask.sh") {
+		t.Errorf("Next: should mention ./ask.sh:\n%s", out)
+	}
+}
+
+func TestInit_NoProfileNoAskScript(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "plain")
+	if out, err := runInitArgs(t, target); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(target, "ask.sh")); err == nil {
+		t.Error("ask.sh copied without --profile llm-gateway")
+	}
 }
 
 func TestInit_ProfileFromEnvAndUnknown(t *testing.T) {

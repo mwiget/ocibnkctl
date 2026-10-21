@@ -814,7 +814,8 @@ TMM's logs, `s` shells into a container.
 
 **Step-by-step demo guide, manual or agent-assisted:
 [docs/llm-gateway-howto.md](docs/llm-gateway-howto.md)** — `ocibnkctl init
-<name> --profile llm-gateway`, then one `e2e`.
+<name> --profile llm-gateway`, then one `e2e`. On a MacBook Pro:
+**[docs/llm-gateway-macbook.md](docs/llm-gateway-macbook.md)**.
 
 BNK 2.4.1 ships an AI/LLM gateway that runs inside TMM, plus a web console to
 configure it. It is opt-in in `poc.yaml`:
@@ -847,9 +848,13 @@ in Secret `aitenant-<tenant>-admin` (`f5-aigateway-admin` is the API's
 platform admin and is not accepted on the tenant page):
 
 ```bash
+./console.sh          # in the PoC: forward to http://localhost:3000 (or the two kubectl lines below)
+./demo-password.sh    # tenant demo's password; ./admin-password.sh for the platform admin
+./ask.sh "hello"      # a prompt through the gateway, as tenant demo
+# by hand:
 kubectl get secret aitenant-demo-admin -o jsonpath='{.data.password}' | base64 -d; echo
 kubectl port-forward svc/f5-aigateway-console 3000:3000
-# → http://localhost:3000, tenant demo, user admin
+# → http://localhost:3000, tenant demo (not the proposed "lab"), Sign in as tenant admin, user admin
 ```
 
 The port-forward on 3000 matches FLO's default `console_url`
