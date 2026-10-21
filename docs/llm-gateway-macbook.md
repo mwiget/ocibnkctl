@@ -12,6 +12,7 @@ the API, is [llm-gateway-howto.md](llm-gateway-howto.md).
 ## Contents
 
 - [What it needs](#what-it-needs)
+- [The scripts in the PoC](#the-scripts-in-the-poc)
 - [1. Docker Desktop settings](#1-docker-desktop-settings)
 - [2. Install ocibnkctl](#2-install-ocibnkctl)
 - [3. Create the PoC](#3-create-the-poc)
@@ -43,6 +44,26 @@ the run says `deploy-shrink (auto: … 17.6 GiB runtime memory < 24 GiB floor
 With less than 18 GB for Docker, set `ai_metrics: false` in `poc.yaml`: that
 drops ClickHouse and request metering, and the gateway, console and keys
 still work.
+
+## The scripts in the PoC
+
+`ocibnkctl init --profile llm-gateway` puts four scripts in the PoC
+directory. Each works from any directory and reads the PoC's kubeconfig
+itself.
+
+| Script | What it does | Step |
+|---|---|---|
+| `./console.sh` | Forwards the console to `http://localhost:3000` and prints the sign-in hints. Runs until Ctrl-C | [5](#5-open-the-console-port-forwarding) |
+| `./demo-password.sh [tenant]` | Prints a tenant's admin password, `demo` by default | [6](#6-sign-in-as-tenant-demo) |
+| `./ask.sh "prompt" [model]` | Sends a prompt as `demo-app` through TMM and prints the reply | [7](#7-send-prompts-with-asksh) |
+| `./admin-password.sh` | Prints the platform admin's password | [8](#8-sign-in-as-platform-admin) |
+
+The password scripts print the secret on your terminal: don't run them where
+others can see the screen, and don't paste the output into chats.
+
+They ship with ocibnkctl after v2.4.1-3. With v2.4.1-3, copy them from
+[`internal/embedded/profiles/llm-gateway/`](../internal/embedded/profiles/llm-gateway/)
+into the PoC directory.
 
 ## 1. Docker Desktop settings
 
@@ -192,9 +213,7 @@ What to look at: the **dashboard** (requests, errors, tokens, cost, latency),
 
 ## 7. Send prompts with ask.sh
 
-The profile puts `ask.sh` in the PoC directory (ocibnkctl after v2.4.1-3;
-on v2.4.1-3, copy the scripts from `internal/embedded/profiles/llm-gateway/`
-in the repo). It sends one prompt as `demo-app`, with its virtual key, through
+`ask.sh` ([the scripts](#the-scripts-in-the-poc)) sends one prompt as `demo-app`, with its virtual key, through
 TMM, from a throwaway curl container on the edge router's network, which is
 outside the cluster the way a real client is. It needs `docker` and `jq`.
 
@@ -245,9 +264,7 @@ The two passwords don't cross over:
 | Tenant `demo` admin | `aitenant-demo-admin` | tenant `demo`'s sign-in only (refused on the platform's, 401) |
 
 To give someone their own tenant: as platform admin, create tenant `acme`,
-read its admin password with
-`kubectl get secret aitenant-acme-admin -o jsonpath='{.data.password}' | base64 -d`,
-and hand them that. They sign in with tenant `acme` → **Sign in as tenant
+read its admin password with `./demo-password.sh acme`, and hand them that. They sign in with tenant `acme` → **Sign in as tenant
 admin**. More in [Tenants and accounts](llm-gateway-howto.md#tenants-and-accounts).
 
 Treat both passwords and every virtual key as secrets: don't paste them into
