@@ -3,9 +3,13 @@ package cli
 import (
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
@@ -18,11 +22,14 @@ const envProfile = "OCIBNKCTL_PROFILE"
 // wins. poc.yaml stays the source of truth: everything a profile sets is a
 // field the operator can edit afterwards.
 type profile struct {
+	name    string // set by applyProfile
 	summary string
 	apply   func(*poc.PoC)
 	// scenarios are what e2e runs after deploy cne for this profile, in order.
 	scenarios []string
 	next      string // printed after "Next:"
+	// hint, when set, is printed after next (a profile file's usage).
+	hint string
 }
 
 var profiles = map[string]profile{
@@ -37,6 +44,7 @@ var profiles = map[string]profile{
 		},
 		scenarios: []string{"bgp-peer-frr", "llm-gateway"},
 		next:      "ocibnkctl e2e --yolo --confirm-cluster %s --with-scenarios",
+		hint:      `./ask.sh "hello"    # then: a prompt through the gateway, as tenant demo`,
 	},
 }
 
@@ -64,6 +72,34 @@ func applyProfile(p *poc.PoC, name string, out io.Writer) (*profile, error) {
 	}
 	pr.apply(p)
 	p.Scenarios = append([]string(nil), pr.scenarios...)
+	pr.name = name
 	fmt.Fprintf(out, "profile %s: %s\n", name, pr.summary)
 	return &pr, nil
+}
+
+// copyProfileFiles copies embedded profiles/<name>/ into the PoC root. Shell
+// scripts stay executable. A profile without files is a no-op.
+func copyProfileFiles(dest, name string) error {
+	root := "profiles/" + name
+	if _, err := fs.Stat(embedded.Profiles, root); err != nil {
+		return nil
+	}
+	return fs.WalkDir(embedded.Profiles, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := embedded.Profiles.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(dest, strings.TrimPrefix(p, root+"/"))
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(p, ".sh") {
+			mode = 0o755
+		}
+		return os.WriteFile(out, body, mode)
+	})
 }

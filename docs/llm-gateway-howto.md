@@ -659,9 +659,23 @@ names with the tenant.
 
 ## Send your own requests
 
-The gateway address `203.0.113.140` is reachable from the edge network, where
-the scenario's client runs. The demo's virtual key is in
-`artifacts/llm-gateway/virtual-key` (mode 0600).
+`init --profile llm-gateway` puts `ask.sh` in the PoC directory. It sends one
+prompt as tenant `demo`'s principal `demo-app`, through TMM, from the edge
+network outside the cluster, and prints the reply (needs `docker` and `jq`):
+
+```bash
+./ask.sh "what is BNK?"            # the reply, then "-- gpt-4o-mini, 62 tokens"
+./ask.sh "hi" gpt-5                # HTTP 403: Model not allowed for this virtual key
+KEY=sk-... ./ask.sh "hi"           # another principal's virtual key
+RAW=1 ./ask.sh "hi"                # the full JSON response
+```
+
+The mock answers with canned text; with a [real provider](#use-a-real-provider)
+behind the model, the same script gets real answers.
+
+What it does, by hand: the gateway address `203.0.113.140` is reachable from
+the edge network, where the scenario's client runs. The demo's virtual key is
+in `artifacts/llm-gateway/virtual-key` (mode 0600).
 
 ```bash
 edge() {   # curl from the edge, outside the cluster
