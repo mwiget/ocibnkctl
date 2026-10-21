@@ -67,3 +67,15 @@ func TestMirrorArgs(t *testing.T) {
 		t.Errorf("missing registries.yaml bind-mount: %q", args)
 	}
 }
+
+func TestCAArgs(t *testing.T) {
+	k := &K3s{}
+	if args := k.caArgs(); args != nil {
+		t.Errorf("no extra CA should yield no args, got %v", args)
+	}
+	k.ExtraCAPath = "/abs/artifacts/extra-ca.pem"
+	args := strings.Join(k.caArgs(), " ")
+	if !strings.Contains(args, "-v /abs/artifacts/extra-ca.pem:/etc/ssl/certs/ocibnkctl-extra-ca.pem:ro") {
+		t.Errorf("missing extra CA bind-mount: %q", args)
+	}
+}

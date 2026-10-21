@@ -44,6 +44,16 @@ func newValidateCmd() *cobra.Command {
 							ref.label, ref.path))
 				}
 			}
+			for _, ref := range p.Cluster.ExtraCACerts {
+				data, err := os.ReadFile(resolveRef(repo, ref))
+				if err != nil {
+					r.Errors = append(r.Errors,
+						fmt.Sprintf("cluster.extra_ca_certs file %s not found — drop it there and retry", ref))
+				} else if countPEMCerts(data) == 0 {
+					r.Errors = append(r.Errors,
+						fmt.Sprintf("cluster.extra_ca_certs file %s holds no PEM certificate", ref))
+				}
+			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "PoC:  %s   (BNK %s)\n", p.Metadata.Name, p.Metadata.BNKVersion)
 			fmt.Fprintf(out, "Repo: %s\n\n", repo)

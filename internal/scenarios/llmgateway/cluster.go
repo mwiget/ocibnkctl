@@ -306,6 +306,7 @@ func tryIt(ctx *scenarios.Context) string {
     export KUBECONFIG=%[2]s
     kubectl get secret %[3]s -o jsonpath='{.data.password}' | base64 -d; echo
     kubectl port-forward svc/%[4]s 3000:3000      # then open http://localhost:3000
+    # sign-in page: replace the proposed tenant "lab" with %[1]s, then "Sign in as tenant admin"
     # from a laptop: ssh -L 3000:127.0.0.1:3000 <this-host>, run the port-forward there
 
   A request through TMM, as a client outside the cluster (the edge FRR's netns):
