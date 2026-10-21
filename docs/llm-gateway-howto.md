@@ -75,6 +75,10 @@ What the demo shows, all through **TMM**, F5's data plane:
 
 ## Before you start
 
+**On a MacBook (Apple silicon, Docker Desktop)?** Follow
+[llm-gateway-macbook.md](llm-gateway-macbook.md): Docker memory, the
+Netskope CA, sign-in and `ask.sh`, step by step with measured numbers.
+
 | Need | Detail |
 |---|---|
 | Machine | Linux (x86_64 or arm64) or macOS (Apple silicon) with Docker. **10 cores, 24 GB** for Docker (macOS: the Docker Desktop VM). Smaller hosts work with the small-host profile, slower — see [Troubleshooting](#troubleshooting). |

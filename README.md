@@ -814,7 +814,8 @@ TMM's logs, `s` shells into a container.
 
 **Step-by-step demo guide, manual or agent-assisted:
 [docs/llm-gateway-howto.md](docs/llm-gateway-howto.md)** — `ocibnkctl init
-<name> --profile llm-gateway`, then one `e2e`.
+<name> --profile llm-gateway`, then one `e2e`. On a MacBook Pro:
+**[docs/llm-gateway-macbook.md](docs/llm-gateway-macbook.md)**.
 
 BNK 2.4.1 ships an AI/LLM gateway that runs inside TMM, plus a web console to
 configure it. It is opt-in in `poc.yaml`:
