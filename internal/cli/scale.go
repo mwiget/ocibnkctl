@@ -101,6 +101,12 @@ func runScale(ctx context.Context, out io.Writer, f *scaleFlags) error {
 	} else if msg != "" {
 		fmt.Fprintf(out, "      %s\n", msg)
 	}
+	// Opt-in: trust extra CAs (a TLS-inspecting proxy's) on every node.
+	if msg, err := applyExtraCA(prov, p, repo); err != nil {
+		return err
+	} else if msg != "" {
+		fmt.Fprintf(out, "      %s\n", msg)
+	}
 	nodeImage := p.Versions.NodeImage
 	if nodeImage == "" {
 		nodeImage = prov.DefaultNodeImage()

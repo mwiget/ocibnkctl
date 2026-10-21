@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -330,18 +331,31 @@ func (d *DockerCLI) exec(ctx context.Context, container string, argv ...string) 
 // networkGateway returns the IPv4 gateway of a docker network.
 func (d *DockerCLI) networkGateway(ctx context.Context, name string) (string, error) {
 	c := d.cmd(ctx, "network", "inspect", name, "--format",
-		"{{range .IPAM.Config}}{{.Gateway}}{{end}}")
+		"{{range .IPAM.Config}}{{.Gateway}}\n{{end}}")
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 	if err := c.Run(); err != nil {
 		return "", fmt.Errorf("network inspect %s: %w (%s)", name, err, strings.TrimSpace(stderr.String()))
 	}
-	gw := strings.TrimSpace(stdout.String())
+	gw := ipv4Gateway(stdout.String())
 	if gw == "" {
 		return "", fmt.Errorf("network %s has no IPv4 gateway", name)
 	}
 	return gw, nil
+}
+
+// ipv4Gateway picks the IPv4 address from `network inspect`'s gateway list,
+// one per line. Docker Desktop creates dual-stack networks by default, so the
+// list can also hold an IPv6 gateway, which must not end up in the node's
+// IPv4 default route.
+func ipv4Gateway(out string) string {
+	for _, f := range strings.Fields(out) {
+		if ip := net.ParseIP(f); ip != nil && ip.To4() != nil {
+			return f
+		}
+	}
+	return ""
 }
 
 func (d *DockerCLI) containerExists(ctx context.Context, name string) (bool, error) {
