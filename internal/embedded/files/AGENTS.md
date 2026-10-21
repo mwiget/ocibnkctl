@@ -180,7 +180,11 @@ virtual key.
 scenario output, then the "Try it yourself" block it prints (console
 port-forward, which Secret holds the tenant password, a ready `curl`). Do not
 paste the password or the virtual key into the chat yourself — point to where
-they are; the operator reads them.
+they are; the operator reads them. To send a prompt, the profile puts
+`ask.sh` in the PoC root: `./ask.sh "hello"` (model `gpt-4o-mini`, the demo's
+virtual key, through TMM from the edge); `./ask.sh "hi" gpt-5` shows the 403;
+`KEY=<another virtual key> ./ask.sh …` for another principal; `RAW=1` prints
+the JSON.
 
 **Secrets this demo creates — never print, commit or transmit their values:**
 `artifacts/llm-gateway/virtual-key` (mode 0600), Secrets
