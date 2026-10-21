@@ -6,7 +6,7 @@ LLM, virtual keys and request metering. No GPU or LLM API key needed.
 
 Measured on 2026-10-21 on a **MacBook Pro, Apple M4 Pro, 12 cores, 24 GB,
 macOS 26.7**, Docker Desktop (engine 29.8), on the F5 network behind
-Netskope, with ocibnkctl v2.4.1-3. The general guide, with every option and
+Netskope, with ocibnkctl v2.4.1-3 (the scripts: v2.4.1-4). The general guide, with every option and
 the API, is [llm-gateway-howto.md](llm-gateway-howto.md).
 
 ## Contents
@@ -62,7 +62,8 @@ itself.
 The password scripts print the secret on your terminal: don't run them where
 others can see the screen, and don't paste the output into chats.
 
-They ship with ocibnkctl after v2.4.1-3. With v2.4.1-3, copy them from
+They ship with ocibnkctl v2.4.1-4 and later. For a PoC created with an
+earlier release, copy them from
 [`internal/embedded/profiles/llm-gateway/`](../internal/embedded/profiles/llm-gateway/)
 into the PoC directory and make them executable (`chmod +x *.sh`).
 
@@ -249,14 +250,15 @@ Stop or destroy any other cluster on Docker first: two clusters don't fit in
 
 ## 2. Install ocibnkctl
 
-v2.4.1-3 or later: earlier releases fail on Docker Desktop (see
-[Troubleshooting](#troubleshooting-on-a-mac)).
+v2.4.1-4 or later. Releases before v2.4.1-3 fail on Docker Desktop (see
+[Troubleshooting](#troubleshooting-on-a-mac)), and v2.4.1-3 doesn't ship the
+scripts.
 
 ```bash
-V=2.4.1-3
+V=2.4.1-4
 curl -sSL "https://github.com/mwiget/ocibnkctl/releases/download/v$V/ocibnkctl_${V}_darwin_arm64.tar.gz" | tar xz ocibnkctl
 install -m 0755 ocibnkctl ~/.local/bin/
-ocibnkctl version                       # ocibnkctl 2.4.1-3 ...
+ocibnkctl version                       # ocibnkctl 2.4.1-4 ...
 brew install kubectl helm jq            # if missing; ocibnkctl doctor checks them
 ```
 
