@@ -271,6 +271,28 @@ The cache stores no secret; each cluster supplies its own key, so GA vs
 engineering builds share one cache. Renderer/mount: `internal/cluster/
 {registries,k3s}.go`; wiring: `applyRegistryCache` in `internal/cli/backend.go`.
 
+## Extra CA certificates (TLS-inspecting proxies)
+
+Behind a TLS-inspecting proxy (Netskope, Zscaler, …) the k3s nodes' stock
+trust store rejects the proxy's re-signed certificates, so containerd pulls
+fail with `x509: certificate signed by unknown authority`, typically on
+ghcr.io blobs (`pkg-containers.githubusercontent.com`). The regcachectl caches
+don't help: they fetch upstream with the same stock trust. List the proxy CA:
+
+```yaml
+cluster:
+  extra_ca_certs:
+    - keys/netskope-ca.pem   # PEM, relative to the PoC; macOS:
+                             # security find-certificate -a -c goskope -p > keys/netskope-ca.pem
+```
+
+`cluster up` / `scale` concatenate the files into `artifacts/extra-ca.pem` and
+bind-mount it at `/etc/ssl/certs/ocibnkctl-extra-ca.pem` on every node
+(`applyExtraCA` in `internal/cli/backend.go`, `caArgs` in
+`internal/cluster/k3s.go`); `validate` checks each file holds a PEM
+certificate. containerd reads its roots at start, so it applies only to nodes
+created after it is set. Ported from tmmlitectl.
+
 ## Customer-supplied secrets
 
 `keys/f5-far-auth-key.tgz` (FAR image-pull tarball for `repo.f5.com`) and

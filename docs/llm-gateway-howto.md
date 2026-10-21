@@ -730,6 +730,7 @@ run, which used the mock only.
 | `/v1/models` works, chat gets a connection reset | TMM can't resolve or reach the provider | [Path 3, step 5](#path-3-your-own-bnk-cluster-without-ocibnkctl): `aigw-dns-resolver` and a route out |
 | 405 from the provider | `Generic` base URL missing `/v1` | Edit the provider |
 | All models stop working after a change | One broken deployment stops the whole profile | Check every model shows its deployments Active |
+| Pods stuck in `ImagePullBackOff`, events say `x509: certificate signed by unknown authority` | A TLS-inspecting proxy (Netskope, Zscaler) re-signs registry traffic and the k3s nodes don't trust its CA | Export the CA (macOS, Netskope: `security find-certificate -a -c goskope -p > keys/netskope-ca.pem`), list it under `cluster.extra_ca_certs` in `poc.yaml`, then `destroy` and rerun `e2e` |
 | Host under 10 cores | Resource floor | `init` writes `host_profile: small` on tight hosts and `e2e` adds `deploy shrink` automatically. ClickHouse adds pods: with `ai_metrics: false` the gateway, console and keys still work |
 
 Details on anything else: `kubectl -n llm-demo logs job/llm-setup`,
