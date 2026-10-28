@@ -283,8 +283,11 @@ func TestReadmeCoversPlatform(t *testing.T) {
 		if err != nil || d.IsDir() {
 			return err
 		}
+		// by name, or by its path under platform/ where names repeat
+		// (prereqs/install.sh, flo/install.sh, ...)
 		name := p[strings.LastIndex(p, "/")+1:]
-		if !strings.Contains(string(readme), "`"+name+"`") {
+		rel := strings.TrimPrefix(p, "platform/")
+		if !strings.Contains(string(readme), "`"+name+"`") && !strings.Contains(string(readme), "`"+rel+"`") {
 			t.Errorf("kit/README.md does not document %s", p)
 		}
 		return nil

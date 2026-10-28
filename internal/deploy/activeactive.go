@@ -1,15 +1,9 @@
 package deploy
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Active/active multi-TMM data-plane constants.
@@ -102,14 +96,6 @@ func RenderDAGNAD(namespace string) string {
 	return renderBridgeNAD(DAGNADName, namespace, DAGBridge, DAGSubnet, DAGIPAMStart, DAGIPAMEnd)
 }
 
-// RenderBGPNAD renders the bridge-CNI NetworkAttachmentDefinition for
-// the anycast-bgp path. Same shape as the bgp-peer-frr scenario's NAD
-// (name/bridge/subnet match) so the deploy path and the scenario peer
-// over one L2 segment.
-func RenderBGPNAD(namespace string) string {
-	return renderBridgeNAD(BGPNADName, namespace, BGPBridge, BGPSubnet, BGPIPAMStart, BGPIPAMEnd)
-}
-
 // renderBridgeNAD renders a bridge-CNI NetworkAttachmentDefinition that
 // gives each attached pod a net1 on a per-node software bridge with
 // host-local IPAM. Both RenderDAGNAD and RenderBGPNAD call it.
@@ -173,49 +159,6 @@ func RenderTMMVlan(namespace string, selfIPs []string) string {
 	})
 }
 
-// EnsureMultus installs the Multus thick plugin (idempotent) and bumps
-// its memory limit so it survives CNI churn. Required before any NAD can
-// attach a net1 interface to a pod.
-func EnsureMultus(ctx context.Context, r *Runner) error {
-	status, _ := r.KubectlCapture(ctx, "-n", "kube-system", "get",
-		"daemonset/kube-multus-ds",
-		"-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}")
-	installed := strings.Contains(status, "/") && !strings.HasPrefix(strings.TrimSpace(status), "0/")
-	if !installed {
-		body, err := downloadAndVerify(ctx, MultusManifestURL, MultusManifestSHA)
-		if err != nil {
-			return fmt.Errorf("multus manifest: %w", err)
-		}
-		if err := r.Apply(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply multus: %w", err)
-		}
-	}
-	// Upstream's init container is a plain `cp` over /opt/cni/bin/multus-shim.
-	// After a node restart the kubelet is already retrying pod sandboxes
-	// through the old shim, each call blocking on the not-yet-running Multus
-	// daemon. The file is busy, so `cp` fails with "Text file busy", the init
-	// container crash-loops, the daemon never starts, and every sandbox times
-	// out: a deadlock. Installing via a temp file + rename breaks it; rename
-	// replaces the directory entry, and only opening a running binary for
-	// writing is refused. Idempotent: no rollout when already patched.
-	if err := r.Kubectl(ctx, "-n", "kube-system", "patch", "daemonset/kube-multus-ds", "--type=json",
-		"-p", multusShimInstallPatch); err != nil {
-		return fmt.Errorf("patch multus shim install: %w", err)
-	}
-	// Upstream's 50Mi limit OOMKills under CNI churn; 500Mi holds. The requests
-	// follow `deploy shrink` when its policy is applied: e2e runs shrink before
-	// deploy cne installs Multus, so shrink can't cap it, and a fixed 200Mi here
-	// would undo the cap on every deploy cne re-run.
-	cpuReq, memReq := "100m", "200Mi"
-	if cpu, mem, ok := ActiveShrinkRequests(ctx, r); ok {
-		cpuReq, memReq = cpu, mem
-	}
-	_ = r.Kubectl(ctx, "-n", "kube-system", "patch", "daemonset/kube-multus-ds", "--type=json",
-		"-p", multusResourcesPatch(cpuReq, memReq))
-	return r.Kubectl(ctx, "-n", "kube-system", "rollout", "status",
-		"daemonset/kube-multus-ds", "--timeout=3m")
-}
-
 // multusShimInstallPatch replaces the Multus init container's plain `cp` of
 // the shim binary with copy-to-temp + rename, which succeeds even while the
 // old shim is executing (see EnsureMultus). /usr/bin/sh, cp and mv all ship
@@ -240,70 +183,4 @@ func multusResourcesPatch(cpuRequest, memoryRequest string) string {
 		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":%q},`+
 		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":%q}]`,
 		cpuRequest, memoryRequest)
-}
-
-// downloadAndVerify fetches url and refuses to return the body unless its
-// sha256 matches wantHex (pin guard against upstream tampering / drift).
-func downloadAndVerify(ctx context.Context, url, wantHex string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if got := hex.EncodeToString(sha256Sum(body)); got != wantHex {
-		return nil, fmt.Errorf("integrity check failed for %s: got sha256=%s want %s "+
-			"— refusing to apply (upstream tampered or the version pin needs an update)", url, got, wantHex)
-	}
-	return body, nil
-}
-
-func sha256Sum(b []byte) []byte {
-	s := sha256.Sum256(b)
-	return s[:]
-}
-
-// WaitVlanProgrammed blocks until the named F5SPKVlan reports
-// Programmed=True, i.e. the controller actually pushed it to every TMM
-// ("CR config sent to all grpc endpoints").
-//
-// Applying the CR proves nothing on its own: BNK 2.4 ships two mutually
-// exclusive network models and only the legacy SPK one (cneController env
-// USE_GATEWAY_SETTINGS=false) reconciles F5SPKVlan. Under
-// Infra/GatewaySettings the CR is accepted by the API server and the
-// validation webhook and then ignored forever — `.status` stays absent, READY
-// blank, and TMM is never told the VLAN exists (not even an error). See
-// docs/bnk-2.4.0-doc-errata.md #26.
-func WaitVlanProgrammed(ctx context.Context, r *Runner, name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var last string
-	for {
-		out, _ := r.KubectlCapture(ctx, "-n", "default", "get", "f5-spk-vlans", name,
-			"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}`)
-		last = strings.TrimSpace(out)
-		if last == "True" {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			if last == "" {
-				return fmt.Errorf("no Programmed condition after %s (status never written)", timeout)
-			}
-			return fmt.Errorf("Programmed=%s after %s", last, timeout)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
 }

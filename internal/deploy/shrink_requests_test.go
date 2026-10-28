@@ -7,33 +7,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestParseShrinkRequests(t *testing.T) {
-	cases := []struct {
-		raw     string
-		cpu     string
-		mem     string
-		wantOK  bool
-		comment string
-	}{
-		{"25m 128Mi", "25m", "128Mi", true, "live policy output"},
-		{"  50m   256Mi\n", "50m", "256Mi", true, "whitespace"},
-		{"", "", "", false, "policy without the rule"},
-		{"25m", "", "", false, "memory missing"},
-		{"25m 128Mi extra", "", "", false, "unexpected shape"},
-	}
-	for _, c := range cases {
-		cpu, mem, ok := parseShrinkRequests(c.raw)
-		if cpu != c.cpu || mem != c.mem || ok != c.wantOK {
-			t.Errorf("%s: parseShrinkRequests(%q) = (%q, %q, %v), want (%q, %q, %v)",
-				c.comment, c.raw, cpu, mem, ok, c.cpu, c.mem, c.wantOK)
-		}
-	}
-}
-
 // TestShrinkRequestsJSONPathMatchesPolicy pins shrinkRequestsJSONPath to the
 // rendered policy: rule name, foreach[0], containers[0].resources.requests. If
 // the template is restructured, ActiveShrinkRequests would silently stop
 // finding the cap and Multus would go back to uncapped.
+// kit/platform/cne/install.sh reads the shrink policy's requests at
+// spec.rules[name=shrink-f5-requests].mutate.foreach[0].patchStrategicMerge.
+// spec.containers[0].resources.requests to size Multus; the rendered policy
+// must keep that shape.
 func TestShrinkRequestsJSONPathMatchesPolicy(t *testing.T) {
 	rendered, err := RenderShrinkPolicy(ShrinkInputs{CPURequest: "33m", MemoryRequest: "77Mi"})
 	if err != nil {

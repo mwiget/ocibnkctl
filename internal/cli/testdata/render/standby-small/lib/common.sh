@@ -19,6 +19,13 @@
 # Preset both to source this from outside scenarios/<name>/ (lib/edge-pod.sh).
 KIT_SCENARIO_DIR=${KIT_SCENARIO_DIR:-$(cd "$(dirname "$0")" && pwd)}
 KIT_LIB=${KIT_LIB:-$(cd "$KIT_SCENARIO_DIR/../../lib" && pwd)}
+# Where the caller ran from: relative paths they pass (KUBECONFIG, the
+# platform's FAR_KEY / JWT_FILE) mean relative to here, not to the script.
+KIT_CALLER_DIR=${KIT_CALLER_DIR:-$PWD}
+case ${KUBECONFIG:-} in
+'' | /*) ;;
+*) KUBECONFIG=$KIT_CALLER_DIR/$KUBECONFIG && export KUBECONFIG ;;
+esac
 cd "$KIT_SCENARIO_DIR" || exit 2
 
 KIT_FAILED=0

@@ -52,22 +52,6 @@ func TestRenderDAGNAD(t *testing.T) {
 	}
 }
 
-func TestRenderBGPNAD(t *testing.T) {
-	got := RenderBGPNAD("default")
-	for _, want := range []string{
-		"kind: NetworkAttachmentDefinition",
-		"name: " + BGPNADName,
-		"namespace: default",
-		`"type": "bridge"`,
-		`"bridge": "` + BGPBridge + `"`,
-		BGPSubnet,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("RenderBGPNAD missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestRenderAnycastZebosConfigMap(t *testing.T) {
 	got := RenderAnycastZebosConfigMap("default", "192.168.99.20", "")
 	for _, want := range []string{
@@ -110,22 +94,5 @@ func TestRenderTMMVlan(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderTMMVlan missing %q:\n%s", want, got)
 		}
-	}
-}
-
-// The deploy path used to print "N TMM(s) active" as soon as `kubectl apply`
-// of the F5SPKVlan returned, which is true of the CR and says nothing about
-// TMM. WaitVlanProgrammed is what makes that claim honest; this pins the
-// jsonpath it reads, since a typo there would silently always time out.
-func TestWaitVlanProgrammedReadsTheProgrammedCondition(t *testing.T) {
-	// Render + constants the wait depends on must stay in sync with the CR
-	// the deploy applies.
-	vlan := RenderTMMVlan("default", []string{"192.0.2.10"})
-	if !strings.Contains(vlan, "name: "+DAGVlanName) {
-		t.Fatalf("rendered F5SPKVlan is not named %q, so WaitVlanProgrammed would poll the wrong object:\n%s",
-			DAGVlanName, vlan)
-	}
-	if !strings.Contains(vlan, `interfaces: ["`+DAGInterface+`"]`) {
-		t.Errorf("rendered F5SPKVlan does not bind %s", DAGInterface)
 	}
 }
