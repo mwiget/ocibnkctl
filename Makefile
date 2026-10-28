@@ -184,7 +184,7 @@ smoke: test build
 	echo "[11] render writes the plain-file bundle offline, without secrets"; \
 	  ./bin/ocibnkctl render --poc $(SMOKE_DIR) >/tmp/smoke-render.log 2>&1; \
 	  for f in README.md 10-flo/02-flo-values.yaml 20-cne/03-cne-instance.yaml \
-	           20-cne/04-license.yaml.tmpl lib/render.sh \
+	           20-cne/04-license.yaml.tmpl 20-cne/04-license-jwks-configmap.yaml lib/render.sh \
 	           scenarios/http-routing-e2e/06-httproute.yaml; do \
 	    test -s $(SMOKE_DIR)/artifacts/render/$$f || { echo "render MISSING $$f"; exit 1; }; \
 	  done; \

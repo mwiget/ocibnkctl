@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -154,5 +155,39 @@ func TestRunRenderWritesBundle(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
 			t.Errorf("missing %s: %v", f, err)
 		}
+	}
+}
+
+// A test JWT in keys/ makes render do what `deploy cne` does: the License
+// references the JWKS ConfigMap and the README applies it first. The token
+// itself still stays out of the bundle.
+func TestRenderBundleTstJWT(t *testing.T) {
+	repo := t.TempDir()
+	p := poc.New("rtest")
+	enc := base64.RawURLEncoding.EncodeToString
+	jwt := enc([]byte(`{"alg":"RS512","jku":"https://product-tst.apis.f5networks.net/ee/v1/keys/jwks"}`)) +
+		"." + enc([]byte(`{"sub":"TST-secret-subject"}`)) + ".sig"
+	if err := os.MkdirAll(filepath.Join(repo, "keys"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resolveRef(repo, p.BNK.JWTRef), []byte(jwt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := renderBundle(repo, p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]string{}
+	for _, f := range files {
+		if strings.Contains(f.Body, jwt) || strings.Contains(f.Body, "TST-secret-subject") {
+			t.Errorf("%s leaks the JWT", f.Path)
+		}
+		byPath[f.Path] = f.Body
+	}
+	if !strings.Contains(byPath["20-cne/04-license.yaml.tmpl"], "jwksConfigMapRef:") {
+		t.Error("License template lacks jwksConfigMapRef for a tst JWT")
+	}
+	if !strings.Contains(byPath["README.md"], "kubectl apply -f 20-cne/04-license-jwks-configmap.yaml") {
+		t.Error("README does not apply the JWKS ConfigMap for a tst JWT")
 	}
 }

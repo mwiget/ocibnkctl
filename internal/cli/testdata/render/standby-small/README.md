@@ -96,6 +96,10 @@ kubectl wait --for=condition=Established crd/licenses.k8s.f5net.com --timeout=3m
 makes CWC re-register, which fails on an already-registered asset. Retry the apply for ~100s if it
 fails with "status unknown for quota" (CWC is still creating its ResourceQuota).
 
+For a **test** JWT (`jku` on `product-tst…`): apply `20-cne/02-license-jwks-configmap.yaml` first and add to the License spec
+`jwksConfigMapRef: {name: cwc-jwks-cm, key: key}` — CWC's built-in test certs expired. Production JWTs
+need neither.
+
 ```sh
 BNK_JWT="$(tr -d '\n' < keys/.jwt)" sh lib/render.sh 20-cne/02-license.yaml.tmpl | kubectl apply -f -
 kubectl -n f5-cne-core wait --for=jsonpath='{.status.state}'=Active license.k8s.f5net.com/f5-cne-cluster-license --timeout=20m

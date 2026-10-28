@@ -358,27 +358,57 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 	b.say("makes CWC re-register, which fails on an already-registered asset. Retry the apply for ~100s if it\n")
 	b.say("fails with \"status unknown for quota\" (CWC is still creating its ResourceQuota).\n\n")
 
+	// Same rule as `deploy cne`: a tst JWT needs TEEM's current tst JWKS
+	// (CWC's built-in tst certs expired). Only the JWT's claims are read
+	// here; the token itself is written only with --include-secrets.
+	jwksCM, err := deploy.RenderJWKSConfigMap(shared)
+	if err != nil {
+		return err
+	}
+	// The ConfigMap shares the License's step number (and sorts first), so
+	// adding it leaves every other file's number unchanged.
+	licFile := next("license")
+	jwksFile := strings.TrimSuffix(licFile, ".yaml") + "-jwks-configmap.yaml"
+	b.add(jwksFile, jwksCM)
+	lic := deploy.LicenseInputs{JWT: "${BNK_JWT}"}
+	switch info, err := deploy.InspectJWT(resolveRef(repo, p.BNK.JWTRef)); {
+	case err == nil && info.Type == "tst":
+		lic.JWKSConfigMap = deploy.JWKSConfigMapName
+		b.say("This PoC's JWT is a **test** JWT, so the License points CWC at TEEM's current test JWKS\n")
+		b.say("(`%s`, apply it first). Production JWTs need neither.\n\n", jwksFile)
+	case err == nil:
+		b.say("This PoC's JWT is a production JWT: skip `%s`, which only test JWTs need.\n\n", jwksFile)
+	default:
+		b.say("For a **test** JWT (`jku` on `product-tst…`): apply `%s` first and add to the License spec\n", jwksFile)
+		b.say("`jwksConfigMapRef: {name: %s, key: %s}` — CWC's built-in test certs expired. Production JWTs\n",
+			deploy.JWKSConfigMapName, deploy.JWKSConfigMapKey)
+		b.say("need neither.\n\n")
+	}
+	b.say("```sh\n")
+	if lic.JWKSConfigMap != "" {
+		b.say("kubectl apply -f %s\n", jwksFile)
+	}
 	if includeSecrets {
 		jwt, err := readJWT(resolveRef(repo, p.BNK.JWTRef))
 		if err != nil {
 			return fmt.Errorf("--include-secrets: %w", err)
 		}
-		cr, err := deploy.RenderLicenseCR(deploy.LicenseInputs{JWT: jwt})
+		lic.JWT = jwt
+		cr, err := deploy.RenderLicenseCR(lic)
 		if err != nil {
 			return err
 		}
-		licFile := next("license")
 		b.addSecret(licFile, cr)
-		b.say("```sh\nkubectl apply -f %s   # contains your JWT\n", licFile)
+		b.say("kubectl apply -f %s   # contains your JWT\n", licFile)
 	} else {
-		cr, err := deploy.RenderLicenseCR(deploy.LicenseInputs{JWT: "${BNK_JWT}"})
+		cr, err := deploy.RenderLicenseCR(lic)
 		if err != nil {
 			return err
 		}
 		// .tmpl suffix keeps `kubectl apply -f 20-cne/` from applying the placeholder.
-		licFile := next("license") + ".tmpl"
+		licFile += ".tmpl"
 		b.add(licFile, cr)
-		b.say("```sh\nBNK_JWT=\"$(tr -d '\\n' < %s)\" sh lib/render.sh %s | kubectl apply -f -\n", p.BNK.JWTRef, licFile)
+		b.say("BNK_JWT=\"$(tr -d '\\n' < %s)\" sh lib/render.sh %s | kubectl apply -f -\n", p.BNK.JWTRef, licFile)
 	}
 	b.say("kubectl -n %s wait --for=jsonpath='{.status.state}'=Active license.k8s.f5net.com/%s --timeout=20m\n```\n\n",
 		shared, deploy.LicenseCRName)
