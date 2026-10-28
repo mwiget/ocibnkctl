@@ -2,7 +2,7 @@
 
 F5 how-to: [HTTP traffic steering with Gateway API HTTPRoute](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/Configure-HTTP-traffic-steering-with-Gateway-API-HTTPRoute.html)
 &nbsp;·&nbsp; Rating: 🟢
-&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../../../internal/scenarios/bgppeer)
+&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 &nbsp;·&nbsp; Wall time: **~21s** (no TMM restart; piggybacks on the existing NAD)
 
 Builds on the BGP plumbing established by `bgp-peer-frr`. Applies

@@ -101,6 +101,9 @@ func (s *shellScenario) Manifests(ctx *Context) ([]string, error) {
 		}
 	}
 	var paths []string
+	if _, err := fs.Stat(kit.FS, s.KitDir()+"/manifests"); err != nil {
+		return nil, nil // a scenario may only act imperatively (bgp-peer-frr)
+	}
 	err := fs.WalkDir(kit.FS, s.KitDir()+"/manifests", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err

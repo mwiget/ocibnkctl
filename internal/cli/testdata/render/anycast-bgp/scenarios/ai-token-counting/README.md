@@ -1,57 +1,112 @@
-# ai-token-counting
+# `ai-token-counting` — `k8s.f5.com/ai-token-counting` Gateway annotation
 
-Token Counting and Enforcement (how-to #6) — k8s.f5.com/ai-token-counting Gateway annotation
+F5 how-to: [Configure Token Counting and Enforcement](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-token-counting-and-enforcement.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
+&nbsp;·&nbsp; Wall time: **~25s** (with bgp-peer-frr running already)
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
+Demonstrates BNK's AI token-counting feature. The mechanism is a
+single annotation on `Gateway.spec.infrastructure.annotations`:
 
-## What it does
-
-Demonstrates BNK's AI token-counting feature. The mechanism is
-a single annotation on the Gateway's spec.infrastructure
-section:
-
-    k8s.f5.com/ai-token-counting: |
-      token_counting=enabled,
-      user_id_source=api_key,
-      user_id_header=Authorization,
-      fallback_to_ip=true,
-      hsl_pool=hsl-logging-pool
+```yaml
+k8s.f5.com/ai-token-counting: |
+  token_counting=enabled,
+  user_id_source=api_key,
+  user_id_header=Authorization,
+  fallback_to_ip=true,
+  hsl_pool=hsl-logging-pool
+```
 
 No dedicated BNK CR is introduced. TMM reads the annotation,
-parses incoming OpenAI-style /v1/chat/completions responses,
-counts the per-user tokens, and (if 'enabled') enforces quotas
-per user.
+parses incoming OpenAI-style `/v1/chat/completions` responses,
+counts per-user tokens, and (if `enabled`) enforces quotas.
 
-Rated AMBER because the F5 doc itself doesn't give us a
-runnable backend or verification command. The scenario stands
-up a stub nginx that returns a fixed OpenAI-style JSON with
-usage.prompt_tokens=42 / usage.completion_tokens=11, applies
-the Gateway + HTTPRoute, and asserts:
+## How TMM exposes the counters (investigation 2026-05-20)
 
-  - Gateway Programmed=True with the annotation present
-  - HTTPRoute Accepted=True
-  - the annotation actually carried into the live Gateway
-    object after FLO reconciles
+The F5 doc doesn't say it, but the auto-generated iRule logs
+its per-request counts to **`tmm.local0.info`**. That's the
+hook we use to verify the data plane:
 
-Token counting itself is a TMM data-plane feature that needs
-varying token counts to validate (the stub always returns the
-same fixed counts, and we have no HSL receiver to inspect
-emitted log records). Lifting this to green would require:
+```
+Rule scn-tokencount-gateway-scn-tokencount-token-counting
+  <JSON_RESPONSE>:
+  TOKEN(1): source=json
+            user_ref=user-808b5bf2f1ab8cab5eee7f99dfe65b...
+            model=gpt-stub bucket_key=gpt-stub
+            prompt=42 completion=11 total=53
+Rule scn-tokencount-gateway-scn-tokencount-token-counting
+  <JSON_RESPONSE>:
+  TOKEN(1): cumulative user: total=53 in=42 out=11
+Rule scn-tokencount-gateway-scn-tokencount-token-counting
+  <JSON_RESPONSE>:
+  TOKEN(1): cumulative model(gpt-stub): total=53 in=42 out=11
+Rule scn-tokencount-gateway-scn-tokencount-token-counting
+  <JSON_RESPONSE>:
+  TOKEN(1): cumulative global: total=53 in=42 out=11
+Rule scn-tokencount-gateway-scn-tokencount-token-counting
+  <JSON_RESPONSE>:
+  TOKEN(1): cumulative user+model(user-808b...:gpt-stub):
+            total=53 in=42 out=11
+```
 
-  - a real LLM backend that emits varied token counts, OR
-  - a stub backend that varies usage based on prompt size
-  - an HSL log receiver to capture the per-user counters
-  - F5-side tooling to introspect TMM's user_id buckets
+The `user_ref` is a SHA-256 hash of the bearer-token value
+(per the `user_id_source=api_key` config). Subsequent requests
+with the same Authorization header increment the same user
+bucket; different tokens get distinct buckets. Per-model and
+global counters also tick.
 
-Cleanup deletes the scn-tokencount namespace.
+For our stub backend that always returns `prompt_tokens=42,
+completion_tokens=11`, three requests should produce
+`cumulative user: total=159 in=126 out=33` — verifiable by
+scraping TMM logs.
+
+## What's still left for a "real" deployment
+
+This scenario proves the iRule machinery works. A production
+deployment would also wire up an HSL receiver (the
+`hsl_pool=hsl-logging-pool` annotation field) so the counters
+flow into a metering tool like OpenMeter. That's outside the
+ocibnkctl scope; the iRule-fired-and-counted assertion is
+what verifies BNK's side of the feature.
 
 ## Manifests
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-httproute.yaml`
+| File | What it is |
+|---|---|
+| [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-tokencount` |
+| [`03-backend.yaml`](manifests/03-backend.yaml) | Stub LLM (nginx returning fixed OpenAI-style JSON) + Service |
+| [`04-gateway.yaml.tmpl`](manifests/04-gateway.yaml.tmpl) | Gateway with `spec.addresses=[${VIP}]` (default 203.0.113.103), HTTP listener on :8000, and the verbatim `k8s.f5.com/ai-token-counting` annotation under `spec.infrastructure.annotations` |
+| [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `tokencount.ocibnkctl.local`, path `/v1/chat/completions` → stub-llm |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+## How to run
+
+```bash
+ocibnkctl scenario run ai-token-counting --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/ai-token-counting/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/ai-token-counting/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/ai-token-counting/cleanup.sh
+```
+
+Variables (VIP, ports, namespace) and their defaults are in
+[`scenario.env`](scenario.env); set any of them in the environment.
+
+## Verification (4/4)
+
+```
+✓ stub-llm Deployment Available
+✓ Gateway Programmed=True
+✓ HTTPRoute Accepted=True
+✓ k8s.f5.com/ai-token-counting annotation present on Gateway
+```
+
+## Cleanup
+
+`ocibnkctl scenario clean ai-token-counting` deletes the
+`scn-tokencount` namespace.

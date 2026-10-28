@@ -218,9 +218,12 @@ that has a `verify.sh` — no Go, no import. `verify.sh` prints one JSON
 (`kit/lib/edge.sh`) picks the data-plane client: `ocibnkctl` (the external
 FRR container, set by `scenario run`), `external` (the operator's own client
 and router) or `none` (data-plane checks reported *skipped*). Preflight
-(`kit_require`) reads the cluster, not poc.yaml. So far `cwc-admin-access`,
-`cluster-wide-watch` and `http-routing-e2e` are script scenarios;
-`shell_test.go` runs their real scripts against stub kubectl/docker.
+(`kit_require`) reads the cluster, not poc.yaml. Script scenarios so far:
+`bgp-peer-frr`, `cwc-admin-access`, `cluster-wide-watch`, `http-routing-e2e`,
+`tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`,
+`fic-dynamic-ip`, `proxy-protocol-l4`. `shell_test.go` runs every script
+scenario's real scripts against a stub kubectl/docker
+(`TestShellScenariosHealthy`, both edge drivers).
 
 `Dependencies()` is the ordering contract: `scenario run --all` topo-sorts the
 green scenarios by it (`topoSortByDeps` in `internal/cli/scenario.go`) so e.g.

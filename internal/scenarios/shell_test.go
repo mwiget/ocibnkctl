@@ -10,7 +10,49 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/poc"
 )
 
+// Every kit script scenario runs its real apply.sh + verify.sh end to end
+// against a healthy stub cluster: all checks pass with the ocibnkctl edge,
+// and with no edge client the data-plane ones are skipped, not failed.
+func TestShellScenariosHealthy(t *testing.T) {
+	for _, s := range loadShellScenarios() {
+		for _, driver := range []string{"", "none"} {
+			t.Run(s.Name()+"/edge="+driver, func(t *testing.T) {
+				stubs(t, healthyKubectl, healthyDocker)
+				t.Setenv("EDGE_DRIVER", driver)
+				r := runPilot(t, s.Name())
+				if r.Status != "ok" {
+					t.Fatalf("status=%s summary=%q assertions=%+v", r.Status, r.Summary, r.Assertions)
+				}
+				for _, a := range r.Assertions {
+					if driver == "" && a.Skipped {
+						t.Errorf("%q skipped with an edge client present", a.Description)
+					}
+				}
+			})
+		}
+	}
+}
+
+// bgp-peer-frr counts only Established rows on the edge L2: an Active
+// neighbor next to an Established one is 1 of 2, a failure.
+func TestBGPPeerCountsEstablished(t *testing.T) {
+	stubs(t, strings.Replace(healthyKubectl, `echo f5-tmm-abc`, `printf 'f5-tmm-a\nf5-tmm-b\n'`, 1),
+		strings.Replace(healthyDocker, `echo "*192.168.99.160 4 65000 12 14 0 0 0 00:02:13 3" ;;`,
+			`echo "*192.168.99.160 4 65000 12 14 0 0 0 00:02:13 3"; echo "*192.168.99.161 4 65000 0 0 0 0 0 never Active" ;;`, 1))
+	t.Setenv("EDGE_DRIVER", "")
+	t.Setenv("BGP_WAIT", "1")
+	r := runPilot(t, "bgp-peer-frr")
+	if r.Status != "failed" || !strings.Contains(r.Assertions[0].Got, "1/2 established") {
+		t.Fatalf("status=%s assertions=%+v", r.Status, r.Assertions)
+	}
+}
+
 func TestShellScenariosLoad(t *testing.T) {
+	for _, s := range loadShellScenarios() {
+		if _, err := os.Stat(filepath.Join("..", "..", "kit", s.KitDir(), "README.md")); err != nil {
+			t.Errorf("%s: no README.md (render bundles link to it)", s.Name())
+		}
+	}
 	for _, name := range []string{"cwc-admin-access", "cluster-wide-watch", "http-routing-e2e"} {
 		s, ok := Find(name).(*shellScenario)
 		if !ok {
@@ -58,27 +100,56 @@ func stubs(t *testing.T, kubectl, docker string) {
 		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("STUB_STATE", filepath.Join(dir, "state"))
+	t.Setenv("REDISTRIBUTE_PAUSE", "0") // bgp-peer-frr's pacing between rounds
 }
 
-// A healthy cluster for the http-routing-e2e and cluster-wide-watch checks.
+// healthyKubectl answers like a healthy anycast-bgp BNK cluster for every
+// call the kit scenarios make.
 const healthyKubectl = `case "$*" in
 *"get gatewayclass"*) printf True ;;
-*"get httproute"*) printf True ;;
+*"get gatewaysettings"*) printf True/True ;;
+*"get gateway/scn-fic-gateway"*addresses*) printf 203.0.113.111 ;;
+*"get gateway/scn-tokencount-gateway"*annotations*) printf 'token_counting=enabled,user_id_source=api_key' ;;
+*"get httproute"* | *"get l4route"*) printf True ;;
+*"get f5-big-cne-irule/pp-prepend"*) printf pp-prepend ;;
+*"get netpolicy"*) printf scn-proxy-attach ;;
+*"get cneinstances"*TMM_MAPRES*) printf FALSE ;;
+*"get cneinstances"*USE_GATEWAY_SETTINGS*) printf true ;;
+*"get cneinstances"*networkAttachments*) printf bnk-bgp ;;
 *"get cneinstances"*wholeCluster*) printf true ;;
 *"get cneinstances"*) ;;
 *"get deployment/f5-cne-controller"*) printf 1 ;;
 *"get pod -l app=f5-tmm"*) echo f5-tmm-abc ;;
+*"logs f5-tmm-abc"*) echo "TOKEN COUNTING IRULE INIT scn-tokencount-gateway-scn-tokencount-token-counting TOKEN(12) cumulative=34" ;;
 *"exec -i"*) cat >/dev/null ;;
+*"get secret"*go-template*) printf '  token: dG9rZW4=\n' ;;
+*"get pod -l app=probe"*) printf probe-1 ;;
+*exec*not-the-real-token*) printf '{"error":"unauthorized"}\n__HTTP_CODE__=401' ;;
+*exec*'$(cat /token/token)'*) printf '{"LicenseStatus":"Active","DigitalAssetID":"x"}\n__HTTP_CODE__=200' ;;
+*exec*) printf '__HTTP_CODE__=401' ;;
+*apply*) cat >/dev/null ;;
+*"get crd"* | *"get secret"*) ;;
 *wait*) echo "condition met" ;;
 esac
 exit 0
 `
 
-// The external FRR: has the VIP in BGP, a kernel route, and curls succeed.
+// healthyDocker is the external FRR and the netshoot client in its netns:
+// every scenario VIP in BGP, one Established TMM, routes and replies.
 const healthyDocker = `case "$*" in
-*vtysh*) echo "*> 203.0.113.100/32 192.168.99.160" ;;
-*"ip route show"*) echo "203.0.113.100 via 192.168.99.160 dev eth1" ;;
-*curl*) echo ocibnkctl-scenario-httproute-e2e-OK ;;
+*"vtysh -c show ip bgp summary"*)
+	echo "*192.168.99.160 4 65000 12 14 0 0 0 00:02:13 3" ;;
+*"vtysh -c show ip bgp"* | *"vtysh -c show bgp ipv4 unicast"*)
+	for o in 100 102 103 106 107 111; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
+*"ip route show"*) echo "$7 via 192.168.99.160 dev eth1" ;;
+*socat*) echo ocibnkctl-scenario-udp-lb-OK ;;
+*curl*)
+	# alternate the TCP LB backends so both weights show up
+	n=$(cat "$STUB_STATE" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_STATE"
+	b=A; [ $((n % 2)) -eq 1 ] && b=B
+	echo "ocibnkctl-scenario-httproute-e2e-OK ocibnkctl-scenario-tokencount-OK ocibnkctl-scenario-fic-dynamic-ip-OK"
+	echo "ocibnkctl-scenario-proxy-protocol-OK proxy_addr=192.168.99.41 backend=$b" ;;
 esac
 `
 
@@ -132,6 +203,16 @@ func TestPilotHTTPRoutingEdgeOcibnkctl(t *testing.T) {
 		if a.Skipped {
 			t.Errorf("%s skipped with an edge client present", a.Description)
 		}
+	}
+}
+
+// A route via the wrong next hop fails the kernel-route check.
+func TestPilotHTTPRoutingWrongNexthop(t *testing.T) {
+	stubs(t, healthyKubectl, strings.Replace(healthyDocker, "via 192.168.99.160", "via 10.0.0.1", 1))
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "http-routing-e2e")
+	if r.Status != "failed" || !strings.Contains(r.Summary, "kernel route") {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
 	}
 }
 

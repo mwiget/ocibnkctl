@@ -1,11 +1,6 @@
-# tcp-l4-loadbalance
+# `tcp-l4-loadbalance` — TCP load balancer via L4Route — weighted backends (70/30)
 
-TCP load balancer via L4Route — weighted backends (70/30)
-
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
 Exercises L4Route's load-balancing behavior with two weighted
 backends (70/30). Each backend is a separate nginx Deployment
@@ -26,12 +21,21 @@ hashes to one.
 
 Cleanup deletes the scn-tcp-lb namespace.
 
-## Manifests
+## How to run
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-l4route.yaml`
+```bash
+ocibnkctl scenario run tcp-l4-loadbalance --poc <pocdir>
+```
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/tcp-l4-loadbalance/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/tcp-l4-loadbalance/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/tcp-l4-loadbalance/cleanup.sh
+```
+
+Variables (VIP, ports, namespace) and their defaults are in
+[`scenario.env`](scenario.env); set any of them in the environment.

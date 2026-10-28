@@ -1,11 +1,6 @@
-# udp-l4-loadbalance
+# `udp-l4-loadbalance` — UDP load balancer via L4Route — alpine/socat echo backend
 
-UDP load balancer via L4Route — alpine/socat echo backend
-
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
 Exercises L4Route's UDP protocol support. The Gateway listens on
 UDP 5005; an alpine/socat backend forks per datagram and replies
@@ -19,12 +14,21 @@ here is that the data path works end-to-end.
 
 Cleanup deletes the scn-udp-lb namespace.
 
-## Manifests
+## How to run
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-l4route.yaml`
+```bash
+ocibnkctl scenario run udp-l4-loadbalance --poc <pocdir>
+```
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/udp-l4-loadbalance/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/udp-l4-loadbalance/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/udp-l4-loadbalance/cleanup.sh
+```
+
+Variables (VIP, ports, namespace) and their defaults are in
+[`scenario.env`](scenario.env); set any of them in the environment.

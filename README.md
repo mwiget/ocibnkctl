@@ -1049,20 +1049,20 @@ Rating is a stable hint about what's testable in this demo-TMM shape:
 |---|---|---|---|---|
 | 1 | [`cwc-admin-access`](kit/scenarios/cwc-admin-access) | 🟢 | — | how-to #1 — CWC admin API gated by mTLS + bearer token (auth 200; unauth + bogus-token rejected) |
 | 2 | [`cluster-wide-watch`](kit/scenarios/cluster-wide-watch) | 🟢 | — | how-to #2 — `wholeCluster: true`; one controller reconciles a Gateway+HTTPRoute in a brand-new namespace |
-| 3 | [`bgp-peer-frr`](internal/scenarios/bgppeer) | 🟢 | — | how-to #3 — TMM **OcNOS** (AS 65000) ⇄ external `bnk-edge` FRR (AS 65001) Established; routes learned |
+| 3 | [`bgp-peer-frr`](kit/scenarios/bgp-peer-frr) | 🟢 | — | how-to #3 — TMM **OcNOS** (AS 65000) ⇄ external `bnk-edge` FRR (AS 65001) Established; routes learned |
 | 3 | [`bgp-anycast`](internal/scenarios/bgpanycast) | 🟢 | bgp-peer-frr | how-to #3 (all-active) — every TMM advertises its VIP /32 over the shared FRR; ECMP fan-out |
 | 4 | [`core-file-collection`](internal/scenarios/corefiles) | 🟢 | — | how-to #4 — `CNEInstance.spec.coreCollection.enabled` + CoreMond DaemonSet on hostPath |
-| 6 | [`ai-token-counting`](internal/scenarios/aitokencount) | 🟢 | bgp-peer-frr | how-to #6 — Gateway annotation reconciled; TMM data-plane `TOKEN(...)` counters fire |
+| 6 | [`ai-token-counting`](kit/scenarios/ai-token-counting) | 🟢 | bgp-peer-frr | how-to #6 — Gateway annotation reconciled; TMM data-plane `TOKEN(...)` counters fire |
 | 6 | [`ai-token-counting-dssm`](internal/scenarios/aitokencountdssm) | 🟢 | bgp-peer-frr | how-to #6 (custom-iRule variant) — 4 LBs; HTTPRoute iRule counts streaming + non-streaming tokens into DSSM/Redis; counters match backend usage exactly (scraped by tmm-stat-exporter → `f5tmm_token_*`) |
 | 7 | [`ai-semantic-cache`](internal/scenarios/aisemcache) | 🟢 | bgp-peer-frr | how-to #7 — semantic-cache iRule fires (`CLIENT_ACCEPTED` + `HTTP_REQUEST`) on every request |
 | 7 | [`ai-inference-epp`](internal/scenarios/aiepp) | 🟢 | bgp-peer-frr | how-to #7 (BNK 2.4 F5 Endpoint Picker) — `F5EPP` + GAIE `InferencePool` in front of a busy and an idle mock vLLM pod; all 10 requests reach the idle pod, one successful EPP consult each (`inference_epp_stats`), every prompt tokenized (EPP prefix-index counters) |
 | 8 | [`http-routing-e2e`](kit/scenarios/http-routing-e2e) | 🟢 | bgp-peer-frr | how-to #8 — Gateway+HTTPRoute; 5/5 end-to-end curls via the BGP-advertised VIP through TMM |
-| 9 | [`proxy-protocol-l4`](internal/scenarios/proxyprotocol) | 🟢 | bgp-peer-frr | how-to #9 — `F5BigCneIrule` PROXY-v1 on an L4Route; backend echoes the parsed client IP |
+| 9 | [`proxy-protocol-l4`](kit/scenarios/proxy-protocol-l4) | 🟢 | bgp-peer-frr | how-to #9 — `F5BigCneIrule` PROXY-v1 on an L4Route; backend echoes the parsed client IP |
 | 10 | [`external-resource-pool`](internal/scenarios/extrespool) | 🟢 | bgp-peer-frr | how-to #10 — BNK `Pool` CR as an HTTPRoute backendRef (off-cluster member by IP) |
-| — | [`tcp-l4-loadbalance`](internal/scenarios/tcpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=TCP, weighted backends — 20/20 curls, 70/30 split observed across A/B |
-| — | [`udp-l4-loadbalance`](internal/scenarios/udpl4lb) | 🟢 | bgp-peer-frr | `L4Route` proto=UDP — socat echo backend reached through the VIP |
+| — | [`tcp-l4-loadbalance`](kit/scenarios/tcp-l4-loadbalance) | 🟢 | bgp-peer-frr | `L4Route` proto=TCP, weighted backends — 20/20 curls, 70/30 split observed across A/B |
+| — | [`udp-l4-loadbalance`](kit/scenarios/udp-l4-loadbalance) | 🟢 | bgp-peer-frr | `L4Route` proto=UDP — socat echo backend reached through the VIP |
 | — | [`grpc-loadbalance`](internal/scenarios/grpcroute) | 🟢 | bgp-peer-frr | `GRPCRoute` control plane + an `L4Route` (TCP) data plane — `grpcurl` list/unary through the L4 Gateway |
-| — | [`fic-dynamic-ip`](internal/scenarios/ficdynamicip) | 🟢 | bgp-peer-frr | address-less Gateway + `GatewaySettings` → Infra IPAM pool; VIP allocated, advertised, curled |
+| — | [`fic-dynamic-ip`](kit/scenarios/fic-dynamic-ip) | 🟢 | bgp-peer-frr | address-less Gateway + `GatewaySettings` → Infra IPAM pool; VIP allocated, advertised, curled |
 | — | [`routing-template-multitenant`](internal/scenarios/routingtemplate) | 🟡 | — | F5 design *"Expose VLAN/Self-IPs in Routing template"* — two tagged tenant VLANs on one interface; `.vlans.<name>.{selfIPv4,selfIPv6,prefixLenV4,prefixLenV6,tag,vrf}` renders per TMM with each device's own self-IP (needs `selfip-dag`, i.e. the legacy SPK model) |
 | — | [`routing-config-tenant`](internal/scenarios/routingconfigtenant) | 🟡 | routing-template-multitenant | per-tenant `RoutingConfig` — `.tenant.spec.vrf` + a non-zero per-tenant `routeDomainID` in tenant scope; renders `ip vrf red` where the design doc's global-template example renders `<no value>` |
 

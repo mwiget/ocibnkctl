@@ -46,9 +46,8 @@ const (
 // BGP-anycast multi-TMM data-plane constants (tmm_dataplane_mode:
 // anycast-bgp). Every per-node TMM runs with mapres FALSE and peers
 // with an FRR router over a bridge-CNI Multus NAD on net1, advertising
-// its VIP /32 over BGP. Mirrors the bgp-peer-frr scenario's NAD so the
-// deploy path and the scenario share one L2 shape — name/bridge/subnet
-// match `internal/scenarios/bgppeer/manifests/02-nad.yaml`.
+// its VIP /32 over BGP. The bgp-peer-frr scenario (kit/scenarios/
+// bgp-peer-frr) checks those sessions from the edge router.
 //
 // On a single host the per-node bnk-bgp bridges are isolated L2
 // segments, so real ECMP fan-out across nodes cannot be demonstrated;

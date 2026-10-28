@@ -220,6 +220,26 @@ injection).
 **Exit:** one run on a cluster `ocibnkctl` didn't build, with
 `EDGE_DRIVER=none` and then `pod`.
 
+In batches, one PR each:
+
+| Batch | Scenarios | Status |
+|---|---|---|
+| A | `bgp-peer-frr`, `tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`, `proxy-protocol-l4` | ported |
+| B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | |
+| C | `ai-inference-epp`, `llm-gateway`, `routing-template-multitenant`, `routing-config-tenant` | |
+| D | `pod` edge driver; third-party cluster run (the exit check) | |
+
+Batch A notes: `bgp-peer-frr` was moved forward rather than left for last —
+every data-plane scenario depends on it, and once it is a script the rest of
+the family needs no Go at all. The repeated "wait for the VIP in the peer's
+BGP table, retriggering OcNOS redistribute" loop became
+`edge_check_vip`, the N-curl loop `edge_curls`, and N-of-N checks
+`kit_count`. OcNOS's `passwd.conf` line joined the redistribute config in
+`kit/lib/` (read by `deploy cne` and `bnk.sh`). Preflight gained
+`gateway-settings` (fic-dynamic-ip). Each Gateway VIP is now `${VIP}`.
+`TestShellScenariosHealthy` runs every script scenario's real scripts
+against one stub cluster, under both edge drivers.
+
 ### Phase 4 — platform install as scripts
 
 `kit/platform/<phase>/install.sh` for prereqs → flo → (shrink) → cne,

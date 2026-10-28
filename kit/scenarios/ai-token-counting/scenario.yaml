@@ -1,0 +1,43 @@
+name: ai-token-counting
+title: "Token Counting and Enforcement (how-to #6) — k8s.f5.com/ai-token-counting Gateway annotation"
+rating: green
+dependencies: [bgp-peer-frr]
+description: |
+  Demonstrates BNK's AI token-counting feature. The mechanism is
+  a single annotation on the Gateway's spec.infrastructure
+  section:
+
+      k8s.f5.com/ai-token-counting: |
+        token_counting=enabled,
+        user_id_source=api_key,
+        user_id_header=Authorization,
+        fallback_to_ip=true,
+        hsl_pool=hsl-logging-pool
+
+  No dedicated BNK CR is introduced. TMM reads the annotation,
+  parses incoming OpenAI-style /v1/chat/completions responses,
+  counts the per-user tokens, and (if 'enabled') enforces quotas
+  per user.
+
+  Rated AMBER because the F5 doc itself doesn't give us a
+  runnable backend or verification command. The scenario stands
+  up a stub nginx that returns a fixed OpenAI-style JSON with
+  usage.prompt_tokens=42 / usage.completion_tokens=11, applies
+  the Gateway + HTTPRoute, and asserts:
+
+    - Gateway Programmed=True with the annotation present
+    - HTTPRoute Accepted=True
+    - the annotation actually carried into the live Gateway
+      object after FLO reconciles
+
+  Token counting itself is a TMM data-plane feature that needs
+  varying token counts to validate (the stub always returns the
+  same fixed counts, and we have no HSL receiver to inspect
+  emitted log records). Lifting this to green would require:
+
+    - a real LLM backend that emits varied token counts, OR
+    - a stub backend that varies usage based on prompt size
+    - an HSL log receiver to capture the per-user counters
+    - F5-side tooling to introspect TMM's user_id buckets
+
+  Cleanup deletes the scn-tokencount namespace.

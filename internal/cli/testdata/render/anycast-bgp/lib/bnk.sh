@@ -11,6 +11,21 @@ bnk_tmm_pods() {
 		-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
 }
 
+# bnk_ocnos_passwd — write OcNOS's passwd.conf (lib/ocnos-passwd.conf, the
+# same line `ocibnkctl deploy cne` writes) into every TMM's routing
+# container; imish needs it before it accepts commands. Retries for ~30s to
+# ride out TMM rollouts.
+bnk_ocnos_passwd() {
+	kit_retry 30 5 _bnk_passwd_all
+}
+_bnk_passwd_all() {
+	_bp_pods=$(bnk_tmm_pods) && [ -n "$_bp_pods" ] || return 1
+	for _bp_pod in $_bp_pods; do
+		kubectl -n "$BNK_NAMESPACE" exec -i "$_bp_pod" -c f5-tmm-routing -- \
+			sh -c 'cat > /config/zebos/rd0/passwd.conf' <"$KIT_LIB/ocnos-passwd.conf" >&2 || return 1
+	done
+}
+
 # bnk_ocnos_redistribute — re-issue the BGP redistribute statements on every
 # TMM (lib/ocnos-redistribute.cfg, the same file `ocibnkctl deploy cne`
 # sends). OcNOS only advertises a redistributed route (e.g. a new Gateway
