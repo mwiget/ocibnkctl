@@ -202,6 +202,7 @@ operator in the 2.4.1 release manifest.
 | BNK 2.4.1 (release manifest `2.4.1`, FLO `v2.30.0-0.11.4`) | the AI gateway, its console image `f5-aigateway-ui:v0.11.0` and the `inference.k8s.f5.com` CRDs ship in 2.4.1 | `kubectl -n f5-operators get deploy -o wide` |
 | DSSM deployed, in the default Sentinel mode | the gateway keeps tenants, keys and budgets in DSSM. FLO **skips the gateway silently** (one log warning) when DSSM is disabled or `spec.sessionStore.clustered` is set | `kubectl get pods \| grep f5-dssm-sentinel` |
 | `telemetry.loggingSubsystem` on (the default) | only if you want metering: the request records reach ClickHouse through the platform fluentd | the CNEInstance does not set `loggingSubsystem.enabled: false` |
+| License **Active** | f5ingress programs nothing without it. A **test** JWT (`jku` `product-tst…`) needs TEEM's current test JWKS: apply [`examples/license-tst-jwt.yaml`](../examples/license-tst-jwt.yaml) (ConfigMap `cwc-jwks-cm` + License with `jwksConfigMapRef`). A production JWT needs neither | `kubectl -n f5-cne-core get license` |
 
 **2. Turn the gateway on in the CNEInstance.** One block in `spec`:
 

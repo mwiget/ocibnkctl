@@ -320,3 +320,7 @@ CLAUDE.md stays short on purpose; the deep write-ups are checked in:
   with signatures, the repro rig, and the open questions for F5 engineering.
 - `examples/two-node.yaml`, `examples/reports/` — a reference poc.yaml and a
   real e2e report tree.
+- `examples/license-tst-jwt.yaml` — the License + JWKS ConfigMap for a test
+  JWT as a plain manifest, for FLO clusters not deployed by ocibnkctl. A test
+  (`internal/deploy/example_license_test.go`) keeps it equal to what
+  `deploy cne` renders.
