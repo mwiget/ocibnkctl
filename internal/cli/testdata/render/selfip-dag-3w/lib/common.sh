@@ -124,13 +124,28 @@ kit_done() {
 	exit 1
 }
 
+# kit_b64d — base64-decode stdin. Hosts disagree on the flag: GNU, busybox
+# (Alpine, the BNK Forge runner image) and macOS 13+ take -d; busybox
+# rejects --decode, which older macOS needs.
+kit_b64d() {
+	if [ -z "${_KIT_B64D:-}" ]; then
+		if printf 'aA==' | base64 -d >/dev/null 2>&1; then _KIT_B64D=-d; else _KIT_B64D=--decode; fi
+	fi
+	base64 "$_KIT_B64D"
+}
+
 # kit_fetch URL SHA256 FILE — download URL to FILE unless FILE already has
-# that checksum; aborts if the download does not match.
+# that checksum; aborts if the download does not match. curl, or wget where
+# there is no curl (busybox systems).
 kit_fetch() {
 	_kf_sum() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 	[ -f "$3" ] && [ "$(_kf_sum "$3")" = "$2" ] && return 0
 	mkdir -p "$(dirname "$3")" || kit_die "mkdir for $3"
-	curl -fsSL -o "$3.part" "$1" || kit_die "download $1"
+	if command -v curl >/dev/null; then
+		curl -fsSL -o "$3.part" "$1"
+	else
+		wget -q -O "$3.part" "$1"
+	fi || { rm -f "$3.part"; kit_die "download $1"; }
 	[ "$(_kf_sum "$3.part")" = "$2" ] || { rm -f "$3.part"; kit_die "checksum mismatch for $1"; }
 	mv "$3.part" "$3"
 }
