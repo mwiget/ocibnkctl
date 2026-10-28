@@ -31,6 +31,22 @@ const (
 	DynamicVIPRangeEnd   = "203.0.113.119"
 )
 
+// GatewayClassName is the cluster-scoped GatewayClass every BNK Gateway
+// references; `deploy cne` applies it as platform infrastructure.
+const GatewayClassName = "bnk-gatewayclass"
+
+// RenderGatewayClass returns the GatewayClass bound to the F5 CNE controller.
+func RenderGatewayClass() string {
+	return `apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ` + GatewayClassName + `
+spec:
+  controllerName: f5.com/default-f5-cne-controller
+  description: "F5 BIG-IP Kubernetes Gateway managed by FLO"
+`
+}
+
 // RenderInfra returns the platform Infra CR for the CNEInstance namespace.
 func RenderInfra(namespace string) string {
 	return fmt.Sprintf(`apiVersion: gateway.k8s.f5.com/v1alpha1

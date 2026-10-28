@@ -181,6 +181,19 @@ smoke: test build
 	    || { echo "probe missing-key error message missing"; exit 1; }; \
 	  ./bin/ocibnkctl manifest probe --help | grep -q "no cluster required" \
 	    || { echo "probe help text missing"; exit 1; }; \
+	echo "[11] render writes the plain-file bundle offline, without secrets"; \
+	  ./bin/ocibnkctl render --poc $(SMOKE_DIR) >/tmp/smoke-render.log 2>&1; \
+	  for f in README.md 10-flo/02-flo-values.yaml 20-cne/03-cne-instance.yaml \
+	           20-cne/04-license.yaml.tmpl scenarios/http-routing-e2e/06-httproute.yaml; do \
+	    test -s $(SMOKE_DIR)/artifacts/render/$$f || { echo "render MISSING $$f"; exit 1; }; \
+	  done; \
+	  if grep -rq "dockerconfigjson:" $(SMOKE_DIR)/artifacts/render; then \
+	    echo "render leaked a pull secret"; exit 1; \
+	  fi; \
+	  if ./bin/ocibnkctl render --poc $(SMOKE_DIR) >/dev/null 2>&1; then \
+	    echo "render should refuse to overwrite without --force"; exit 1; \
+	  fi; \
+	  ./bin/ocibnkctl render --poc $(SMOKE_DIR) --force >/dev/null; \
 	echo "PASS"
 
 clean:

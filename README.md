@@ -547,6 +547,25 @@ footprint". On a host at/above the 10-core floor, skip it entirely.
 
 Every phase is idempotent and gated by `--yolo` plus a typo-guard.
 
+## Plain manifests — `ocibnkctl render`
+
+To apply BNK by hand, study what each phase does, or run the scenarios on a
+cluster `ocibnkctl` did not build, render everything to plain files:
+
+```bash
+ocibnkctl render --poc . --out ./bnk-manifests
+```
+
+No cluster, network or FAR key needed. The output is laid out by phase
+(`00-prereqs/`, `10-flo/`, `15-shrink/`, `20-cne/`, `scenarios/<name>/`), with
+a `README.md` giving the apply order and the exact `helm`/`kubectl` commands,
+including the waits and fixes the deploy phases apply. Values come from
+`poc.yaml` (dataplane mode, worker count, edge octet). Secrets are left out:
+the FAR pull secret and License CR become the commands that create them,
+unless you pass `--include-secrets` (files written 0600). This is Phase 0 of
+the move towards a plain-file kit. See
+[docs/agentic-kit-plan.md](docs/agentic-kit-plan.md).
+
 ## Agentic workflow
 
 You can drive a PoC conversationally with an AI coding agent instead of

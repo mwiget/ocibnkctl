@@ -89,6 +89,11 @@ ocibnkctl deploy flo     --yolo --confirm-deploy <poc-name>
 ocibnkctl deploy cne     --yolo --confirm-deploy <poc-name>
 ```
 
+To inspect or hand-apply what any phase does, without touching a cluster,
+run `ocibnkctl render` (output in `artifacts/render/`, with an ordered
+`README.md`; secrets are left out unless you pass `--include-secrets`). Prefer it when the
+operator asks for "the manifest" or wants to apply steps on another cluster.
+
 ### Safety gates (do not bypass without the operator's say-so)
 
 Every mutating phase requires **two** flags:

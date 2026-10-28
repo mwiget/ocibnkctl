@@ -273,6 +273,15 @@ const multusShimInstallPatch = `[{"op":"replace","path":"/spec/template/spec/ini
 
 // multusResourcesPatch is the JSON patch for the Multus container: the 500Mi
 // memory limit plus the given CPU/memory requests.
+// MultusPatches returns the JSON patches EnsureMultus applies to the
+// upstream kube-multus-ds after install, in order: the rename-based shim
+// install (breaks the "Text file busy" restart deadlock) and the resource
+// fix (500Mi limit; requests as given). Exposed for `ocibnkctl render`, so
+// the hand-applied path gets the same fixes.
+func MultusPatches(cpuRequest, memoryRequest string) []string {
+	return []string{multusShimInstallPatch, multusResourcesPatch(cpuRequest, memoryRequest)}
+}
+
 func multusResourcesPatch(cpuRequest, memoryRequest string) string {
 	return fmt.Sprintf(`[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"500Mi"},`+
 		`{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":%q},`+
