@@ -137,9 +137,9 @@ peer's BGP table, `edge_curls`, `edge_bgp_wait` for session counts) and
 `lib/bnk.sh` (TMM pods and logs, OcNOS passwd.conf and redistribute, the
 logging-subsystem test).
 
-Every scenario is a script scenario except `ai-inference-epp`,
-`llm-gateway`, `routing-template-multitenant` and `routing-config-tenant`,
-which still have their checks in Go
+Every scenario is a script scenario except the two amber ones,
+`routing-template-multitenant` and `routing-config-tenant`, which still
+have their checks in Go
 (`internal/scenarios/<pkg>/`); what each checks is in `ocibnkctl scenario
 list` and in the per-scenario README that `ocibnkctl render` writes. Two files are templates, filled from
 live cluster state at apply time: `ai-semantic-cache/manifests/04-gateway.yaml.tmpl`

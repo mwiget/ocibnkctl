@@ -1,43 +1,49 @@
-# llm-gateway
+# `llm-gateway` — BNK 2.4.1 AI gateway: virtual keys, model scope, metering
 
-LLM gateway (BNK 2.4.1 AI gateway) — virtual keys, model scope, metering, console
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
+Needs BNK 2.4.1+ with the AI gateway enabled in the CNEInstance
+(`spec.aiGateway.enabled`; with ocibnkctl, `bnk.ai_gateway.enabled` in
+poc.yaml or `ocibnkctl init <name> --profile llm-gateway`) and the
+anycast-bgp data plane. The full walk-through is
+[docs/llm-gateway-howto.md](../../../docs/llm-gateway-howto.md).
 
-## What it does
+`apply.sh` deploys a mock LLM (llm-d-inference-sim: OpenAI-compatible, no GPU,
+no API key), then runs [`manifests/llm-setup.sh`](manifests/llm-setup.sh) as a
+Job against the AI gateway API: tenant `demo`, a provider pointing at the
+mock, model `gpt-4o-mini`, principal `demo-app`, route `demo-llm` on
+203.0.113.140:80 (Gateway + HTTPRoute + AppPolicy + AIGatewayProfile), and a
+virtual key scoped to the model. The key is saved to `KEY_FILE` (under
+ocibnkctl: `<PoC>/artifacts/llm-gateway/virtual-key`, where the profile's
+`ask.sh` reads it); the platform admin password and provider key only pass
+through 0600 files and pipes, never a command line or the output.
 
-The BNK 2.4.1 AI/LLM gateway end to end. Requires bnk.ai_gateway.enabled
-(FLO installs the console, the AI gateway API and, with ai_metrics,
-ClickHouse) and the anycast-bgp data plane (clients reach the Gateway VIP
-from the external edge over BGP).
+`verify.sh`, from a client outside the cluster:
 
-Apply: deploys mock-llm (llm-d-inference-sim, OpenAI-compatible, no GPU, no
-API key) in llm-demo, then runs llm-setup.sh as a Job against the AI gateway
-API: tenant "demo", provider key → mock, model gpt-4o-mini, principal
-demo-app, route demo-llm on 203.0.113.140:80 (Gateway + HTTPRoute + AppPolicy
-+ AIGatewayProfile), and a virtual key scoped to gpt-4o-mini.
+- TMM has the route's virtual server — restarting `f5-cne-controller` once
+  if the f5ingress 2.4.1 "AI profile ... is not prepared yet" race left it out
+- the edge learned the VIP over BGP
+- the virtual key gets a 200 with a usage block; a wrong key and no key get
+  401; a model outside the key's scope gets 403
+- with AI metrics on, ClickHouse holds records for the 200, 401 and 403
 
-Verify, from the edge FRR's netns (a client outside the cluster):
-  - the virtual key gets a 200 chat completion with a usage block
-  - a wrong key gets 401, no key gets 401
-  - a model outside the key's scope gets 403
-  - with ai_metrics, ClickHouse holds one record per request
-  - the route's AIGatewayProfile reports Programmed
+## How to run
 
-Works around an f5ingress 2.4.1 race: a new route's Gateway apply can fail
-with "AI profile ... is not prepared yet" and is not retried, so TMM never
-gets the virtual server. Verify restarts f5-cne-controller once when it sees
-that state.
+```bash
+ocibnkctl scenario run llm-gateway --poc <pocdir>
+```
 
-Cleanup deletes llm-demo. The tenant and its objects stay (the API owns
-them); delete them in the console or with the API.
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
 
-## Manifests
+```sh
+sh kit/scenarios/llm-gateway/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/llm-gateway/verify.sh    # control plane only; request checks skipped
+sh kit/scenarios/llm-gateway/cleanup.sh
+```
 
-- `manifests/01-mock-llm.yaml`
-- `manifests/02-setup-job.yaml`
-- `manifests/llm-setup.sh`
+Variables and their defaults are in [`scenario.env`](scenario.env).
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Cleanup deletes the `llm-demo` namespace. The tenant and its objects stay —
+the AI gateway API owns them; delete them in the console or with the API.

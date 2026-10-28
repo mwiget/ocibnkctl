@@ -143,6 +143,7 @@ adapt them for another cluster.
 | Scenario | Rating | Form | Depends on | Title |
 |---|---|---|---|---|
 | [bgp-peer-frr](scenarios/bgp-peer-frr/README.md) | green | script | — | BGP peering: TMM OcNOS ⇄ external FRR (ToR) |
+| [ai-inference-epp](scenarios/ai-inference-epp/README.md) | green | script | bgp-peer-frr | AI Inference Routing with the F5 Endpoint Picker — F5EPP + GAIE InferencePool, mock vLLM |
 | [ai-semantic-cache](scenarios/ai-semantic-cache/README.md) | green | script | bgp-peer-frr | Semantic AI Model Caching (how-to #7) — k8s.f5.com/ai semantic_cache + sse-enabled |
 | [ai-token-counting](scenarios/ai-token-counting/README.md) | green | script | bgp-peer-frr | Token Counting and Enforcement (how-to #6) — k8s.f5.com/ai-token-counting Gateway annotation |
 | [ai-token-counting-dssm](scenarios/ai-token-counting-dssm/README.md) | green | script | bgp-peer-frr | AI Token Counting via custom iRule + DSSM/Redis — 4 LBs, streaming + non-streaming, persisted for tmm-stat-exporter |
@@ -154,11 +155,10 @@ adapt them for another cluster.
 | [fic-dynamic-ip](scenarios/fic-dynamic-ip/README.md) | green | script | bgp-peer-frr | Dynamic IP address allocation (FIC for Gateway API) — address-less Gateway + GatewaySettings/Infra IPAM |
 | [grpc-loadbalance](scenarios/grpc-loadbalance/README.md) | green | script | bgp-peer-frr | gRPC load balancing — L4Route (TCP) data plane; GRPCRoute control plane (kong/grpcbin) |
 | [http-routing-e2e](scenarios/http-routing-e2e/README.md) | green | script | bgp-peer-frr | HTTP traffic steering with Gateway API HTTPRoute (how-to #8) — full data plane via NAD |
+| [llm-gateway](scenarios/llm-gateway/README.md) | green | script | bgp-peer-frr | LLM gateway (BNK 2.4.1 AI gateway) — virtual keys, model scope, metering, console |
 | [proxy-protocol-l4](scenarios/proxy-protocol-l4/README.md) | green | script | bgp-peer-frr | Proxy Protocol iRule on an L4 route (how-to #9) — F5BigCneIrule + L4Route + NetPolicy |
 | [tcp-l4-loadbalance](scenarios/tcp-l4-loadbalance/README.md) | green | script | bgp-peer-frr | TCP load balancer via L4Route — weighted backends (70/30) |
 | [udp-l4-loadbalance](scenarios/udp-l4-loadbalance/README.md) | green | script | bgp-peer-frr | UDP load balancer via L4Route — alpine/socat echo backend |
-| [ai-inference-epp](scenarios/ai-inference-epp/README.md) | green | manifests | bgp-peer-frr | AI Inference Routing with the F5 Endpoint Picker — F5EPP + GAIE InferencePool, mock vLLM |
-| [llm-gateway](scenarios/llm-gateway/README.md) | green | manifests | bgp-peer-frr | LLM gateway (BNK 2.4.1 AI gateway) — virtual keys, model scope, metering, console |
 | [routing-template-multitenant](scenarios/routing-template-multitenant/README.md) | amber | manifests | — | Expose VLAN/Self-IPs in a RoutingTemplate (.vlans) — two tagged tenants on one interface |
 | [routing-config-tenant](scenarios/routing-config-tenant/README.md) | amber | manifests | routing-template-multitenant | Per-tenant routing (RoutingConfig) — .tenant + per-tenant route domain in the template context |
 

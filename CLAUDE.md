@@ -219,8 +219,8 @@ that has a `verify.sh` — no Go, no import. `verify.sh` prints one JSON
 FRR container, set by `scenario run`), `external` (the operator's own client
 and router) or `none` (data-plane checks reported *skipped*). Preflight
 (`kit_require`) reads the cluster, not poc.yaml. Every scenario is a
-script scenario except `ai-inference-epp`, `llm-gateway`,
-`routing-template-multitenant` and `routing-config-tenant` (still Go). `shell_test.go` runs every script
+script scenario except the two amber `routing-template-multitenant` and
+`routing-config-tenant` (still Go). `shell_test.go` runs every script
 scenario's real scripts against a stub kubectl/docker
 (`TestShellScenariosHealthy`, both edge drivers).
 

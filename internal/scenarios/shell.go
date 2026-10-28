@@ -199,6 +199,10 @@ func shellEnv(ctx *Context) []string {
 	if os.Getenv("KIT_CACHE") == "" && ctx.PoCDir != "" {
 		env = append(env, "KIT_CACHE="+filepath.Join(ctx.PoCDir, "artifacts", "bin"))
 	}
+	if os.Getenv("KIT_STATE") == "" && ctx.PoCDir != "" {
+		// e.g. <PoC>/artifacts/llm-gateway/virtual-key, where ask.sh reads it
+		env = append(env, "KIT_STATE="+filepath.Join(ctx.PoCDir, "artifacts"))
+	}
 	if os.Getenv("EDGE_DRIVER") == "" && ctx.PoC != nil {
 		env = append(env,
 			"EDGE_DRIVER=ocibnkctl",

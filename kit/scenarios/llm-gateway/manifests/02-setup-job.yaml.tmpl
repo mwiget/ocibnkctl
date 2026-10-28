@@ -20,10 +20,10 @@ spec:
         env:
         - name: ADMIN_PASSWORD
           valueFrom: {secretKeyRef: {name: llm-admin, key: password}}
-        - {name: TENANT, value: "{{.Tenant}}"}
-        - {name: VIP, value: "{{.VIP}}"}
-        - {name: MODEL, value: "{{.Model}}"}
-        - {name: PROVIDER_URL, value: "{{.ProviderURL}}"}
+        - {name: TENANT, value: "${TENANT}"}
+        - {name: VIP, value: "${VIP}"}
+        - {name: MODEL, value: "${MODEL}"}
+        - {name: PROVIDER_URL, value: "${PROVIDER_URL}"}
         - name: PROVIDER_KEY
           valueFrom: {secretKeyRef: {name: llm-provider, key: api-key}}
         volumeMounts:
