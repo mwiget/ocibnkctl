@@ -49,6 +49,7 @@ Cleanup deletes the scn-semcache namespace.
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.
 
-`04-gateway.yaml.tmpl` holds `{{.Field}}` placeholders that `ocibnkctl` fills from live cluster
-state at apply time (e.g. a Service ClusterIP); substitute them by hand. `kubectl apply -f`
-on the directory skips `.tmpl` files.
+`04-gateway.yaml.tmpl` holds `${NAME}` placeholders that `ocibnkctl` fills from live cluster
+state at apply time (e.g. a Service ClusterIP). Fill them with `NAME=<value> sh
+../../lib/render.sh 04-gateway.yaml.tmpl | kubectl apply -f -`. `kubectl apply -f` on the directory
+skips `.tmpl` files.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -113,34 +114,19 @@ func RenderBGPNAD(namespace string) string {
 // renderBridgeNAD renders a bridge-CNI NetworkAttachmentDefinition that
 // gives each attached pod a net1 on a per-node software bridge with
 // host-local IPAM. Both RenderDAGNAD and RenderBGPNAD call it.
+func bridgeNADVars(name, namespace, bridge, subnet, rangeStart, rangeEnd string) map[string]string {
+	return map[string]string{
+		"NAD_NAME":    name,
+		"NAMESPACE":   namespace,
+		"BRIDGE":      bridge,
+		"SUBNET":      subnet,
+		"RANGE_START": rangeStart,
+		"RANGE_END":   rangeEnd,
+	}
+}
+
 func renderBridgeNAD(name, namespace, bridge, subnet, rangeStart, rangeEnd string) string {
-	return fmt.Sprintf(`apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
-metadata:
-  name: %s
-  namespace: %s
-  annotations:
-    # FLO's TMM-template propagation expects a resourceName on the NAD
-    # (the SR-IOV convention). Bridge CNI has no hardware behind it, so
-    # this is a documentary stand-in that silences a reconcile warning.
-    k8s.v1.cni.cncf.io/resourceName: bridge.cni.io/%s
-spec:
-  config: |
-    {
-      "cniVersion": "0.3.1",
-      "type": "bridge",
-      "bridge": "%s",
-      "ipMasq": false,
-      "isGateway": false,
-      "hairpinMode": true,
-      "ipam": {
-        "type": "host-local",
-        "subnet": "%s",
-        "rangeStart": "%s",
-        "rangeEnd": "%s"
-      }
-    }
-`, name, namespace, name, bridge, subnet, rangeStart, rangeEnd)
+	return mustRender("platform/cne/nad-bridge-host-local.yaml", bridgeNADVars(name, namespace, bridge, subnet, rangeStart, rangeEnd))
 }
 
 // RenderAnycastZebosConfigMap renders the cluster-wide OcNOS routing
@@ -164,60 +150,28 @@ spec:
 // (advertised only if the route is in the RIB); when empty the path relies
 // on `redistribute kernel` to advertise the Gateway VIPs FLO installs.
 func RenderAnycastZebosConfigMap(namespace, peerIP, vip string) string {
-	var networkStmt string
-	if vip != "" {
-		networkStmt = fmt.Sprintf("      network %s/32\n", vip)
-	}
-	return fmt.Sprintf(`apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s
-  namespace: %s
-data:
-  ZebOS.conf: |
-    route-map RMALL permit 10
-    !
-    router bgp %d
-      bgp router-id %%%%POD_IP%%%%
-      bgp log-neighbor-changes
-      bgp graceful-restart restart-time 120
-      no bgp default ipv4-unicast
-      redistribute kernel route-map RMALL
-      redistribute connected route-map RMALL
-      redistribute static route-map RMALL
-%s      !
-      neighbor %s remote-as %d
-      neighbor %s update-source net1
-      !
-      address-family ipv4
-        neighbor %s activate
-        neighbor %s soft-reconfiguration inbound
-      exit-address-family
-    !
-`, BGPRoutingTemplateCM, namespace, BGPTMMAS, networkStmt,
-		peerIP, BGPPeerAS, peerIP, peerIP, peerIP)
+	return mustRender("platform/cne/ocnos-template.yaml", map[string]string{
+		"CONFIGMAP_NAME": BGPRoutingTemplateCM,
+		"NAMESPACE":      namespace,
+		"LOCAL_AS":       strconv.Itoa(BGPTMMAS),
+		"PEER_IP":        peerIP,
+		"PEER_AS":        strconv.Itoa(BGPPeerAS),
+		"VIP":            vip,
+	})
 }
 
 // RenderTMMVlan renders the F5SPKVlan that turns the mapres-grabbed net1
 // (interface "1.1") into a TMM VLAN with one self-IP per TMM node and a
 // pod_hash stateless DAG. selfIPs must have one entry per TMM replica.
 func RenderTMMVlan(namespace string, selfIPs []string) string {
-	return fmt.Sprintf(`apiVersion: k8s.f5net.com/v1
-kind: F5SPKVlan
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  name: %s
-  category: external
-  interfaces: ["%s"]
-  selfip_v4s: [%s]
-  prefixlen_v4: %d
-  pod_hash: %s
-  cmp_hash: %s
-  mtu: 1500
-`, DAGVlanName, namespace, DAGVlanName, DAGInterface,
-		strings.Join(selfIPs, ","), DAGSelfV4Len, DAGPodHash, DAGPodHash)
+	return mustRender("platform/cne/f5spkvlan.yaml", map[string]string{
+		"VLAN_NAME":  DAGVlanName,
+		"NAMESPACE":  namespace,
+		"INTERFACE":  DAGInterface,
+		"SELF_IPS":   strings.Join(selfIPs, ","),
+		"PREFIX_LEN": strconv.Itoa(DAGSelfV4Len),
+		"POD_HASH":   DAGPodHash,
+	})
 }
 
 // EnsureMultus installs the Multus thick plugin (idempotent) and bumps

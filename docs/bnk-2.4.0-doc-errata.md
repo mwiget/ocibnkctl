@@ -462,7 +462,7 @@ Ground truth is the 2.4 CRD reference pages and the CRDs on a live 2.4.0 cluster
   `egressConfigs`) are all at column 0. It still parses as YAML, but
   `metadata` and `spec` come out null, so `kubectl apply` rejects the object.
 - Working reference: ocibnkctl's
-  `internal/scenarios/ficdynamicip/manifests/02-gatewaysettings.yaml`
+  `kit/scenarios/fic-dynamic-ip/manifests/02-gatewaysettings.yaml`
   (green on 2.4.0).
 
 ### 16. Infra how-to: step numbering
@@ -519,7 +519,7 @@ Ground truth is the 2.4 CRD reference pages and the CRDs on a live 2.4.0 cluster
   the 2.4.0 CRD requires. This is the only real change from 2.3, where it was
   a BNKNetPolicy.
 - Working reference: ocibnkctl's `proxy-protocol-l4` scenario
-  (`internal/scenarios/proxyprotocol/manifests/05-irule.yaml`,
+  (`kit/scenarios/proxy-protocol-l4/manifests/05-irule.yaml`,
   `06-l4route.yaml`, `07-bnknetpolicy.yaml`). It uses its own PROXY v1 iRule
   (`TCP::respond "PROXY TCP4 …"` on `SERVER_CONNECTED`),
   `gateway.k8s.f5.com/v1`, and full `group`/`kind` refs. Green on 2.4.0.

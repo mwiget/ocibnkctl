@@ -18,9 +18,9 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/bnkforge"
 	"github.com/mwiget/ocibnkctl/internal/cluster"
 	"github.com/mwiget/ocibnkctl/internal/deploy"
-	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/version"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
 func newClusterCmd() *cobra.Command {
@@ -224,9 +224,9 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 		"IP_AUTODETECTION_METHOD=kubernetes-internal-ip"); err != nil {
 		return fmt.Errorf("pin calico node address to the node InternalIP: %w", err)
 	}
-	nadCRD, err := embedded.Templates.ReadFile("templates/nad-crd.yaml")
+	nadCRD, err := kit.FS.ReadFile("platform/cluster/nad-crd.yaml")
 	if err != nil {
-		return fmt.Errorf("read embedded nad-crd.yaml: %w", err)
+		return fmt.Errorf("read kit nad-crd.yaml: %w", err)
 	}
 	if err := r.Apply(ctx, string(nadCRD)); err != nil {
 		return fmt.Errorf("apply NetworkAttachmentDefinition CRD: %w", err)
@@ -234,9 +234,9 @@ func runClusterUp(ctx context.Context, out io.Writer, f *clusterUpFlags) error {
 	// BNK PVCs request storageClassName: standard (kind's default SC
 	// name). k3s names its default local-path, so add a `standard` SC
 	// backed by the same provisioner or every BNK PVC stays Pending.
-	standardSC, err := embedded.Templates.ReadFile("templates/standard-sc.yaml")
+	standardSC, err := kit.FS.ReadFile("platform/cluster/standard-sc.yaml")
 	if err != nil {
-		return fmt.Errorf("read embedded standard-sc.yaml: %w", err)
+		return fmt.Errorf("read kit standard-sc.yaml: %w", err)
 	}
 	if err := r.Apply(ctx, string(standardSC)); err != nil {
 		return fmt.Errorf("apply standard StorageClass: %w", err)

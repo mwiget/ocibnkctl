@@ -1,14 +1,12 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
-	"github.com/mwiget/ocibnkctl/internal/embedded"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
 // LicenseCRName is the canonical name of the cluster-wide license CR
@@ -51,19 +49,14 @@ func RenderLicenseCR(in LicenseInputs) (string, error) {
 	if strings.ContainsAny(in.JWT, "\r\n") {
 		return "", fmt.Errorf("JWT contains newlines (got %d bytes); paste as a single line", len(in.JWT))
 	}
-	raw, err := embedded.Templates.ReadFile("templates/license-cr.yaml.tmpl")
-	if err != nil {
-		return "", err
-	}
-	t, err := template.New("license-cr").Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, in); err != nil {
-		return "", err
-	}
-	return b.String(), nil
+	return kit.Render("platform/cne/license.yaml", map[string]string{
+		"NAME":           in.Name,
+		"NAMESPACE":      in.Namespace,
+		"OPERATION_MODE": in.OperationMode,
+		"JWT":            in.JWT,
+		"JWKS_CONFIGMAP": in.JWKSConfigMap,
+		"JWKS_KEY":       in.JWKSKey,
+	})
 }
 
 // JWKSConfigMapName / JWKSConfigMapKey name the ConfigMap that carries the
@@ -81,12 +74,12 @@ const (
 // a License CR that points spec.jwksConfigMapRef at this ConfigMap makes CWC
 // use them. CWC reads the ConfigMap from its own POD_NAMESPACE, so namespace
 // must be the CWC namespace (SharedComponentNamespace). The JWKS is embedded
-// as templates/jwks-tst.json — refresh that file when TEEM rotates keys.
+// as kit/platform/cne/jwks-tst.json — refresh that file when TEEM rotates keys.
 func RenderJWKSConfigMap(namespace string) (string, error) {
 	if namespace == "" {
 		namespace = SharedComponentNamespace
 	}
-	raw, err := embedded.Templates.ReadFile("templates/jwks-tst.json")
+	raw, err := kit.FS.ReadFile("platform/cne/jwks-tst.json")
 	if err != nil {
 		return "", err
 	}

@@ -36,19 +36,16 @@
 package aisemcache
 
 import (
-	"bytes"
-	"embed"
 	"fmt"
 	"io/fs"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*.yaml manifests/*.yaml.tmpl
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "ai-semantic-cache"
@@ -153,9 +150,7 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 
 	// 3. Render Gateway template with cacheIP substituted, persist
 	//    for audit, apply.
-	gwBody, err := renderTemplate(manifestFS,
-		"manifests/04-gateway.yaml.tmpl",
-		struct{ CacheIP string }{CacheIP: cacheIP})
+	gwBody, err := renderTemplate("manifests/04-gateway.yaml.tmpl", map[string]string{"CACHE_IP": cacheIP})
 	if err != nil {
 		return err
 	}
@@ -350,20 +345,12 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	return nil
 }
 
-func renderTemplate(fsys embed.FS, path string, data any) (string, error) {
-	raw, err := fsys.ReadFile(path)
+func renderTemplate(path string, vars map[string]string) (string, error) {
+	raw, err := manifestFS.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	t, err := template.New(path).Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, data); err != nil {
-		return "", err
-	}
-	return b.String(), nil
+	return kit.RenderString(string(raw), vars)
 }
 
 func finalize(res scenarios.Result) scenarios.Result {

@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${CONFIGMAP_NAME}
+  namespace: ${NAMESPACE}
+data:
+  ZebOS.conf: |
+    route-map RMALL permit 10
+    !
+    router bgp ${LOCAL_AS}
+      bgp router-id %%POD_IP%%
+      bgp log-neighbor-changes
+      bgp graceful-restart restart-time 120
+      no bgp default ipv4-unicast
+      redistribute kernel route-map RMALL
+      redistribute connected route-map RMALL
+      redistribute static route-map RMALL
+#@if VIP
+      network ${VIP}/32
+#@end
+      !
+      neighbor ${PEER_IP} remote-as ${PEER_AS}
+      neighbor ${PEER_IP} update-source net1
+      !
+      address-family ipv4
+        neighbor ${PEER_IP} activate
+        neighbor ${PEER_IP} soft-reconfiguration inbound
+      exit-address-family
+    !

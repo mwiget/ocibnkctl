@@ -116,7 +116,7 @@ makes CWC re-register, which fails on an already-registered asset. Retry the app
 fails with "status unknown for quota" (CWC is still creating its ResourceQuota).
 
 ```sh
-BNK_JWT="$(tr -d '\n' < keys/.jwt)" envsubst '$BNK_JWT' < 20-cne/03-license.yaml.tmpl | kubectl apply -f -
+BNK_JWT="$(tr -d '\n' < keys/.jwt)" sh lib/render.sh 20-cne/03-license.yaml.tmpl | kubectl apply -f -
 kubectl -n f5-cne-core wait --for=jsonpath='{.status.state}'=Active license.k8s.f5net.com/f5-cne-cluster-license --timeout=20m
 ```
 
@@ -180,3 +180,6 @@ host that learns those routes from your BGP peer.
 ```sh
 tr -d '\n' < cne_pull_64.json | helm registry login repo.f5.com --username _json_key_base64 --password-stdin
 ```
+
+`lib/render.sh` fills the `${NAME}` placeholders in the `.tmpl` files from environment
+variables (POSIX sh + awk, also on macOS); see its header.

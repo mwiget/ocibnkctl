@@ -2,15 +2,15 @@ global:
   imagePullSecrets:
     - name: far-secret
   certmgr:
-    clusterIssuer: {{.ClusterIssuer}}
+    clusterIssuer: ${CLUSTER_ISSUER}
 
 rbac:
   create: true
 
-namespace: {{.Namespace}}
+namespace: ${OPERATOR_NAMESPACE}
 containerPlatform: Generic
 ServiceIPFamily: ipv4
-sharedComponentNamespace: {{.SharedComponentNamespace}}
+sharedComponentNamespace: ${SHARED_NAMESPACE}
 
 image:
   repository: repo.f5.com/images
@@ -42,6 +42,6 @@ fluentbit_sidecar:
   image:
     repository: repo.f5.com/images
     pullPolicy: Always
-  namespace: {{.Namespace}}
+  namespace: ${OPERATOR_NAMESPACE}
   nameOverride: f5-ipam-operator
   fullnameOverride: f5-ipam-operator

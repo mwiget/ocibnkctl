@@ -1,12 +1,6 @@
 package deploy
 
-import (
-	"bytes"
-	"fmt"
-	"text/template"
-
-	"github.com/mwiget/ocibnkctl/internal/embedded"
-)
+import "github.com/mwiget/ocibnkctl/kit"
 
 // FLOInputs are substituted into the embedded FLO values template.
 //
@@ -34,64 +28,24 @@ func RenderFLOValues(in FLOInputs) (string, error) {
 	if in.ClusterIssuer == "" {
 		in.ClusterIssuer = "bnk-ca-cluster-issuer"
 	}
-	raw, err := embedded.Templates.ReadFile("templates/flo-values.yaml.tmpl")
-	if err != nil {
-		return "", fmt.Errorf("load flo-values.yaml.tmpl: %w", err)
-	}
-	tmpl, err := template.New("flo").Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var out bytes.Buffer
-	if err := tmpl.Execute(&out, in); err != nil {
-		return "", err
-	}
-	return out.String(), nil
+	return kit.Render("platform/flo/flo-values.yaml", map[string]string{
+		"OPERATOR_NAMESPACE": in.Namespace,
+		"SHARED_NAMESPACE":   in.SharedComponentNamespace,
+		"CLUSTER_ISSUER":     in.ClusterIssuer,
+	})
 }
 
 // CertIssuerChain returns the YAML for the bnk-ca cert-issuer chain
 // FLO references as global.certmgr.clusterIssuer = bnk-ca-cluster-issuer:
 //
-//   1. ClusterIssuer/selfsigned-bnk        (selfsigned root)
-//   2. Certificate/bnk-ca in cert-manager  (CA cert + key, signed by selfsigned-bnk)
-//   3. ClusterIssuer/bnk-ca-cluster-issuer (uses bnk-ca secret as the CA)
+//  1. ClusterIssuer/selfsigned-bnk        (selfsigned root)
+//  2. Certificate/bnk-ca in cert-manager  (CA cert + key, signed by selfsigned-bnk)
+//  3. ClusterIssuer/bnk-ca-cluster-issuer (uses bnk-ca secret as the CA)
 //
 // All three resources go to the cert-manager namespace per cert-manager's
 // "namespace where ClusterIssuer's secret lives" convention (set by
 // cert-manager's --cluster-resource-namespace flag, which defaults to
 // cert-manager).
 func CertIssuerChain() string {
-	return `apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: selfsigned-bnk
-spec:
-  selfSigned: {}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: bnk-ca
-  namespace: cert-manager
-spec:
-  isCA: true
-  commonName: bnk-ca
-  secretName: bnk-ca-secret
-  duration: 87600h
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-  issuerRef:
-    name: selfsigned-bnk
-    kind: ClusterIssuer
-    group: cert-manager.io
----
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: bnk-ca-cluster-issuer
-spec:
-  ca:
-    secretName: bnk-ca-secret
-`
+	return mustRender("platform/flo/bnk-ca-issuer.yaml", nil)
 }

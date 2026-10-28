@@ -320,23 +320,13 @@ func FARCreds(tgzPath string) (username, password string, err error) {
 // namespace. dockerConfigJSON is raw JSON (not base64-encoded — k8s
 // requires base64 in `data:`, so we encode here).
 func RenderFARSecret(namespace string, dockerConfigJSON []byte) string {
-	encoded := base64.StdEncoding.EncodeToString(dockerConfigJSON)
-	return fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: far-secret
-  namespace: %s
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: %s
-`, namespace, encoded)
+	return mustRender("platform/prereqs/far-secret.yaml", map[string]string{
+		"NAMESPACE":            namespace,
+		"DOCKERCONFIGJSON_B64": base64.StdEncoding.EncodeToString(dockerConfigJSON),
+	})
 }
 
 // RenderNamespace returns a minimal Namespace manifest.
 func RenderNamespace(name string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-`, name)
+	return mustRender("platform/prereqs/namespace.yaml", map[string]string{"NAME": name})
 }

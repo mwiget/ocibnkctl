@@ -1,13 +1,13 @@
 apiVersion: k8s.f5.com/v1
 kind: CNEInstance
 metadata:
-  name: {{.InstanceName}}
+  name: ${INSTANCE_NAME}
   namespace: default
 spec:
   product:
     gatewayAPI: true
     type: BNK
-  manifestVersion: "{{.ManifestVersion}}"
+  manifestVersion: "${MANIFEST_VERSION}"
   # wholeCluster=true runs TMM as a DaemonSet — one pod per node carrying
   # the TMM label (app=f5-tmm). This is the F5-standard mode (f5-bnk-udf,
   # dpubnkctl, and the BF3 installs all use it); scaling out is purely a
@@ -24,17 +24,15 @@ spec:
   wholeCluster: true
   dpu:
     enabled: false
-{{- if .NetworkAttachments}}
+#@if NAD_NAME
   # Active/active data plane: FLO injects these Multus NAD(s) onto every
   # TMM pod (net1). selfip-dag keeps mapres TRUE so mapres grabs net1
   # onto the data plane as interface "1.1" for the F5SPKVlan to bind;
   # anycast-bgp sets mapres FALSE so net1 keeps its kernel IP for ZeBOS
   # to source BGP from (see TMM_MAPRES_ADDL_VETHS_ON_DP below).
   networkAttachments:
-{{- range .NetworkAttachments}}
-  - {{.}}
-{{- end}}
-{{- end}}
+  - ${NAD_NAME}
+#@end
   # No replica field under wholeCluster: FLO runs TMM as a DaemonSet, so the
   # pod count equals the number of app=f5-tmm-labelled worker nodes
   # (cluster.tmm_nodes). Each per-node TMM serves the traffic that lands on
@@ -45,7 +43,7 @@ spec:
     # Off by default; on only for the AI gateway's metrics, whose HSL
     # receiver runs inside the fluentd this subsystem deploys.
     loggingSubsystem:
-      enabled: {{.LoggingSubsystem}}
+      enabled: ${LOGGING_SUBSYSTEM}
     # metricSubsystem drives TMM's observer/tmStats sidecar (~700m/1Gi) and
     # the cluster metrics pipeline (observer / observer-receiver / otel).
     # The small-host (4-core) profile disables it: the f5-tmm-pod-manager
@@ -53,22 +51,22 @@ spec:
     # but it honors a smaller container SET — dropping this sidecar takes
     # the TMM pod from 4.1c to ~3.4c so it fits a single 4-core node.
     metricSubsystem:
-      enabled: {{.MetricSubsystem}}
-{{- if .AIGateway.Enabled}}
+      enabled: ${METRIC_SUBSYSTEM}
+#@if AIGW_ENABLED
   # BNK 2.4.1 AI/LLM gateway. FLO renders the AIGateway CR f5-aigateway from
   # this: console (NodePort, port 3000), the f5-aigateway-admin login Secret,
   # aigw-dns-resolver for provider hostnames and, with aiMetrics, ClickHouse
   # plus the fluentd HSL receiver. Needs DSSM's default Sentinel pair.
   aiGateway:
     enabled: true
-    aiMetrics: {{.AIGateway.AIMetrics}}
-{{- if .AIGateway.ConsoleURL}}
-    consoleURL: "{{.AIGateway.ConsoleURL}}"
-{{- end}}
-{{- end}}
+    aiMetrics: ${AIGW_METRICS}
+#@if AIGW_CONSOLE_URL
+    consoleURL: "${AIGW_CONSOLE_URL}"
+#@end
+#@end
   certificate:
     clusterIssuer: bnk-ca-cluster-issuer
-  deploymentSize: "{{.DeploymentSize}}"
+  deploymentSize: "${DEPLOYMENT_SIZE}"
   registry:
     uri: repo.f5.com
     imagePullSecrets:
@@ -123,7 +121,7 @@ spec:
       # false — it drives TMM through an F5SPKVlan — which is why that mode
       # silently produced a bare interface 1.1 while this was hardcoded true.
       - name: "USE_GATEWAY_SETTINGS"
-        value: "{{ .UseGatewaySettings }}"
+        value: "${USE_GATEWAY_SETTINGS}"
     tmm:
       # TMM scheduling is driven by the `app=f5-tmm` label that
       # `ocibnkctl cluster up` applies to the worker node — FLO's
@@ -148,7 +146,7 @@ spec:
       #   FALSE (anycast-bgp) — net1 keeps its kernel IP so ZeBOS can
       #         `update-source net1` for its BGP session.
       - name: "TMM_MAPRES_ADDL_VETHS_ON_DP"
-        value: "{{.MapresOnDP}}"
+        value: "${MAPRES_ON_DP}"
       # OcNOS (IP Infusion) routing daemon: with ZEBOS_STATE=ocnos FLO swaps
       # the f5-tmm-routing container from f5dr-img (ZeBOS) to ocnos-img
       # (verified live: ocnos-img:v0.23.0-0.3.1). Matches tmmlitectl so the

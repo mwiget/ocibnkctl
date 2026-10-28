@@ -31,19 +31,16 @@
 package extrespool
 
 import (
-	"bytes"
-	"embed"
 	"fmt"
 	"io/fs"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*.yaml manifests/*.yaml.tmpl
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "external-resource-pool"
@@ -147,8 +144,7 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	fmt.Fprintf(ctx.Out, "      | ext-backend podIP: %s\n", backendIP)
 
 	// 3. Render Pool template, persist + apply.
-	poolBody, err := renderTemplate(manifestFS, "manifests/05-pool.yaml.tmpl",
-		struct{ BackendIP string }{BackendIP: backendIP})
+	poolBody, err := renderTemplate("manifests/05-pool.yaml.tmpl", map[string]string{"BACKEND_IP": backendIP})
 	if err != nil {
 		return err
 	}
@@ -288,20 +284,12 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	return nil
 }
 
-func renderTemplate(fsys embed.FS, path string, data any) (string, error) {
-	raw, err := fsys.ReadFile(path)
+func renderTemplate(path string, vars map[string]string) (string, error) {
+	raw, err := manifestFS.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	t, err := template.New(path).Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, data); err != nil {
-		return "", err
-	}
-	return b.String(), nil
+	return kit.RenderString(string(raw), vars)
 }
 
 func finalize(res scenarios.Result) scenarios.Result {

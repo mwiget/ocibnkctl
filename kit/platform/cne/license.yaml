@@ -1,0 +1,13 @@
+apiVersion: k8s.f5net.com/v1
+kind: License
+metadata:
+  name: ${NAME}
+  namespace: ${NAMESPACE}
+spec:
+  operationMode: "${OPERATION_MODE}"
+  jwt: "${JWT}"
+#@if JWKS_CONFIGMAP
+  jwksConfigMapRef:
+    name: ${JWKS_CONFIGMAP}
+    key: ${JWKS_KEY}
+#@end

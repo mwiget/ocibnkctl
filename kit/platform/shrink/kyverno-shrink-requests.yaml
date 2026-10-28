@@ -31,7 +31,7 @@ spec:
       # Both of these namespaces hold only F5 BNK workloads.
       - resources:
           kinds: [Pod]
-          namespaces: [{{.SharedComponentNamespace}}, {{.OperatorNamespace}}]
+          namespaces: [${SHARED_NAMESPACE}, ${OPERATOR_NAMESPACE}]
       # The shared `default` namespace also holds scenario workloads, which
       # live in scn-* namespaces — so only the f5-* pods here are F5's.
       - resources:
@@ -61,17 +61,17 @@ spec:
         patchStrategicMerge:
           spec:
             containers:
-            - name: "{{`{{ element.name }}`}}"
+            - name: "{{ element.name }}"
               resources:
                 requests:
-                  cpu: "{{.CPURequest}}"
-                  memory: "{{.MemoryRequest}}"
+                  cpu: "${CPU_REQUEST}"
+                  memory: "${MEMORY_REQUEST}"
       - list: "request.object.spec.initContainers || `[]`"
         patchStrategicMerge:
           spec:
             initContainers:
-            - name: "{{`{{ element.name }}`}}"
+            - name: "{{ element.name }}"
               resources:
                 requests:
-                  cpu: "{{.CPURequest}}"
-                  memory: "{{.MemoryRequest}}"
+                  cpu: "${CPU_REQUEST}"
+                  memory: "${MEMORY_REQUEST}"
