@@ -145,7 +145,7 @@ cluster `kubectl` points at — no ocibnkctl needed:
 scenarios/<name>/
   scenario.yaml   name, title, rating, dependencies, description
   scenario.env    the scenario's variables and defaults (environment wins)
-  apply.sh        preflight (kit_require), then apply manifests/
+  apply.sh        preflight (kit_require; exit 3 = not applicable here), then apply manifests/
   verify.sh       one JSON line per check; exit 0 when all pass
   cleanup.sh      remove what apply.sh created
   README.md

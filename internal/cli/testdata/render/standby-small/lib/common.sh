@@ -13,7 +13,9 @@
 #   {"description":"...","ok":true|false,"got":"...","skipped":true}
 # (via kit_pass / kit_fail / kit_skip / kit_check / kit_eq / kit_contains),
 # then kit_done prints {"summary":"..."} and exits 0 when nothing failed,
-# 1 otherwise. Everything else, logs included, goes to stderr. ocibnkctl
+# 1 otherwise; apply.sh exits 3 (kit_not_applicable) when the cluster
+# lacks what the scenario needs. Everything else, logs included, goes to
+# stderr. ocibnkctl
 # parses those lines into its scenario report; a human just reads them.
 
 # Preset both to source this from outside scenarios/<name>/ (lib/edge-pod.sh).
@@ -42,6 +44,14 @@ kit_log() { printf '%s\n' "$*" >&2; }
 kit_die() {
 	kit_log "error: $*"
 	exit 2
+}
+
+# kit_not_applicable REASON — stop (exit 3): this cluster lacks what the
+# scenario is about (another data-plane mode, no AI gateway, an older BNK).
+# ocibnkctl reports the scenario as skipped, not failed.
+kit_not_applicable() {
+	kit_log "not applicable: $*"
+	exit 3
 }
 
 # _kit_json DESC OK GOT [skipped] — one assertion line. Whitespace and
@@ -165,7 +175,10 @@ kit_copy_secret() {
 }
 
 # kit_require CAP... — preflight against the cluster itself (not poc.yaml).
-# Aborts with the reason when a capability is missing:
+# A capability the cluster does not have (crd, anycast-bgp, ai-gateway,
+# gateway-settings) makes the scenario not applicable (kit_not_applicable);
+# one it has but that is not working (a GatewayClass not Accepted, a missing
+# Secret) is an error (kit_die):
 #   crd:<name>             the CRD exists
 #   gatewayclass:<name>    the GatewayClass exists and is Accepted
 #   secret:<ns>/<name>     the Secret exists
@@ -182,7 +195,7 @@ kit_require() {
 		case $_kq in
 		crd:*)
 			kubectl get crd "${_kq#crd:}" >/dev/null 2>&1 ||
-				kit_die "precondition $_kq: CRD ${_kq#crd:} not installed"
+				kit_not_applicable "precondition $_kq: CRD ${_kq#crd:} not installed"
 			;;
 		gatewayclass:*)
 			_kq_s=$(kubectl get gatewayclass "${_kq#gatewayclass:}" \
@@ -199,17 +212,17 @@ kit_require() {
 				jsonpath='{.items[0].spec.advanced.tmm.env[?(@.name=="TMM_MAPRES_ADDL_VETHS_ON_DP")].value}' 2>&1)
 			_kq_n=$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.networkAttachments[*]}' 2>&1)
 			[ "$_kq_m" = FALSE ] && [ -n "$_kq_n" ] ||
-				kit_die "precondition anycast-bgp: needs a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE (got mapres=${_kq_m:-unset} networkAttachments=${_kq_n:-none}); otherwise mapres takes net1 and BGP has no source address"
+				kit_not_applicable "precondition anycast-bgp: needs a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE (got mapres=${_kq_m:-unset} networkAttachments=${_kq_n:-none}); otherwise mapres takes net1 and BGP has no source address"
 			;;
 		ai-gateway)
 			[ "$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.aiGateway.enabled}' 2>&1)" = true ] ||
-				kit_die "precondition ai-gateway: CNEInstance spec.aiGateway.enabled is not true (ocibnkctl: bnk.ai_gateway.enabled in poc.yaml, then deploy cne)"
+				kit_not_applicable "precondition ai-gateway: CNEInstance spec.aiGateway.enabled is not true (ocibnkctl: bnk.ai_gateway.enabled in poc.yaml, then deploy cne)"
 			;;
 		gateway-settings)
 			_kq_g=$(kubectl get cneinstances -A -o \
 				jsonpath='{.items[0].spec.advanced.cneController.env[?(@.name=="USE_GATEWAY_SETTINGS")].value}' 2>&1)
 			[ "$_kq_g" = true ] ||
-				kit_die "precondition gateway-settings: USE_GATEWAY_SETTINGS=${_kq_g:-unset}; the legacy SPK model (selfip-dag) has no Infra IPAM, so address-less Gateways never get an address"
+				kit_not_applicable "precondition gateway-settings: USE_GATEWAY_SETTINGS=${_kq_g:-unset}; the legacy SPK model (selfip-dag) has no Infra IPAM, so address-less Gateways never get an address"
 			;;
 		*) kit_die "kit_require: unknown capability $_kq" ;;
 		esac

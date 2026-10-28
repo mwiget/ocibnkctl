@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"errors"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -514,7 +515,31 @@ exit 0
 		t.Fatal(err)
 	}
 	err := s.Apply(ctx)
-	if err == nil || !strings.Contains(ctx.Out.(*strings.Builder).String(), "CRD gateways.gateway.networking.k8s.io not installed") {
+	if !errors.Is(err, ErrNotApplicable) || !strings.Contains(err.Error(), "CRD gateways.gateway.networking.k8s.io not installed") {
 		t.Fatalf("err=%v log:\n%s", err, ctx.Out)
+	}
+}
+
+// A cluster without the AI gateway: llm-gateway is skipped, with the
+// reason, not failed — `scenario run --all` stays green on any cluster.
+func TestNotApplicableIsSkipped(t *testing.T) {
+	stubs(t, strings.Replace(healthyKubectl, `*"get cneinstances"*aiGateway.enabled*) printf true ;;`, ``, 1), healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+	r := Run(ctx, Find("llm-gateway"))
+	if r.Status != "skipped" || !strings.Contains(r.Summary, "precondition ai-gateway") {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
+	}
+}
+
+// A capability that is there but broken still fails: a GatewayClass that
+// is not Accepted is a platform problem, not "not applicable".
+func TestBrokenCapabilityFails(t *testing.T) {
+	stubs(t, strings.Replace(healthyKubectl, `*"get gatewayclass"*) printf True ;;`, `*"get gatewayclass"*) printf False ;;`, 1), healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+	r := Run(ctx, Find("tcp-l4-loadbalance"))
+	if r.Status != "failed" {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
 	}
 }

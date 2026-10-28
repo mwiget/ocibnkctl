@@ -119,8 +119,29 @@ func (s *shellScenario) Manifests(ctx *Context) ([]string, error) {
 	return paths, err
 }
 
+// Apply runs apply.sh; its exit 3 (kit_not_applicable) becomes
+// ErrNotApplicable carrying the script's reason.
 func (s *shellScenario) Apply(ctx *Context) error {
-	return s.run(ctx, "apply.sh", logWriter(ctx))
+	var log bytes.Buffer
+	cmd, err := s.start(ctx, "apply.sh", logWriter(ctx), io.MultiWriter(logWriter(ctx), &log))
+	if err != nil {
+		return err
+	}
+	err = cmd.Wait()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+		reason := "the cluster lacks what this scenario needs"
+		for _, l := range strings.Split(log.String(), "\n") {
+			if r, ok := strings.CutPrefix(strings.TrimSpace(l), "not applicable: "); ok {
+				reason = r
+			}
+		}
+		return fmt.Errorf("%w: %s", ErrNotApplicable, reason)
+	}
+	if err != nil {
+		return fmt.Errorf("apply.sh: %w", err)
+	}
+	return nil
 }
 
 func (s *shellScenario) Cleanup(ctx *Context) error {
@@ -151,18 +172,26 @@ func (s *shellScenario) Verify(ctx *Context) Result {
 // run executes kit/scenarios/<name>/<script> from the extracted kit tree,
 // with stdout to out and stderr to the scenario log.
 func (s *shellScenario) run(ctx *Context, script string, out io.Writer) error {
-	path := filepath.Join(kitRoot(ctx.PoCDir), filepath.FromSlash(s.KitDir()), script)
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("%s: %w (Manifests not run?)", script, err)
+	cmd, err := s.start(ctx, script, out, logWriter(ctx))
+	if err != nil {
+		return err
 	}
-	cmd := exec.CommandContext(ctx.Ctx, "sh", path)
-	cmd.Env = shellEnv(ctx)
-	cmd.Stdout = out
-	cmd.Stderr = logWriter(ctx)
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("%s: %w", script, err)
 	}
 	return nil
+}
+
+// start launches kit/scenarios/<name>/<script> from the extracted kit tree.
+func (s *shellScenario) start(ctx *Context, script string, stdout, stderr io.Writer) (*exec.Cmd, error) {
+	path := filepath.Join(kitRoot(ctx.PoCDir), filepath.FromSlash(s.KitDir()), script)
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("%s: %w (Manifests not run?)", script, err)
+	}
+	cmd := exec.CommandContext(ctx.Ctx, "sh", path)
+	cmd.Env = shellEnv(ctx)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	return cmd, cmd.Start()
 }
 
 // shellEnv is the caller's environment plus the cluster's kubeconfig and,
