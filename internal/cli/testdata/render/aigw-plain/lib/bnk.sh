@@ -39,3 +39,20 @@ bnk_ocnos_redistribute() {
 	done
 	return 0
 }
+
+# bnk_tmm_logs [SINCE] — the f5-tmm container logs of every Running TMM,
+# concatenated (behind anycast any TMM may have served a request); SINCE is
+# a kubectl --since value such as 60s, empty for the whole log.
+bnk_tmm_logs() {
+	for _btl_pod in $(bnk_tmm_pods); do
+		kubectl -n "$BNK_NAMESPACE" logs "$_btl_pod" -c f5-tmm ${1:+--since="$1"} 2>/dev/null
+	done
+}
+
+# bnk_logging_subsystem — true when the CNEInstance enables
+# telemetry.loggingSubsystem (on with the AI gateway's metrics). TMM's iRule
+# log lines are then not in `kubectl logs` (observed on BNK 2.4.1), so
+# checks that read them must skip.
+bnk_logging_subsystem() {
+	[ "$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.telemetry.loggingSubsystem.enabled}')" = true ]
+}

@@ -2,7 +2,10 @@ package scenarios
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,6 +48,30 @@ func TestTokenCountingLoggingSubsystem(t *testing.T) {
 	if r.Status != "ok" || !last.Skipped || !strings.Contains(last.Got, "loggingSubsystem") {
 		t.Fatalf("status=%s last=%+v", r.Status, last)
 	}
+}
+
+// One token off in one DSSM bucket fails the exact-match check, and only it.
+func TestDSSMMismatch(t *testing.T) {
+	stubs(t, strings.Replace(healthyKubectl, `echo "x:TMMTOKtotal|vs=$lb|mode=$m|model=gpt-stub~~~S75"`,
+		`v=75; [ "$lb|$m" = "llm-rag|streaming" ] && v=74; echo "x:TMMTOKtotal|vs=$lb|mode=$m|model=gpt-stub~~~S$v"`, 1), healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "ai-token-counting-dssm")
+	if r.Status != "failed" || r.Summary != "failed: DSSM counters match backend usage exactly (per LB, per mode, incl. streaming)" {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
+	}
+}
+
+// grpc-loadbalance takes grpcurl from the checksum-verified cache.
+func TestGRPCUsesVerifiedGrpcurl(t *testing.T) {
+	stubs(t, healthyKubectl, healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "grpc-loadbalance")
+	for _, a := range r.Assertions {
+		if a.Description == "grpcurl available on the edge client" && strings.Contains(a.Got, "SHA-256 verified") {
+			return
+		}
+	}
+	t.Fatalf("grpcurl not taken from the verified cache: %+v", r.Assertions)
 }
 
 // A session up for days shows Up/Down as 2d17h34m, not hh:mm:ss; it is
@@ -127,12 +154,53 @@ func stubs(t *testing.T, kubectl, docker string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("STUB_STATE", filepath.Join(dir, "state"))
 	t.Setenv("REDISTRIBUTE_PAUSE", "0") // bgp-peer-frr's pacing between rounds
+	// grpc-loadbalance fetches grpcurl; serve it from the cache offline: a
+	// stand-in tarball whose checksum the test pins via scenario.env.
+	cache := filepath.Join(dir, "cache")
+	tgz := filepath.Join(cache, "grpcurl-1.9.3", "grpcurl.tgz")
+	if err := os.MkdirAll(filepath.Dir(tgz), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "grpcurl"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("tar", "-czf", tgz, "-C", dir, "grpcurl").CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v %s", err, out)
+	}
+	body, _ := os.ReadFile(tgz)
+	sum := fmt.Sprintf("%x", sha256.Sum256(body))
+	t.Setenv("KIT_CACHE", cache)
+	t.Setenv("GRPCURL_SHA_X86_64", sum)
+	t.Setenv("GRPCURL_SHA_ARM64", sum)
 }
 
 // healthyKubectl answers like a healthy anycast-bgp BNK cluster for every
 // call the kit scenarios make.
 const healthyKubectl = `case "$*" in
 *"get gatewayclass"*) printf True ;;
+*"get pod -l app=ext-backend"*) printf 10.42.1.5 ;;
+*"get pool.k8s.f5net.com"*) printf '10.42.1.5:80 ' ;;
+*"get service/stub-modelcache"*) printf 10.43.0.9 ;;
+*"get gateway/scn-semcache-gateway"*annotations*) printf 'semantic_cache=enabled,semantic_cache_ip_port=10.43.0.9:5050' ;;
+*"get httproute"*sse-enabled*) printf true ;;
+*"get grpcroute"*) printf True ;;
+*"get f5-big-cne-irule/aitok-counter"*) printf aitok-counter ;;
+*"exec f5-dssm-db-0"*)
+	# before = empty, after = what the curl stub's usage adds up to:
+	# 5 requests per LB per mode, each prompt 10 + completion 5 = total 15
+	n=$(cat "$STUB_STATE.dssm" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_STATE.dssm"
+	[ "$n" -eq 0 ] && exit 0
+	for lb in llm-chat llm-code llm-embed llm-rag; do for m in streaming non-streaming; do
+		echo "x:TMMTOKtotal|vs=$lb|mode=$m|model=gpt-stub~~~S75"
+		echo "x:TMMTOKprompt|vs=$lb|mode=$m|model=gpt-stub~~~S50"
+		echo "x:TMMTOKcompletion|vs=$lb|mode=$m|model=gpt-stub~~~S25"
+	done; done ;;
+*"get coremonds"*) printf f5-coremond ;;
+*"get daemonset -l app=f5-coremond"*) printf 'f5-coremond 1' ;;
+*"get daemonset/f5-tmm"*volumes*) printf 'kernel-cores,config,' ;;
+*"get cneinstance "*Coremond*) printf True ;;
+*"get cneinstances"*metadata.namespace*) printf default/bnk-instance ;;
+*patch* | *rollout*) ;;
 *"get gatewaysettings"*) printf True/True ;;
 *"get gateway/scn-fic-gateway"*addresses*) printf 203.0.113.111 ;;
 *"get gateway/scn-tokencount-gateway"*annotations*) printf 'token_counting=enabled,user_id_source=api_key' ;;
@@ -146,7 +214,9 @@ const healthyKubectl = `case "$*" in
 *"get cneinstances"*) ;;
 *"get deployment/f5-cne-controller"*) printf 1 ;;
 *"get pod -l app=f5-tmm"*) echo f5-tmm-abc ;;
-*"logs f5-tmm-abc"*) echo "TOKEN COUNTING IRULE INIT scn-tokencount-gateway-scn-tokencount-token-counting TOKEN(12) cumulative=34" ;;
+*"logs f5-tmm-abc"*)
+	echo "TOKEN COUNTING IRULE INIT scn-tokencount-gateway-scn-tokencount-token-counting TOKEN(12) cumulative=34"
+	echo "Rule scn-semcache-gateway-scn-semcache-ai <CLIENT_ACCEPTED>: Client initialized with modelcache_server=10.43.0.9:5050" ;;
 *"exec -i"*) cat >/dev/null ;;
 *"get secret"*go-template*) printf '  token: dG9rZW4=\n' ;;
 *"get pod -l app=probe"*) printf probe-1 ;;
@@ -165,15 +235,20 @@ exit 0
 const healthyDocker = `case "$*" in
 *"vtysh -c show ip bgp summary"*)
 	echo "*192.168.99.160 4 65000 12 14 0 0 0 00:02:13 3" ;;
+*"vtysh -c show bgp ipv4 unicast 192.168."*) echo "Paths: (1 available, best #1, table default)" ;;
 *"vtysh -c show ip bgp"* | *"vtysh -c show bgp ipv4 unicast"*)
-	for o in 100 102 103 106 107 111; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
+	for o in 100 101 102 103 104 106 107 108 109 111 120 121 122 123; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
 *"ip route show"*) echo "$7 via 192.168.99.160 dev eth1" ;;
 *socat*) echo ocibnkctl-scenario-udp-lb-OK ;;
+*/grpcurl*Index*) echo '{"description": "gRPC testing server"}' ;;
+*/grpcurl*list*) echo grpcbin.GRPCBin ;;
 *curl*)
 	# alternate the TCP LB backends so both weights show up
 	n=$(cat "$STUB_STATE" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_STATE"
 	b=A; [ $((n % 2)) -eq 1 ] && b=B
 	echo "ocibnkctl-scenario-httproute-e2e-OK ocibnkctl-scenario-tokencount-OK ocibnkctl-scenario-fic-dynamic-ip-OK"
+	echo "ocibnkctl-scenario-extres-pool-OK ocibnkctl-scenario-semcache-OK"
+	echo '{"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 	echo "ocibnkctl-scenario-proxy-protocol-OK proxy_addr=192.168.99.41 backend=$b" ;;
 esac
 `

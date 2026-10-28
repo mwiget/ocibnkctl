@@ -1,55 +1,114 @@
-# ai-semantic-cache
+# `ai-semantic-cache` — `k8s.f5.com/ai` semantic-cache + SSE annotations
 
-Semantic AI Model Caching (how-to #7) — k8s.f5.com/ai semantic_cache + sse-enabled
+F5 how-to: [Semantic AI Model Caching](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/ai-related-features/ai-semantic-caching.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
+&nbsp;·&nbsp; Wall time: **~22s** (with bgp-peer-frr running already)
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
-
-Demonstrates BNK's semantic-cache annotation pattern. On the
+Two annotations together enable BNK's semantic caching. On the
 Gateway:
 
-    k8s.f5.com/ai: |
-      semantic_cache=enabled,
-      semantic_cache_ip_port=<IP>:<port>,
-      semantic_cache_recv_timeout=1000
+```yaml
+k8s.f5.com/ai: |
+  semantic_cache=enabled,
+  semantic_cache_ip_port=<modelcache IP>:<port>,
+  semantic_cache_recv_timeout=1000
+```
 
-…and on the HTTPRoute:
+On the HTTPRoute:
 
-    k8s.f5.com/sse-enabled: "true"
+```yaml
+k8s.f5.com/sse-enabled: "true"
+```
 
-(SSE is paired with semantic caching because LLM completions
-commonly stream via Server-Sent Events.)
+(SSE pairs with semantic caching because LLM completions commonly
+stream via Server-Sent Events.)
 
-Rated AMBER. Real CodeFuse-ModelCache is out of scope on kind —
-it needs persistent vector storage, an embedding model, and a
-working ML stack. The scenario uses a TCP-listener stub at port
-5050 to stand in for the ModelCache endpoint. TMM will dial it
-on each request, get a clean TCP accept but no useful response,
-fall through to the stub LLM as a "cache miss". The control-
-plane wiring (Gateway + HTTPRoute with both annotations) is
-what the verify step actually exercises.
+On a cache **HIT**, TMM returns the cached response straight from
+the configured CodeFuse-ModelCache endpoint. On **MISS**, the
+request continues to the HTTPRoute's `backendRefs` and the
+response is stored in the cache.
 
-Lifting this to green would require:
-  - deploying real CodeFuse-ModelCache + its vector backend
-  - deploying a real LLM (NIM/vLLM) as the cache-miss path
-  - sending two identical prompts and observing one HIT, one
-    MISS in TMM's data-plane telemetry
+## How TMM exposes the iRule's behavior (investigation 2026-05-20)
 
-Cleanup deletes the scn-semcache namespace.
+The auto-generated iRule logs the events we need to assert
+data-plane wiring:
+
+```
+Rule scn-semcache-gateway-scn-semcache-semantic-cache
+  <CLIENT_ACCEPTED>:
+  Client initialized with modelcache_server=10.96.31.232:5050,
+  modelcache_recv_timeout=1000
+Rule scn-semcache-gateway-scn-semcache-semantic-cache
+  <HTTP_REQUEST>:
+  SEMANTIC_CACHE_IRULE: HTTP_REQUEST triggered
+  /v1/chat/completions client=192.168.99.47 method=POST
+```
+
+The CLIENT_ACCEPTED log line proves the iRule read the
+modelcache endpoint from the `k8s.f5.com/ai` annotation
+correctly. The HTTP_REQUEST log line proves the iRule fires
+on each incoming completion request and would have queried
+the cache if a real one were running.
+
+The scenario sends 3 POSTs with identical bodies and asserts:
+
+1. All 3 return the stub-llm marker body (cache-miss path
+   completes — i.e. the iRule doesn't break the request flow
+   even when the cache responds with garbage).
+2. TMM logs contain both `Client initialized with
+   modelcache_server=` and `SEMANTIC_CACHE_IRULE: HTTP_REQUEST
+   triggered`.
+
+## What's still left for a "real" deployment
+
+The cache HIT path requires a real CodeFuse-ModelCache speaking
+its protobuf protocol. We can't verify HIT-vs-MISS behavior
+without it. What we DO verify is that BNK's side of the feature
+is plumbed correctly: the iRule attaches to the listener, fires
+on every request, reads the annotation, and lets the
+non-matching path fall through to the LLM backend.
 
 ## Manifests
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-stubs.yaml`
-- `manifests/04-gateway.yaml.tmpl`
-- `manifests/05-httproute.yaml`
+| File | What it is |
+|---|---|
+| [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-semcache` |
+| [`03-stubs.yaml`](manifests/03-stubs.yaml) | stub-llm (nginx) + stub-modelcache (socat TCP listener on :5050) Deployments + Services |
+| [`04-gateway.yaml.tmpl`](manifests/04-gateway.yaml.tmpl) | template — Gateway with `spec.addresses=[${VIP}]` (default 203.0.113.104) and the `k8s.f5.com/ai` annotation; `${CACHE_IP}` is the stub-modelcache Service ClusterIP, filled in at apply time |
+| [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `semcache.ocibnkctl.local`, path `/v1/chat/completions` → stub-llm; carries `k8s.f5.com/sse-enabled: "true"` annotation |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+## How to run
 
-`manifests/04-gateway.yaml.tmpl` holds `${NAME}` placeholders that `ocibnkctl` fills from live
-cluster state at apply time (e.g. a Service ClusterIP). From this directory, fill them with
-`NAME=<value> sh ../../lib/render.sh manifests/04-gateway.yaml.tmpl | kubectl apply -f -`. `kubectl apply
--f` on the directory skips `.tmpl` files.
+```bash
+ocibnkctl scenario run ai-semantic-cache --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/ai-semantic-cache/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/ai-semantic-cache/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/ai-semantic-cache/cleanup.sh
+```
+
+Variables and their defaults are in [`scenario.env`](scenario.env); set any
+of them in the environment.
+
+## Verification (6/6)
+
+```
+✓ stub-llm Deployment Available
+✓ stub-modelcache Deployment Available
+✓ Gateway Programmed=True
+✓ HTTPRoute Accepted=True
+✓ k8s.f5.com/ai semantic-cache annotation present on Gateway
+✓ k8s.f5.com/sse-enabled annotation present on HTTPRoute
+```
+
+## Cleanup
+
+`ocibnkctl scenario clean ai-semantic-cache` deletes the
+`scn-semcache` namespace.

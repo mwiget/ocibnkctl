@@ -196,6 +196,9 @@ func shellEnv(ctx *Context) []string {
 	if ctx.Runner != nil && ctx.Runner.KubeconfigPath != "" {
 		env = append(env, "KUBECONFIG="+ctx.Runner.KubeconfigPath)
 	}
+	if os.Getenv("KIT_CACHE") == "" && ctx.PoCDir != "" {
+		env = append(env, "KIT_CACHE="+filepath.Join(ctx.PoCDir, "artifacts", "bin"))
+	}
 	if os.Getenv("EDGE_DRIVER") == "" && ctx.PoC != nil {
 		env = append(env,
 			"EDGE_DRIVER=ocibnkctl",
