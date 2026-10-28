@@ -1,47 +1,108 @@
-# http-routing-e2e
+# `http-routing-e2e` — HTTPRoute end-to-end with real curl through TMM
 
-HTTP traffic steering with Gateway API HTTPRoute (how-to #8) — full data plane via NAD
+F5 how-to: [HTTP traffic steering with Gateway API HTTPRoute](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/Configure-HTTP-traffic-steering-with-Gateway-API-HTTPRoute.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../../../internal/scenarios/bgppeer)
+&nbsp;·&nbsp; Wall time: **~21s** (no TMM restart; piggybacks on the existing NAD)
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
+Builds on the BGP plumbing established by `bgp-peer-frr`. Applies
+a Gateway with static `spec.addresses=[203.0.113.100]` plus an
+HTTPRoute pointing at an nginx backend. TMM's ZeBOS sees the
+Gateway IP as a kernel route and BGP-advertises it; FRR receives
+it and installs:
 
-## What it does
+```
+203.0.113.100/32 via 192.168.99.X dev net1 proto bgp
+```
 
-End-to-end HTTPRoute scenario with real data-plane traffic.
+The verify step execs **5 curls from inside the FRR pod**. FRR
+is already on the NAD bridge with the BGP-learned route, so it's
+a free, ready-made test client. The data path is:
 
-Requires bgp-peer-frr to be running already — relies on the
-FRR pod in scn-bgp having a BGP session with TMM over the
-bnk-bgp NAD. When this scenario applies the Gateway with
-static spec.addresses=203.0.113.100, TMM (via ZeBOS's
-redistribute kernel) advertises that /32 over BGP. FRR
-receives it with next-hop set to TMM's net1 IP and installs
-a kernel route for 203.0.113.100/32 via net1.
+```
+FRR curl
+  → FRR kernel route via net1
+  → br-bnk-bgp Linux bridge
+  → TMM net1
+  → Gateway listener at 203.0.113.100
+  → HTTPRoute → nginx Service → nginx pod
+  → reverse path back to FRR
+```
 
-The verify step then execs 5 curls from inside the FRR pod
-to http://203.0.113.100/ with the configured hostname. The
-path is: FRR socket → FRR kernel routing → net1 → bnk-bgp
-bridge → TMM net1 → TMM Gateway listener → nginx backend.
-TMM's eth0 TCP hook is completely bypassed because the
-traffic never touches eth0.
-
-No separate curl-client pod is deployed — the FRR pod is
-already exactly the kind of client this scenario needs
-(on the NAD, with the BGP-learned route to the Gateway IP).
-Operators can reproduce manually:
-
-    kubectl -n scn-bgp exec deploy/scn-frr -c frr -- \
-      curl -sS -H 'Host: ocibnkctl.local' http://203.0.113.100/
-
-Cleanup: delete the scn-httproute-e2e namespace. The
-GatewayClass stays (cluster-wide; reused by other scenarios).
+TMM's eth0 TCP hook is **completely bypassed** — packets reach
+TMM via `net1`, a normal Linux interface in the pod netns.
 
 ## Manifests
 
-- `01-gatewayclass.yaml`
-- `02-namespace.yaml`
-- `04-backend.yaml`
-- `05-gateway.yaml`
-- `06-httproute.yaml`
+| File | What it is |
+|---|---|
+| [`01-gatewayclass.yaml`](manifests/01-gatewayclass.yaml) | Cluster-wide `bnk-gatewayclass` (idempotent across scenarios) |
+| [`02-namespace.yaml`](manifests/02-namespace.yaml) | `scn-httproute-e2e` |
+| [`04-backend.yaml`](manifests/04-backend.yaml) | nginx Deployment + Service + ConfigMap (marker body) — plain Calico pod, no NAD |
+| [`05-gateway.yaml.tmpl`](manifests/05-gateway.yaml.tmpl) | Gateway with `spec.addresses=${VIP}` (default 203.0.113.100), HTTP listener |
+| [`06-httproute.yaml`](manifests/06-httproute.yaml) | HTTPRoute hostname `ocibnkctl.local`, backendRefs → nginx Service |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+## How to run
+
+```bash
+ocibnkctl scenario run bgp-peer-frr   --poc <pocdir>   # if not running yet
+ocibnkctl scenario run http-routing-e2e --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at: the scenario is plain
+`sh` + `kubectl` (contract: [kit/lib/common.sh](../../lib/common.sh)).
+
+```sh
+sh kit/scenarios/http-routing-e2e/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/http-routing-e2e/verify.sh    # control plane only; edge checks skipped
+sh kit/scenarios/http-routing-e2e/cleanup.sh
+```
+
+To also check the data plane from your own client and BGP router, pick a
+VIP your network routes to TMM and point the edge driver at them
+([kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+export VIP=10.20.30.40
+sh kit/scenarios/http-routing-e2e/apply.sh
+EDGE_DRIVER=external EDGE_EXEC="ssh lab-client" EDGE_VTYSH="ssh lab-frr vtysh -c" \
+  sh kit/scenarios/http-routing-e2e/verify.sh
+```
+
+`apply.sh` fails fast if the Gateway API CRDs are missing or the
+`bnk-gatewayclass` GatewayClass is not Accepted.
+
+## Verification
+
+```
+✓ nginx Deployment Available
+✓ Gateway Programmed=True
+✓ HTTPRoute Accepted=True
+✓ FRR BGP table has 203.0.113.100/32 advertised by TMM
+✓ FRR kernel route 203.0.113.100/32 installed via net1
+✓ 5/5 end-to-end curls via Gateway return nginx marker body
+```
+
+Reproduce the curl manually:
+
+```bash
+kubectl -n scn-bgp exec deploy/scn-frr -c frr -- \
+  curl -sS -H 'Host: ocibnkctl.local' http://203.0.113.100/
+# → ocibnkctl-scenario-httproute-e2e-OK
+```
+
+## Cleanup
+
+`ocibnkctl scenario clean http-routing-e2e` deletes the
+`scn-httproute-e2e` namespace. GatewayClass stays cluster-wide
+(reused by other scenarios).
+
+## Gotcha worth knowing
+
+Older versions of ocibnkctl shipped a separate `http-routing`
+scenario; if its `scn-httproute` namespace is still around from a
+prior run, two Gateways will compete for 203.0.113.100 and TMM
+picks whichever was applied first. Symptom: 5×curl returns
+`ocibnkctl-scenario-httproute-OK` (the OLD marker) instead of
+the `-e2e-OK` one. Fix: `kubectl delete namespace scn-httproute`
+and rerun.

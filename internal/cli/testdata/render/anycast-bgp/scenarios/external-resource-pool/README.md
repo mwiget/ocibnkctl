@@ -35,16 +35,16 @@ GatewayClass + bnk-bgp NAD stay (reused by other scenarios).
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `03-backend.yaml`
-- `04-gateway.yaml`
-- `05-pool.yaml.tmpl`
-- `06-httproute.yaml`
+- `manifests/01-namespace.yaml`
+- `manifests/03-backend.yaml`
+- `manifests/04-gateway.yaml`
+- `manifests/05-pool.yaml.tmpl`
+- `manifests/06-httproute.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.
 
-`05-pool.yaml.tmpl` holds `${NAME}` placeholders that `ocibnkctl` fills from live cluster
-state at apply time (e.g. a Service ClusterIP). Fill them with `NAME=<value> sh
-../../lib/render.sh 05-pool.yaml.tmpl | kubectl apply -f -`. `kubectl apply -f` on the directory
-skips `.tmpl` files.
+`manifests/05-pool.yaml.tmpl` holds `${NAME}` placeholders that `ocibnkctl` fills from live
+cluster state at apply time (e.g. a Service ClusterIP). From this directory, fill them with
+`NAME=<value> sh ../../lib/render.sh manifests/05-pool.yaml.tmpl | kubectl apply -f -`. `kubectl apply
+-f` on the directory skips `.tmpl` files.

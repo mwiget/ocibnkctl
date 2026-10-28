@@ -35,9 +35,9 @@ them); delete them in the console or with the API.
 
 ## Manifests
 
-- `01-mock-llm.yaml`
-- `02-setup-job.yaml`
-- `llm-setup.sh`
+- `manifests/01-mock-llm.yaml`
+- `manifests/02-setup-job.yaml`
+- `manifests/llm-setup.sh`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

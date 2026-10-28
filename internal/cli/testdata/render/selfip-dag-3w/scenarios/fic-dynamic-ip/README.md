@@ -32,11 +32,11 @@ Cleanup deletes the scn-fic-dyn namespace (the platform Infra CR stays).
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `02-gatewaysettings.yaml`
-- `03-backend.yaml`
-- `04-gateway.yaml`
-- `05-httproute.yaml`
+- `manifests/01-namespace.yaml`
+- `manifests/02-gatewaysettings.yaml`
+- `manifests/03-backend.yaml`
+- `manifests/04-gateway.yaml`
+- `manifests/05-httproute.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

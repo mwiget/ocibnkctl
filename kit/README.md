@@ -103,9 +103,40 @@ Defaults are what `ocibnkctl` passes for a default PoC.
 ## scenarios/
 
 `scenarios/<name>/manifests/` holds the files `ocibnkctl scenario run <name>`
-applies, numbered in apply order. What each scenario checks, and the steps
-between applies, is in `ocibnkctl scenario list` and in the per-scenario
-README that `ocibnkctl render` writes. Two files are templates, filled from
+applies, numbered in apply order.
+
+**Script scenarios** carry everything else too, and run by hand on any
+cluster `kubectl` points at — no ocibnkctl needed:
+
+```
+scenarios/<name>/
+  scenario.yaml   name, title, rating, dependencies, description
+  scenario.env    the scenario's variables and defaults (environment wins)
+  apply.sh        preflight (kit_require), then apply manifests/
+  verify.sh       one JSON line per check; exit 0 when all pass
+  cleanup.sh      remove what apply.sh created
+  README.md
+```
+
+```sh
+sh kit/scenarios/cluster-wide-watch/apply.sh
+sh kit/scenarios/cluster-wide-watch/verify.sh
+sh kit/scenarios/cluster-wide-watch/cleanup.sh
+```
+
+Data-plane checks need a client outside the cluster that reaches Gateway
+VIPs over the routes TMM advertises. `EDGE_DRIVER` (`lib/edge.sh`) says
+where it is: `none` (the default by hand: those checks are reported as
+skipped), `external` (`EDGE_EXEC` / `EDGE_VTYSH` run commands on your own
+client and BGP router), or `ocibnkctl` (the external FRR container
+`cluster up` builds; `ocibnkctl scenario run` sets it). The script
+helpers are in `lib/common.sh` (assertions, apply, retry, preflight),
+`lib/edge.sh` and `lib/bnk.sh` (TMM pods, OcNOS redistribute).
+
+Script scenarios so far: `cwc-admin-access`, `cluster-wide-watch`,
+`http-routing-e2e`. The rest still have their checks in Go
+(`internal/scenarios/<pkg>/`); what each checks is in `ocibnkctl scenario
+list` and in the per-scenario README that `ocibnkctl render` writes. Two files are templates, filled from
 live cluster state at apply time: `ai-semantic-cache/manifests/04-gateway.yaml.tmpl`
 (`CACHE_IP`) and `external-resource-pool/manifests/05-pool.yaml.tmpl`
 (`BACKEND_IP`).

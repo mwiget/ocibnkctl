@@ -1,0 +1,27 @@
+name: cwc-admin-access
+title: "Restrict access to sensitive data (how-to #1) — bearer token + mTLS to CWC admin API"
+rating: green
+dependencies: []
+description: |
+  Demonstrates the two gates BNK puts in front of the Cluster-Wide
+  Controller's (CWC) sensitive admin endpoints:
+
+    - mTLS at the TLS layer (CA + client cert + client key)
+    - a bearer token at the HTTP layer (Authorization header)
+
+  Both materials already exist after FLO is installed: the
+  cwc-license-client-certs Secret (ca-root-cert, client-cert, client-key)
+  and the cwc-auth-token Secret (token), both in CWC's namespace
+  (CWC_NAMESPACE, default f5-cne-core). apply.sh copies them into the
+  scenario namespace (a pod can only mount its own namespace's Secrets)
+  and starts a curl probe that mounts them. verify.sh then calls
+  https://f5-spk-cwc.<CWC_NAMESPACE>.svc.cluster.local:38081/status:
+
+    1. with the token: HTTP 200 and the license JSON (LicenseStatus,
+       DigitalAssetID); retried for up to 90s, since CWC can briefly serve
+       a not-yet-Active license after a TMM restart
+    2. without a token: rejected
+    3. with a bogus token: rejected
+
+  No BNK CRs are created; this verifies runtime access only. Cleanup
+  deletes the scn-cwcadmin namespace.

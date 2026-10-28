@@ -1,42 +1,82 @@
-# cwc-admin-access
+# `cwc-admin-access` — bearer token + mTLS to the CWC admin API
 
-Restrict access to sensitive data (how-to #1) — bearer token + mTLS to CWC admin API
+F5 how-to: [Restrict access to sensitive data](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-admin-access-api.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: nothing (runs standalone, no `bgp-peer-frr` needed)
+&nbsp;·&nbsp; Wall time: **~9s** (the fastest scenario — just deploys a curl probe pod)
 
-- Rating: **green**
+Demonstrates BNK's dual-gate access control on the Cluster-Wide
+Controller (CWC) admin API at
+`https://f5-spk-cwc.f5-cne-core.svc:38081/status`:
 
-## What it does
+- **mTLS** at the TLS layer — CA + client cert + key from the
+  `cwc-license-client-certs` Secret in `f5-cne-core`.
+- **Bearer token** at the HTTP layer — string in the
+  `cwc-auth-token` Secret in `f5-cne-core`.
 
-Demonstrates the dual-gate access control that BNK puts in front
-of CWC's sensitive admin endpoints:
-
-  - mTLS at the TLS layer (CA + client cert + client key).
-  - Bearer token at the HTTP layer (Authorization header).
-
-Both materials are produced by the deploy-flo phase already:
-
-  - cwc-license-client-certs Secret in f5-cne-core has
-    ca-root-cert, client-cert, client-key (PEM).
-  - cwc-auth-token Secret in f5-cne-core has the token
-    string.
-
-The scenario spawns a tiny curl-equipped probe Deployment in
-scn-cwcadmin namespace with both secrets projected as files
-and the token as an env var. Verify does two requests:
-
-  1. Bearer token PRESENT — expects HTTP 200 with the
-     documented JSON body (LicenseStatus + DigitalAssetID).
-  2. Bearer token MISSING — expects 401/403 (the actual
-     "restrict" part of "restrict access to sensitive data").
-
-No new BNK CRs are introduced; this is a pure runtime-access
-verification.
-
-Cleanup deletes the scn-cwcadmin namespace.
+Both materials are produced by the `deploy flo` phase already
+(the `gen_cert.sh` step generates `cwc-license-client-certs`,
+CWC's own controller generates `cwc-auth-token`). The scenario
+just replicates them into its own namespace and probes the
+endpoint.
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `02-probe.yaml`
+| File | What it is |
+|---|---|
+| [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-cwcadmin` |
+| [`02-probe.yaml`](manifests/02-probe.yaml) | A small `curlimages/curl` Deployment with both Secrets projected as files (mounted at `/certs` and `/token`) |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Replication of `cwc-license-client-certs` + `cwc-auth-token`
+from `f5-cne-core` into `scn-cwcadmin` is done in code at apply
+time — kubelet doesn't allow cross-namespace Secret mounts, so
+the scenario keeps its own copy.
+
+## How to run
+
+```bash
+ocibnkctl scenario run cwc-admin-access --poc <pocdir>
+```
+
+Or by hand, on any BNK cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh)). It needs no edge client:
+
+```sh
+sh kit/scenarios/cwc-admin-access/apply.sh
+sh kit/scenarios/cwc-admin-access/verify.sh     # one JSON line per check, exit 0 when all pass
+sh kit/scenarios/cwc-admin-access/cleanup.sh
+```
+
+## Verification (4/4)
+
+```
+✓ probe Deployment Available
+✓ Authenticated GET /status returns HTTP 200 with license JSON
+✓ Unauthenticated GET /status is rejected (no token in header)
+✓ Bogus token is rejected (constant-time compare)
+```
+
+Reproduce manually:
+
+```bash
+kubectl -n scn-cwcadmin exec deploy/probe -- sh -c '
+  curl -sS --cacert /certs/ca-root-cert \
+       --cert /certs/client-cert \
+       --key  /certs/client-key \
+       -H "Authorization: Bearer $(cat /token/token)" \
+       https://f5-spk-cwc.f5-cne-core.svc.cluster.local:38081/status
+'
+# → JSON with LicenseDetails + LicenseStatus
+```
+
+## Cleanup
+
+`ocibnkctl scenario clean cwc-admin-access` deletes the
+`scn-cwcadmin` namespace.
+
+## Documentation drift to know about
+
+The F5 doc still says the SharedComponentNamespace is `f5-utils`;
+BNK 2.3 moved everything to `f5-cne-core` (matches
+`internal/deploy/cwc_certs.go::SharedComponentNamespace`; `CWC_NAMESPACE` in `scenario.env`). The
+scenario hardcodes `f5-cne-core`.

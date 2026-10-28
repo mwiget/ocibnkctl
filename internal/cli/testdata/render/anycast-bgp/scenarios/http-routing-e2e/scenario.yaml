@@ -1,0 +1,29 @@
+name: http-routing-e2e
+title: "HTTP traffic steering with Gateway API HTTPRoute (how-to #8) — full data plane via NAD"
+rating: green
+dependencies: [bgp-peer-frr]
+description: |
+  End-to-end HTTPRoute scenario with real data-plane traffic.
+
+  Applies an nginx backend, a Gateway with the static address VIP
+  (default 203.0.113.100) and an HTTPRoute for host HOST
+  (default ocibnkctl.local). Once the Gateway exists, every TMM advertises
+  the VIP /32 over BGP (OcNOS `redistribute kernel`); the edge peer learns
+  it with TMM's net1 as next hop.
+
+  verify.sh checks the control plane (nginx Available, Gateway
+  Programmed, HTTPRoute Accepted), then from the edge: the VIP is in the
+  peer's BGP table, the client has a kernel route for it, and 5 curls to
+  http://VIP/ with Host: HOST all return the nginx marker body. The path
+  is: client → route via net1 → bnk-bgp bridge → TMM net1 → TMM Gateway
+  listener → nginx. TMM's eth0 TCP hook is bypassed entirely.
+
+  With EDGE_DRIVER=none the edge checks are skipped and only the control
+  plane is verified. On an ocibnkctl cluster this depends on bgp-peer-frr
+  (TMM peering the external FRR). Reproduce the curl by hand there:
+
+      docker run --rm --network container:bnk-edge-frr-<cluster> nicolaka/netshoot \
+        curl -sS -H 'Host: ocibnkctl.local' http://203.0.113.100/
+
+  Cleanup deletes the scn-httproute-e2e namespace; the GatewayClass stays
+  (cluster-wide, shared by other scenarios).

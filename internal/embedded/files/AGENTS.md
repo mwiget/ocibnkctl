@@ -144,6 +144,15 @@ ocibnkctl scenario run <name>      # one scenario
 ocibnkctl scenario clean <name>    # delete what a scenario applied
 ```
 
+Some scenarios are plain scripts (`scenario list`; their files are copied to
+`artifacts/kit/scenarios/<name>/` on each run). To show the operator what a
+check does, or to rerun one step, run them directly — they only need
+`kubectl` pointed at the cluster:
+
+```
+sh artifacts/kit/scenarios/<name>/verify.sh    # one JSON line per check
+```
+
 Ratings: **green** = fully testable in this demo shape; **amber** =
 control-plane verifies but data-plane plumbing is partially missing;
 **red** = needs DPUs / real upstream BIG-IP (never executed here). Many

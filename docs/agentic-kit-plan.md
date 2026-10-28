@@ -1,6 +1,6 @@
 # Plan: from ctl binary to agentic kit
 
-Status: Phase 0 (`ocibnkctl render`) and Phase 1 (manifests in `kit/`) implemented 2026-10-28.
+Status: Phases 0–2 implemented 2026-10-28.
 
 ## Why
 
@@ -168,6 +168,48 @@ The in-flight `aiepp` / GAIE scenario is a good first *kit-native* scenario.
 
 **Exit:** each pilot passes via `ocibnkctl scenario run` **and** via bare
 `kit/scenarios/<x>/verify.sh` on a tool-built cluster.
+
+**Done (2026-10-28).** As built:
+
+- **Layout:** `kit/scenarios/<name>/` = `scenario.yaml` (metadata, read by
+  Go), `scenario.env` (variables + defaults, sourced by the scripts; the
+  environment wins), `apply.sh` / `verify.sh` / `cleanup.sh`,
+  `manifests/`, `README.md`. A scenario becomes a script scenario by
+  having a `verify.sh`; `internal/scenarios/shell.go` registers it. No Go.
+- **Contract** (`kit/lib/common.sh`): `verify.sh` prints one
+  `{"description","ok","got","skipped"}` JSON line per check and a
+  `{"summary"}` line, exit 0 / 1. `Assertion` gained `Skipped` (counts as
+  passed, shown as `–`). Helpers: `kit_check` / `kit_eq` / `kit_contains`
+  / `kit_skip`, `kit_retry`, `kit_apply` (renders `.tmpl`),
+  `kit_copy_secret`, `kit_require` (preflight from the cluster: CRDs,
+  GatewayClass Accepted, Secrets, anycast-bgp from the CNEInstance's
+  mapres env).
+- **Edge drivers** (`kit/lib/edge.sh`): `none` (default by hand),
+  `ocibnkctl` (set by `scenario run` unless the operator set
+  `EDGE_DRIVER`), `external` (`EDGE_EXEC` / `EDGE_VTYSH` prefixes). The
+  `pod` driver moves to Phase 3 with the portability test: it needs an
+  in-cluster FRR on a NAD the operator names.
+- **Single-sourced OcNOS redistribute:** `kit/lib/ocnos-redistribute.cfg`
+  is read by both `deploy.OcNOSRedistributeScript` (byte-identical, per
+  the golden files) and `kit/lib/bnk.sh`.
+- **Pilots ported, Go packages deleted:** `cwc-admin-access`,
+  `cluster-wide-watch`, `http-routing-e2e` (its VIP is now `${VIP}`).
+  Assertion descriptions match the Go versions so reports stay
+  comparable.
+- **Render bundles** now copy script scenarios whole and give every
+  scenario a `manifests/` subdirectory (the kit's layout); all 144 moved
+  files are byte-identical to before.
+- **Tests:** `shell_test.go` runs the pilots' real scripts against stub
+  `kubectl` / `docker` (edge `none` and `ocibnkctl`, a failing check, a
+  failed preflight, the CWC token gate).
+- **Exit check, live** on a BNK 2.4.1 anycast-bgp cluster built by
+  ocibnkctl: all three pilots green via `ocibnkctl scenario run`
+  (cwc-admin-access 4/4, cluster-wide-watch 5/5, http-routing-e2e 6/6
+  including BGP, kernel route and 5/5 curls through TMM), and again bare
+  from the repo's `kit/` with only `KUBECONFIG` set: `EDGE_DRIVER=none`
+  (3 passed, 3 skipped) and `EDGE_DRIVER=external` pointed at the same FRR
+  (6/6). `cleanup.sh` and `scenario clean` both removed everything; the
+  VIP was withdrawn from BGP ~10s later.
 
 ### Phase 3 — port the rest, prove portability
 

@@ -45,6 +45,10 @@ type Assertion struct {
 	Description string `json:"description"`
 	OK          bool   `json:"ok"`
 	Got         string `json:"got,omitempty"`
+	// Skipped marks a check that could not run in this environment (e.g.
+	// a data-plane check with no edge client, EDGE_DRIVER=none). It counts
+	// as passed — nothing failed — but reports show it apart.
+	Skipped bool `json:"skipped,omitempty"`
 }
 
 // Result is what each scenario returns from Apply+Verify. Status mirrors

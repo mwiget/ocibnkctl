@@ -51,13 +51,13 @@ Cleanup deletes the scn-grpc namespace.
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `03-backend.yaml`
-- `04-gateway.yaml`
-- `05-grpcroute.yaml`
-- `06-l4-backend-svc.yaml`
-- `07-l4-gateway.yaml`
-- `08-l4route.yaml`
+- `manifests/01-namespace.yaml`
+- `manifests/03-backend.yaml`
+- `manifests/04-gateway.yaml`
+- `manifests/05-grpcroute.yaml`
+- `manifests/06-l4-backend-svc.yaml`
+- `manifests/07-l4-gateway.yaml`
+- `manifests/08-l4route.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

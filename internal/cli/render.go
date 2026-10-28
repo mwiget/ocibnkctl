@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -149,6 +150,26 @@ func (b *renderBuilder) addSecret(path, body string) {
 
 func (b *renderBuilder) say(format string, a ...any) { fmt.Fprintf(&b.readme, format, a...) }
 
+// addKitTree copies kit.FS's src directory to dst in the bundle; shell
+// scripts stay executable.
+func (b *renderBuilder) addKitTree(src, dst string) error {
+	return fs.WalkDir(kit.FS, src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := kit.Read(p)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(p, ".sh") && !strings.Contains(p, "/manifests/") {
+			mode = 0o755 // scripts run by hand; .sh payloads under manifests/ are data
+		}
+		b.files = append(b.files, renderedFile{Path: dst + strings.TrimPrefix(p, src), Body: body, Mode: mode})
+		return nil
+	})
+}
+
 // yamlDocs joins manifests into one multi-document YAML stream.
 func yamlDocs(docs ...string) string {
 	for i, d := range docs {
@@ -274,13 +295,12 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	b.say("```sh\ntr -d '\\n' < cne_pull_64.json | helm registry login %s --username _json_key_base64 --password-stdin\n```\n",
 		version.FARRegistryHost)
 
-	renderSh, err := kit.Read("lib/render.sh")
-	if err != nil {
+	if err := b.addKitTree("lib", "lib"); err != nil {
 		return nil, err
 	}
-	b.add("lib/render.sh", renderSh)
 	b.say("\n`lib/render.sh` fills the `${NAME}` placeholders in the `.tmpl` files from environment\n")
-	b.say("variables (POSIX sh + awk, also on macOS); see its header.\n")
+	b.say("variables (POSIX sh + awk, also on macOS); see its header. The other `lib/` files are the\n")
+	b.say("helpers the scenario scripts source.\n")
 
 	b.add("README.md", b.readme.String())
 	return b.files, nil
@@ -463,37 +483,50 @@ func renderScenarios(b *renderBuilder, p *poc.PoC) error {
 	defer os.RemoveAll(scratch)
 
 	b.say("## scenarios\n\n")
-	b.say("One directory per scenario, in dependency order. The numbered files are the manifests; each\n")
-	b.say("scenario's README says what it checks. Most assume the `%s` GatewayClass and VIPs in\n", deploy.GatewayClassName)
-	b.say("203.0.113.0/24 advertised to a BGP peer — adapt them for another cluster. Apply with\n")
-	b.say("`kubectl apply -f scenarios/<name>/` (files apply in name order); remove with\n")
-	b.say("`kubectl delete -f scenarios/<name>/`.\n\n")
-	b.say("Data-plane checks: `ocibnkctl scenario run` curls the VIPs from inside the external FRR container\n")
-	b.say("(`bnk-edge-frr-%s`), which learns them from TMM over BGP. On another cluster, curl from any\n", p.Cluster.Name)
-	b.say("host that learns those routes from your BGP peer.\n\n")
-	b.say("| Scenario | Rating | Depends on | Title |\n|---|---|---|---|\n")
+	b.say("One directory per scenario, in dependency order; each one's README says what it checks. Most\n")
+	b.say("assume the `%s` GatewayClass and VIPs in 203.0.113.0/24 advertised to a BGP peer —\n", deploy.GatewayClassName)
+	b.say("adapt them for another cluster.\n\n")
+	b.say("- **script** scenarios run by hand with `sh scenarios/<name>/apply.sh`, then `verify.sh`\n")
+	b.say("  (one JSON line per check) and `cleanup.sh`. With no edge client, run verify with\n")
+	b.say("  `EDGE_DRIVER=none` and the data-plane checks are skipped; `lib/edge.sh` explains how to\n")
+	b.say("  point it at your own client and BGP router.\n")
+	b.say("- **manifests** scenarios: `kubectl apply -f scenarios/<name>/manifests/` (files apply in name\n")
+	b.say("  order), `kubectl delete -f` the same to remove; the checks live in `ocibnkctl` for now.\n\n")
+	b.say("`ocibnkctl scenario run` runs the data-plane checks from inside the external FRR container\n")
+	b.say("(`bnk-edge-frr-%s`), which learns the VIPs from TMM over BGP.\n\n", p.Cluster.Name)
+	b.say("| Scenario | Rating | Form | Depends on | Title |\n|---|---|---|---|---|\n")
 
 	ctx := &scenarios.Context{PoC: p, PoCDir: scratch, DryRun: true, Out: io.Discard}
 	for _, s := range ordered {
-		paths, err := s.Manifests(ctx)
-		if err != nil {
-			return fmt.Errorf("scenario %s: render manifests: %w", s.Name(), err)
-		}
-		sort.Strings(paths)
 		dir := "scenarios/" + s.Name()
-		var names []string
-		for _, src := range paths {
-			body, err := os.ReadFile(src)
-			if err != nil {
+		form := "manifests"
+		if ks, ok := s.(interface{ KitDir() string }); ok {
+			// A script scenario is copied whole: its README, scripts,
+			// scenario.env and manifests/, exactly as in kit/.
+			form = "script"
+			if err := b.addKitTree(ks.KitDir(), dir); err != nil {
 				return err
 			}
-			name := filepath.Base(src)
-			names = append(names, name)
-			b.add(dir+"/"+name, string(body))
+		} else {
+			paths, err := s.Manifests(ctx)
+			if err != nil {
+				return fmt.Errorf("scenario %s: render manifests: %w", s.Name(), err)
+			}
+			sort.Strings(paths)
+			var names []string
+			for _, src := range paths {
+				body, err := os.ReadFile(src)
+				if err != nil {
+					return err
+				}
+				name := filepath.Base(src)
+				names = append(names, name)
+				b.add(dir+"/manifests/"+name, string(body))
+			}
+			b.add(dir+"/README.md", scenarioReadme(s, names))
 		}
-		b.add(dir+"/README.md", scenarioReadme(s, names))
 		deps := strings.Join(s.Dependencies(), ", ")
-		b.say("| [%s](%s/README.md) | %s | %s | %s |\n", s.Name(), dir, s.Rating(), orDefault(deps, "—"), s.Title())
+		b.say("| [%s](%s/README.md) | %s | %s | %s | %s |\n", s.Name(), dir, s.Rating(), form, orDefault(deps, "—"), s.Title())
 	}
 	b.say("\n")
 	return nil
@@ -512,16 +545,16 @@ func scenarioReadme(s scenarios.Scenario, manifests []string) string {
 		r.WriteString("the steps are in the description above.\n")
 	} else {
 		for _, m := range manifests {
-			fmt.Fprintf(&r, "- `%s`\n", m)
+			fmt.Fprintf(&r, "- `manifests/%s`\n", m)
 		}
 		r.WriteString("\nNot every file is applied unconditionally by `ocibnkctl scenario run`; check the\n")
 		r.WriteString("description above for ordering and waits between steps.\n")
 		for _, m := range manifests {
 			if strings.HasSuffix(m, ".tmpl") {
-				fmt.Fprintf(&r, "\n`%s` holds `${NAME}` placeholders that `ocibnkctl` fills from live cluster\n", m)
-				r.WriteString("state at apply time (e.g. a Service ClusterIP). Fill them with `NAME=<value> sh\n")
-				fmt.Fprintf(&r, "../../lib/render.sh %s | kubectl apply -f -`. `kubectl apply -f` on the directory\n", m)
-				r.WriteString("skips `.tmpl` files.\n")
+				fmt.Fprintf(&r, "\n`manifests/%s` holds `${NAME}` placeholders that `ocibnkctl` fills from live\n", m)
+				r.WriteString("cluster state at apply time (e.g. a Service ClusterIP). From this directory, fill them with\n")
+				fmt.Fprintf(&r, "`NAME=<value> sh ../../lib/render.sh manifests/%s | kubectl apply -f -`. `kubectl apply\n", m)
+				r.WriteString("-f` on the directory skips `.tmpl` files.\n")
 			}
 		}
 	}
