@@ -539,14 +539,7 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 	//    self-healing path. Treat the deploy as not-yet-successful until
 	//    this prerequisite settles.
 	fmt.Fprintln(out, "[4/5] Applying bnk-gatewayclass GatewayClass + waiting for Accepted=True ...")
-	if err := r.Apply(ctx, `apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: bnk-gatewayclass
-spec:
-  controllerName: f5.com/default-f5-cne-controller
-  description: "F5 BIG-IP Kubernetes Gateway managed by FLO"
-`); err != nil {
+	if err := r.Apply(ctx, deploy.RenderGatewayClass()); err != nil {
 		return fmt.Errorf("apply bnk-gatewayclass: %w", err)
 	}
 	if err := waitGatewayClassAccepted(ctx, r, out, 3*time.Minute, 5*time.Minute); err != nil {

@@ -257,6 +257,10 @@ func RunningTMMPods(ctx context.Context, r *Runner) ([]string, error) {
 	return pods, nil
 }
 
+// PasswdConfCmd writes the one-line passwd.conf imish needs, run in each TMM
+// pod's f5-tmm-routing container.
+const PasswdConfCmd = "echo 'enable password 0 zebos' > /config/zebos/rd0/passwd.conf"
+
 // InjectPasswdConfAll writes the one-line passwd.conf into every Running
 // TMM pod's f5-tmm-routing container — the gate bfd_watcher needs to
 // imish-load the ZeBOS config. The scenario only injects into the newest
@@ -275,7 +279,7 @@ func InjectPasswdConfAll(ctx context.Context, r *Runner) error {
 			for _, pod := range pods {
 				if e := r.Kubectl(ctx, "-n", "default", "exec", pod,
 					"-c", "f5-tmm-routing", "--",
-					"sh", "-c", "echo 'enable password 0 zebos' > /config/zebos/rd0/passwd.conf"); e != nil {
+					"sh", "-c", PasswdConfCmd); e != nil {
 					lastErr = e
 				}
 			}

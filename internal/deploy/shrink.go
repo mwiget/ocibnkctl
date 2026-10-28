@@ -92,6 +92,14 @@ func RenderShrinkPolicy(in ShrinkInputs) (string, error) {
 	return out.String(), nil
 }
 
+// KyvernoHelmArgs trims the Kyverno chart to the admission controller.
+var KyvernoHelmArgs = []string{
+	"--set", "backgroundController.enabled=false",
+	"--set", "cleanupController.enabled=false",
+	"--set", "reportsController.enabled=false",
+	"--set", "admissionController.replicas=1",
+}
+
 // InstallKyverno installs (or upgrades) Kyverno trimmed to just the
 // admission controller — mutate-on-admission needs nothing else, and
 // disabling the background / reports / cleanup controllers keeps Kyverno's
@@ -101,10 +109,7 @@ func InstallKyverno(ctx context.Context, r *Runner) error {
 	if err := r.HelmUpgrade(ctx,
 		"kyverno", version.KyvernoChart, version.KyvernoRepo,
 		"kyverno", version.KyvernoVersion, "",
-		"--set", "backgroundController.enabled=false",
-		"--set", "cleanupController.enabled=false",
-		"--set", "reportsController.enabled=false",
-		"--set", "admissionController.replicas=1",
+		KyvernoHelmArgs...,
 	); err != nil {
 		return err
 	}
