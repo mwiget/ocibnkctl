@@ -22,6 +22,8 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -125,4 +127,32 @@ func Scenario(name string) ScenarioDir {
 		panic("kit: " + err.Error()) // only on an invalid path pattern
 	}
 	return ScenarioDir{sub}
+}
+
+// Extract writes the kit directory dir (e.g. "lib", "platform",
+// "scenarios/<name>") to root/dir, replacing what is there, so its scripts
+// can run from disk. Shell scripts are executable, except .sh payloads under
+// a manifests/ directory (data shipped in a ConfigMap).
+func Extract(dir, root string) error {
+	if err := os.RemoveAll(filepath.Join(root, filepath.FromSlash(dir))); err != nil {
+		return err
+	}
+	return fs.WalkDir(FS, dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(root, filepath.FromSlash(p))
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o755)
+		}
+		body, err := FS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(p, ".sh") && !strings.Contains(p, "/manifests/") {
+			mode = 0o755
+		}
+		return os.WriteFile(dst, body, mode)
+	})
 }

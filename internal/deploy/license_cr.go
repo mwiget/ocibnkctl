@@ -1,10 +1,8 @@
 package deploy
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mwiget/ocibnkctl/kit"
 )
@@ -90,102 +88,6 @@ func RenderJWKSConfigMap(namespace string) (string, error) {
 		b.WriteString("    " + line + "\n")
 	}
 	return b.String(), nil
-}
-
-// LicenseState returns the License CR's status.state ("Active",
-// "Registering", "Activating", "PendingVerification", …), or "" when the
-// CR — or its CRD — doesn't exist yet. It exists to make deploy-cne
-// resume-safe: an already-Active license must NOT be re-applied, because a
-// re-apply makes CWC re-run device registration against F5's licensing
-// server, which fails with "RegistrationFailed: Function host is not
-// running" on an already-registered asset (observed live on the pipeline
-// resume path). A NotFound / missing-CRD lookup is not an error to the
-// caller — it just means "no state yet, proceed with the first-time apply".
-func LicenseState(ctx context.Context, r *Runner, name, namespace string) (string, error) {
-	if name == "" {
-		name = LicenseCRName
-	}
-	if namespace == "" {
-		namespace = SharedComponentNamespace
-	}
-	out, err := r.KubectlCapture(ctx, "-n", namespace, "get",
-		"license.k8s.f5net.com", name,
-		"-o", "jsonpath={.status.state}")
-	if err != nil {
-		msg := err.Error()
-		// CR absent, or the CRD itself not installed yet (first deploy).
-		if strings.Contains(msg, "NotFound") ||
-			strings.Contains(msg, "the server doesn't have a resource type") {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
-
-// WaitForLicenseActive polls `kubectl get license.k8s.f5net.com <name>
-// -o jsonpath={.status.state}` until it returns Active, or the timeout
-// fires. F5 ships a "STATE" printer column that walks through
-// PendingVerification → Active (connected mode), or stays at
-// PendingVerification until the operator runs the disconnected-mode
-// curl ritual. We accept Active as the only success state — the
-// caller should fall through gracefully (warn, not error) for
-// PendingVerification because disconnected-mode customers need that.
-func WaitForLicenseActive(ctx context.Context, r *Runner, name, namespace string, timeout time.Duration) error {
-	if name == "" {
-		name = LicenseCRName
-	}
-	if namespace == "" {
-		namespace = SharedComponentNamespace
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		out, err := r.KubectlCapture(ctx, "-n", namespace, "get",
-			"license.k8s.f5net.com", name,
-			"-o", "jsonpath={.status.state}")
-		state := strings.TrimSpace(out)
-		switch state {
-		case "Active":
-			return nil
-		case "Activating":
-			// Transitional state CWC reports after Registering succeeds
-			// but before the License CR's status.state flips to Active.
-			// Keep polling — same shape as Registering.
-			if time.Now().After(deadline) {
-				return fmt.Errorf("license %s/%s stuck at Activating after %s",
-					namespace, name, timeout)
-			}
-		case "Registering":
-			// CWC is talking to F5's licensing server to register the
-			// cluster's digital asset. First-time registration on a
-			// connected-mode cluster — takes 5-15 minutes. Keep polling.
-			if time.Now().After(deadline) {
-				return fmt.Errorf("license %s/%s stuck at Registering after %s (CWC could not complete device registration; check `kubectl -n %s describe license %s` for the CWC error)",
-					namespace, name, timeout, namespace, name)
-			}
-		case "PendingVerification":
-			// disconnected-mode customers stay here forever until they
-			// run the manual curl-the-licensing-server ritual. Bubble
-			// up as a typed sentinel so the caller can downgrade to a
-			// warning.
-			if time.Now().After(deadline) {
-				return ErrLicensePendingVerification
-			}
-		case "":
-			// Status not yet populated by CWC — keep polling.
-			if err != nil && !strings.Contains(err.Error(), "NotFound") {
-				return fmt.Errorf("kubectl get license %s/%s: %w", namespace, name, err)
-			}
-		default:
-			return fmt.Errorf("license %s/%s reached unexpected state %q (expected Active)",
-				namespace, name, state)
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("license %s/%s did not reach Active within %s (last state %q)",
-				namespace, name, timeout, state)
-		}
-		time.Sleep(5 * time.Second)
-	}
 }
 
 // ErrLicensePendingVerification signals the disconnected-mode case

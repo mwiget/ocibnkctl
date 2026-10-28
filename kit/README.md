@@ -40,6 +40,39 @@ Scenario files without `.tmpl` are applied verbatim, never rendered.
 
 ## platform/
 
+### Installing BNK with the scripts
+
+`ocibnkctl deploy prereqs|flo|shrink|cne` runs these same scripts; by hand,
+on any cluster `kubectl` points at:
+
+```sh
+export KUBECONFIG=$PWD/kubeconfig FAR_KEY=keys/f5-far-auth-key.tgz JWT_FILE=keys/.jwt
+sh kit/platform/prereqs/install.sh   # namespaces, FAR pull secret, cert-manager
+sh kit/platform/flo/install.sh       # release manifest → FLO + CWC certificates
+sh kit/platform/shrink/install.sh    # only on hosts below the resource floor
+sh kit/platform/cne/install.sh       # data-plane prep, CNEInstance, License, GatewayClass, gates
+```
+
+| File | What it is |
+|---|---|
+| `platform.env` | every variable the scripts read, with the defaults of a default ocibnkctl PoC (BNK release, chart and image pins, `DATAPLANE_MODE`, `TMM_WORKERS`, `EDGE_OCTET`, CNEInstance settings, `NODE_EXEC`); the environment wins |
+| `lib.sh` | the scripts' helpers: FAR credential (`far_init`, `registry_login`), `jwt_type`, the per-mode CNEInstance variables (`cne_vars`, `render_cne`), quota-retrying apply and the readiness waits |
+| `prereqs/install.sh` | namespaces, the `far-secret` pull secret in each, cert-manager |
+| `flo/install.sh` | pulls the release manifest and resolves the FLO / f5-cert-gen chart versions from it, the bnk-ca issuer chain, FLO, the CWC API certificates (`gen_cert.sh`, locally or in `K8S_TOOLS_IMAGE`) |
+| `shrink/install.sh` | Kyverno + the request-capping policy, kube-system caps, F5 pod recycle |
+| `cne/install.sh` | Multus / whereabouts / NADs / OcNOS template for the data plane, the CNEInstance, the License (skipped when Active; test JWTs get the JWKS ConfigMap), GatewayClass, Infra, the mode's finishing steps, then the TMM and workload gates |
+
+Node-level prep (the bridge CNI plugin, bridge netfilter) runs through
+`NODE_EXEC`, a prefix that runs a command on a node (`docker exec` for
+ocibnkctl's k3s-in-containers); left empty, the script says what to do on the
+nodes yourself. With `KIT_STATE` set, the scripts record what they rendered
+and resolved there (`ocibnkctl`: `<PoC>/artifacts`). The CNEInstance they
+render is checked against ocibnkctl's own renderer for every golden PoC shape
+(`TestPlatformCNEMatchesGo`), and `platform.env`'s defaults against
+ocibnkctl's pins (`TestPlatformEnvMatchesGo`).
+
+### Manifests
+
 Defaults are what `ocibnkctl` passes for a default PoC.
 
 ### cluster/ — applied by `cluster up`

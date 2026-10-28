@@ -76,9 +76,9 @@ func ParseReleaseManifest(body []byte) (*ReleaseManifest, error) {
 	return m, nil
 }
 
-func (m *ReleaseManifest) Chart(name string) string  { return m.HelmCharts[name] }
-func (m *ReleaseManifest) Image(name string) string  { return m.DockerImgs[name] }
-func (m *ReleaseManifest) RawYAML() []byte           { return m.rawManifest }
+func (m *ReleaseManifest) Chart(name string) string { return m.HelmCharts[name] }
+func (m *ReleaseManifest) Image(name string) string { return m.DockerImgs[name] }
+func (m *ReleaseManifest) RawYAML() []byte          { return m.rawManifest }
 
 // PullReleaseManifest authenticates to repo.f5.com with FAR credentials,
 // pulls the f5-bigip-k8s-manifest chart at the requested version, and

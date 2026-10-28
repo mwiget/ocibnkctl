@@ -1,48 +1,8 @@
 package deploy
 
 import (
-	"context"
 	"fmt"
-	"strings"
-
-	"github.com/mwiget/ocibnkctl/internal/version"
 )
-
-// EnsureWhereabouts installs the whereabouts cluster-wide IPAM plugin
-// (idempotent): its two CRDs (the cluster-wide IP allocation store) and the
-// install DaemonSet, which seeds the whereabouts CNI binary into /opt/cni/bin
-// and writes its CNI conf on every node. A NAD's `ipam: {type: whereabouts}`
-// then hands each attached pod a UNIQUE address from one shared pool — so a
-// single bnk-bgp NAD + a TMM DaemonSet (one pod per worker) scales to many
-// workers without per-node net1 IP collisions on the shared edge L2. The
-// DaemonSet image is pinned to the release tag (upstream ships :latest). All
-// three manifests are SHA-verified before apply (see version.Whereabouts*).
-func EnsureWhereabouts(ctx context.Context, r *Runner) error {
-	for _, crd := range []struct{ url, sha string }{
-		{version.WhereaboutsIPPoolCRDURL, version.WhereaboutsIPPoolCRDSHA},
-		{version.WhereaboutsReservationCRDURL, version.WhereaboutsReservationCRDSHA},
-	} {
-		body, err := downloadAndVerify(ctx, crd.url, crd.sha)
-		if err != nil {
-			return fmt.Errorf("whereabouts CRD: %w", err)
-		}
-		if err := r.Apply(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply whereabouts CRD: %w", err)
-		}
-	}
-	ds, err := downloadAndVerify(ctx, version.WhereaboutsDaemonSetURL, version.WhereaboutsDaemonSetSHA)
-	if err != nil {
-		return fmt.Errorf("whereabouts daemonset: %w", err)
-	}
-	pinned := strings.ReplaceAll(string(ds),
-		"ghcr.io/k8snetworkplumbingwg/whereabouts:latest",
-		"ghcr.io/k8snetworkplumbingwg/whereabouts:"+version.WhereaboutsTag)
-	if err := r.Apply(ctx, pinned); err != nil {
-		return fmt.Errorf("apply whereabouts daemonset: %w", err)
-	}
-	return r.Kubectl(ctx, "-n", "kube-system", "rollout", "status",
-		"daemonset/whereabouts", "--timeout=3m")
-}
 
 // RenderBGPNADWhereabouts renders the bnk-bgp bridge NAD using whereabouts
 // cluster-wide IPAM instead of per-node host-local. Under the wholeCluster

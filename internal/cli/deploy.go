@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +18,14 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/version"
+	"github.com/mwiget/ocibnkctl/kit"
 )
+
+// The deploy phases are kit/platform/<phase>/install.sh (docs/agentic-kit-
+// plan.md, Phase 4): the same scripts an operator or agent runs by hand on
+// any cluster. ocibnkctl adds what is PoC-specific: the --yolo/--confirm
+// gates, poc.yaml (values in, status out), cluster reachability, the
+// journal, and its own version pins passed as the scripts' variables.
 
 func newDeployCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -44,7 +52,8 @@ func newDeployPrereqsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "prereqs",
 		Short: "Install namespaces + cert-manager + FAR pull secret (DESTRUCTIVE)",
-		Long: `Phase deploy-1: install everything BNK needs before the FLO chart:
+		Long: `Phase deploy-1: install everything BNK needs before the FLO chart.
+Runs kit/platform/prereqs/install.sh (also usable by hand on any cluster):
 
   1. Tools preflight (kubectl, helm).
   2. Extract FAR pull secret from the tgz at bnk.far_key_ref.
@@ -78,64 +87,10 @@ func runDeployPrereqs(ctx context.Context, out io.Writer, f *deployPrereqsFlags)
 	if _, err := os.Stat(farPath); err != nil {
 		return fmt.Errorf("FAR tgz not found at %s — drop the file there and retry", farPath)
 	}
-
-	r := &deploy.Runner{
-		KubeconfigPath: kubeconfig,
-		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-		Out:            prefixWriter{w: out, prefix: "      | "},
-	}
-
-	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\nFAR:     %s\n\n",
-		p.Metadata.Name, kubeconfig, farPath)
-
-	fmt.Fprintln(out, "[1/5] Tools preflight ...")
-	if err := r.CheckTools(ctx); err != nil {
+	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\nFAR:     %s\n\n", p.Metadata.Name, kubeconfig, farPath)
+	if err := runPlatform(ctx, out, "prereqs", platformEnv(repo, p, kubeconfig)); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "      ok")
-
-	fmt.Fprintln(out, "[2/5] Extracting FAR dockerconfigjson ...")
-	dockerCfg, err := deploy.ExtractFARDockerConfig(farPath)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "      ok — %d bytes\n", len(dockerCfg))
-
-	fmt.Fprintln(out, "[3/5] Ensuring namespaces ...")
-	namespaces := []string{"f5-operators", deploy.SharedComponentNamespace, "default"}
-	for _, ns := range namespaces {
-		if ns != "default" {
-			if err := r.Apply(ctx, deploy.RenderNamespace(ns)); err != nil {
-				return err
-			}
-		}
-	}
-	fmt.Fprintln(out, "      ok")
-
-	fmt.Fprintln(out, "[4/5] Applying far-secret in each namespace ...")
-	for _, ns := range namespaces {
-		if err := r.Apply(ctx, deploy.RenderFARSecret(ns, dockerCfg)); err != nil {
-			return err
-		}
-	}
-	fmt.Fprintln(out, "      ok")
-
-	fmt.Fprintln(out, "[5/5] Installing cert-manager ...")
-	if err := r.HelmUpgrade(ctx,
-		"cert-manager",
-		"cert-manager",
-		version.CertManagerRepo,
-		"cert-manager",
-		version.CertManagerVersion,
-		"installCRDs: true\n",
-	); err != nil {
-		return err
-	}
-	if err := r.Wait(ctx, "cert-manager", "Available", "deployment/cert-manager-webhook", 5*time.Minute); err != nil {
-		return fmt.Errorf("cert-manager-webhook not Available: %w", err)
-	}
-	fmt.Fprintln(out, "      cert-manager Ready.")
-
 	p.Status.Deploy = "in_progress"
 	p.Status.LastPhaseAt = time.Now().UTC()
 	if err := savePoC(repo, p, out); err != nil {
@@ -158,7 +113,7 @@ func newDeployFLOCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "flo",
 		Short: "Install F5 Lifecycle Operator + CWC API certs (DESTRUCTIVE)",
-		Long: `Phase deploy-2: install FLO:
+		Long: `Phase deploy-2: install FLO. Runs kit/platform/flo/install.sh:
 
   1. Pull release-manifest from repo.f5.com to resolve FLO + cert-gen
      chart versions for BNK ` + version.CNEManifestVersion + `.
@@ -167,7 +122,8 @@ func newDeployFLOCmd() *cobra.Command {
   3. Apply bnk-ca cert-issuer chain.
   4. helm install FLO (manifest-resolved version).
   5. Wait for FLO controller Available.
-  6. Generate + apply CWC API certs (gen_cert.sh in alpine/k8s).
+  6. Generate + apply CWC API certs (gen_cert.sh; alpine/k8s when
+     make/openssl/python3 are not installed locally).
 
 Required gates:
   --yolo                  acknowledge cluster writes
@@ -200,104 +156,17 @@ func runDeployFLO(ctx context.Context, out io.Writer, f *deployFLOFlags) error {
 			return fmt.Errorf("%s not found at %s — drop the file there and retry", x.what, x.path)
 		}
 	}
-
-	r := &deploy.Runner{
-		KubeconfigPath: kubeconfig,
-		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-		Out:            prefixWriter{w: out, prefix: "      | "},
-	}
-
 	fmt.Fprintf(out, "PoC:      %s\nCluster:  %s\nJWT:      %s\nManifest: %s\n\n",
 		p.Metadata.Name, kubeconfig, jwtPath, version.CNEManifestVersion)
-
-	// 1. Pull release-manifest.
-	fmt.Fprintln(out, "[1/6] Pulling release-manifest from repo.f5.com ...")
-	farAuth, err := deploy.ExtractFARRegistryAuth(farPath)
+	if err := runPlatform(ctx, out, "flo", platformEnv(repo, p, kubeconfig)); err != nil {
+		return err
+	}
+	// The script records the chart versions it resolved from the manifest.
+	rel, err := readEnvFile(filepath.Join(repo, "artifacts", "release.env"))
 	if err != nil {
-		return fmt.Errorf("extract FAR registry creds: %w", err)
+		return fmt.Errorf("read the resolved chart versions: %w", err)
 	}
-	mfCache := filepath.Join(repo, "artifacts", "release-manifest")
-	manifest, err := deploy.PullReleaseManifest(ctx, farAuth, version.CNEManifestVersion, mfCache,
-		filepath.Join(repo, "artifacts", "helm-home"))
-	if err != nil {
-		return fmt.Errorf("pull release-manifest: %w", err)
-	}
-	floVer := manifest.Chart("charts/f5-lifecycle-operator")
-	certGenVer := manifest.Chart("utils/f5-cert-gen")
-	if floVer == "" {
-		return fmt.Errorf("release-manifest %s has no charts/f5-lifecycle-operator", manifest.Version)
-	}
-	if certGenVer == "" {
-		return fmt.Errorf("release-manifest %s has no utils/f5-cert-gen", manifest.Version)
-	}
-	fmt.Fprintf(out, "      FLO chart    %s\n", floVer)
-	fmt.Fprintf(out, "      f5-cert-gen  %s\n", certGenVer)
-	p.Versions.FLOChart = floVer
-	if err := savePoC(repo, p, out); err != nil {
-		return err
-	}
-
-	// 2. JWT inspection.
-	fmt.Fprintln(out, "[2/6] Inspecting JWT (diagnostic) ...")
-	info, err := deploy.InspectJWT(jwtPath)
-	if err != nil {
-		return err
-	}
-	if _, err := readJWT(jwtPath); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "      type=%s  jku=%s  sub=%s\n", info.Type, info.JKU, redactJWTSub(info.Sub))
-
-	// 3. bnk-ca cert-issuer chain.
-	fmt.Fprintln(out, "[3/6] Applying bnk-ca cert-issuer chain ...")
-	if err := r.Apply(ctx, deploy.CertIssuerChain()); err != nil {
-		return err
-	}
-	if err := r.Wait(ctx, "cert-manager", "Ready", "certificate/bnk-ca", 3*time.Minute); err != nil {
-		return fmt.Errorf("bnk-ca cert not ready: %w", err)
-	}
-
-	// 4. FLO helm install.
-	fmt.Fprintln(out, "[4/6] Rendering FLO values + helm install ...")
-	values, err := deploy.RenderFLOValues(deploy.FLOInputs{
-		Namespace:                "f5-operators",
-		SharedComponentNamespace: deploy.SharedComponentNamespace,
-		ClusterIssuer:            "bnk-ca-cluster-issuer",
-	})
-	if err != nil {
-		return err
-	}
-	rendered := filepath.Join(repo, "artifacts", "flo-values-rendered.yaml")
-	if err := os.WriteFile(rendered, []byte(values), 0o600); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "      rendered → %s\n", rendered)
-	if err := r.HelmUpgradeOCI(ctx, farAuth,
-		"flo", version.FLOChartOCIRef,
-		"f5-operators", floVer, values,
-	); err != nil {
-		return err
-	}
-
-	// 5. Wait for FLO.
-	fmt.Fprintln(out, "[5/6] Waiting for FLO controller Available ...")
-	if err := r.Wait(ctx, "f5-operators", "Available", "deployment", 5*time.Minute,
-		"-l", "app.kubernetes.io/name=f5-lifecycle-operator"); err != nil {
-		fmt.Fprintf(out, "      WARN: FLO not Ready within 5min: %v\n", err)
-	} else {
-		fmt.Fprintln(out, "      FLO controller Ready.")
-	}
-
-	// 6. CWC API certs.
-	fmt.Fprintln(out, "[6/6] Generating + applying CWC API certs ...")
-	certsWork := filepath.Join(repo, "artifacts", "cwc-certs")
-	if err := deploy.PullAndApplyCWCCerts(ctx, r, farAuth, certGenVer, certsWork,
-		deploy.SharedComponentNamespace,
-		prefixWriter{w: out, prefix: "      | "}); err != nil {
-		return fmt.Errorf("CWC cert preflight: %w", err)
-	}
-	fmt.Fprintln(out, "      cwc-license-certs + cwc-license-client-certs applied.")
-
+	p.Versions.FLOChart = rel["FLO_CHART_VERSION"]
 	p.Status.LastPhaseAt = time.Now().UTC()
 	if err := savePoC(repo, p, out); err != nil {
 		return err
@@ -318,12 +187,16 @@ func newDeployCNECmd() *cobra.Command {
 	f := &deployCNEFlags{}
 	cmd := &cobra.Command{
 		Use:   "cne",
-		Short: "Apply CNEInstance + License CR (DESTRUCTIVE)",
-		Long: `Phase deploy-3: apply the workload custom resources:
+		Short: "Apply the data-plane prerequisites, CNEInstance, License, GatewayClass (DESTRUCTIVE)",
+		Long: `Phase deploy-3: the BNK workload. Runs kit/platform/cne/install.sh:
 
-  1. Apply CNEInstance (demoMode=true, TMM pinned via nodeSelector).
-  2. Apply License CR with the operator's JWT.
-  3. Wait for License to become Active (or warn).
+  0. Data-plane prep for bnk.tmm_dataplane_mode (Multus, whereabouts,
+     NADs, node prep, the OcNOS template).
+  1. Apply the CNEInstance (demoMode, TMM DaemonSet on app=f5-tmm workers).
+  2. Apply the License CR with the operator's JWT (skipped when Active).
+  3. Wait for the License to become Active (or warn).
+  4. GatewayClass (Accepted) and the Infra IPAM CR, then the mode's
+     finishing steps and the TMM / workload readiness gates.
 
 Required gates:
   --yolo                  acknowledge cluster writes
@@ -347,18 +220,9 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		p.Metadata.Name, "deploy cne"); err != nil {
 		return err
 	}
-	jwtPath := resolveRef(repo, p.BNK.JWTRef)
-	jwt, err := readJWT(jwtPath)
-	if err != nil {
+	if _, err := readJWT(resolveRef(repo, p.BNK.JWTRef)); err != nil {
 		return fmt.Errorf("read JWT: %w", err)
 	}
-
-	r := &deploy.Runner{
-		KubeconfigPath: kubeconfig,
-		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-		Out:            prefixWriter{w: out, prefix: "      | "},
-	}
-
 	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, kubeconfig)
 
 	// host_profile normally comes from poc.yaml — `init` pins it to small on a
@@ -372,326 +236,9 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 		fmt.Fprintf(out, "host has %d cores < %d-core floor and poc.yaml host_profile is unset — using host_profile=small (TMM metrics subsystem off)\n\n",
 			runtime.NumCPU(), version.MinBaseline.Cores)
 	}
-
-	// 0. All-active data-plane prep (opt-in via bnk.tmm_dataplane_mode).
-	// Multus, the bridge CNI plugin, and the NAD(s) must all exist BEFORE
-	// the CNEInstance attaches the NAD to TMM — otherwise the TMM pods get
-	// stuck in sandbox creation ("failed to find plugin bridge"). All
-	// steps are idempotent.
-	switch {
-	case p.BNK.IsSelfIPDAG():
-		fmt.Fprintln(out, "[0/4] Active/active prep: Multus + bridge CNI + DAG NAD ...")
-		if err := deploy.EnsureMultus(ctx, r); err != nil {
-			return fmt.Errorf("active/active: ensure multus: %w", err)
-		}
-		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
-			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
-		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, strings.Fields(namesOut), out)
-		if err := r.Apply(ctx, deploy.RenderDAGNAD("default")); err != nil {
-			return fmt.Errorf("active/active: apply DAG NAD: %w", err)
-		}
-	case p.BNK.IsAnycastBGP():
-		fmt.Fprintln(out, "[0/4] Anycast-BGP prep: Multus + whereabouts + bridge CNI + bnk-bgp NAD ...")
-		if err := deploy.EnsureMultus(ctx, r); err != nil {
-			return fmt.Errorf("anycast-bgp: ensure multus: %w", err)
-		}
-		// Cluster-wide IPAM: under wholeCluster TMM is a DaemonSet (one pod
-		// per worker) all attaching the single bnk-bgp NAD, so its IPAM must
-		// allocate from one shared store — whereabouts — to give each pod a
-		// unique net1 without collisions on the shared bnk-edge L2.
-		if err := deploy.EnsureWhereabouts(ctx, r); err != nil {
-			return fmt.Errorf("anycast-bgp: ensure whereabouts: %w", err)
-		}
-		namesOut, _ := r.KubectlCapture(ctx, "get", "nodes", "-o",
-			`jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
-		nodes := strings.Fields(namesOut)
-		seedBridgeCNIPlugin(ctx, p.Cluster.Provider, nodes, out)
-		// Packets on the bnk-bgp bridge must bypass the node's iptables, or
-		// Calico's natOutgoing MASQUERADE breaks the data plane (see the
-		// scenario's disableBridgeNetfilter rationale). Docker-only.
-		disableBridgeNetfilter(ctx, p.Cluster.Provider, nodes, out)
-		// TMM's net1 NAD (whereabouts, .160-.250) on br-bnk-bgp — which
-		// `cluster up` already enslaved onto the shared bnk-edge L2 alongside
-		// the external FRR (.41) and origin (.50). No in-cluster FRR: the BGP
-		// peer is the external bnk-edge FRR container.
-		if err := r.Apply(ctx, deploy.RenderBGPNADWhereabouts("default", p.Cluster.EdgeNet())); err != nil {
-			return fmt.Errorf("anycast-bgp: apply bnk-bgp NAD: %w", err)
-		}
-		// Pre-seed the OcNOS routing template BEFORE the CNEInstance exists,
-		// so FLO's TMM DaemonSet mounts the final config on its very first
-		// boot. Step [6/6] used to apply this only after TMM was already up,
-		// which cost a full second rollout (~170s — the dominant term in this
-		// phase). Applying it here is free: the content depends only on the
-		// edge FRR's IP, which `cluster up` fixed long before now. If FLO
-		// later reasserts its own copy, [6/6] still detects the drift and
-		// falls back to the re-roll, so this is a fast path, not a new
-		// requirement.
-		if err := r.Apply(ctx, deploy.RenderAnycastZebosConfigMap("default",
-			cluster.EdgeFRRIP(p.Cluster.EdgeNet()), "")); err != nil {
-			fmt.Fprintf(out, "      WARN: pre-seed OcNOS template: %v (falling back to a TMM re-roll in [6/6])\n", err)
-		}
-	}
-
-	// 1. CNEInstance.
-	fmt.Fprintln(out, "[1/4] Rendering + applying CNEInstance (demoMode=true) ...")
-	cne, err := deploy.RenderCNEInstance(p)
-	if err != nil {
+	if err := runPlatform(ctx, out, "cne", platformEnv(repo, p, kubeconfig)); err != nil {
 		return err
 	}
-	rendered := filepath.Join(repo, "artifacts", "cne-instance-rendered.yaml")
-	if err := os.WriteFile(rendered, []byte(cne), 0o600); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "      rendered → %s\n", rendered)
-	if err := r.Apply(ctx, cne); err != nil {
-		return err
-	}
-
-	// 2. License CR. The licenses.k8s.f5net.com CRD is installed by
-	// FLO's crd-installer in response to the CNEInstance we just
-	// applied — empirically, it doesn't exist until then. Wait for
-	// both --for=create (CRD object exists) and condition=Established
-	// (apiserver has bound the schema) before applying.
-	//
-	// The --for=create wait is generous (8m): on the FIRST deploy of a
-	// given manifestVersion, FLO doesn't yet have a CNEManifest, so it
-	// pulls the release manifest from repo.f5.com itself before it can
-	// install any CRDs. That pull retries every few seconds and can take
-	// several minutes when cluster DNS is flaky resolving repo.f5.com
-	// (coredns "server misbehaving" / IPv6 unreachable) — observed ~5min
-	// on a fresh 2.3.1 cluster. A 3m wait would give up just before FLO
-	// succeeds, so we wait 8m for the CRD to appear.
-	fmt.Fprintln(out, "[2/4] Waiting for license CRD, then applying License CR ...")
-	// Resume-safe short-circuit: if the License CR is already Active (this is
-	// a re-apply / pipeline resume), re-applying it makes CWC re-run device
-	// registration against F5's licensing server, which fails with
-	// "Function host is not running" on an already-registered asset. Skip the
-	// re-apply + Active-wait entirely and go straight to the GatewayClass.
-	if state, err := deploy.LicenseState(ctx, r,
-		deploy.LicenseCRName, deploy.SharedComponentNamespace); err != nil {
-		return fmt.Errorf("check existing license state: %w", err)
-	} else if state == "Active" {
-		fmt.Fprintln(out, "      license already Active — skipping re-apply + registration (resume-safe).")
-	} else {
-		if err := r.Kubectl(ctx, "wait", "--for=create",
-			"crd/licenses.k8s.f5net.com", "--timeout=8m"); err != nil {
-			return fmt.Errorf("license CRD never created (FLO did not reconcile?): %w", err)
-		}
-		if err := r.Wait(ctx, "", "Established",
-			"crd/licenses.k8s.f5net.com", 3*time.Minute); err != nil {
-			return fmt.Errorf("license CRD did not become Established: %w", err)
-		}
-		lic := deploy.LicenseInputs{JWT: jwt}
-		// A tst JWT needs TEEM's current tst JWKS: CWC's built-in tst
-		// certs expired, so without the override the License never
-		// verifies. Prod JWTs keep CWC's defaults.
-		if info, err := deploy.InspectJWT(jwtPath); err == nil && info.Type == "tst" {
-			cm, err := deploy.RenderJWKSConfigMap(deploy.SharedComponentNamespace)
-			if err != nil {
-				return err
-			}
-			if err := r.Apply(ctx, cm); err != nil {
-				return fmt.Errorf("apply JWKS ConfigMap: %w", err)
-			}
-			lic.JWKSConfigMap = deploy.JWKSConfigMapName
-			fmt.Fprintf(out, "      tst JWT — applied %s/%s, License CR references it.\n",
-				deploy.SharedComponentNamespace, deploy.JWKSConfigMapName)
-		}
-		cr, err := deploy.RenderLicenseCR(lic)
-		if err != nil {
-			return err
-		}
-		// CWC creates a ResourceQuota (f5-single-license-quota) when it
-		// reconciles License; for a brief window, `kubectl apply` fails
-		// with "status unknown for quota". Retry up to ~100s.
-		if err := applyWithQuotaRetry(ctx, r, cr, "f5-single-license-quota", 100*time.Second, out); err != nil {
-			return fmt.Errorf("apply License CR: %w", err)
-		}
-
-		// 3. Wait for License Active.
-		fmt.Fprintln(out, "[3/4] Waiting for License Active ...")
-		if err := deploy.WaitForLicenseActive(ctx, r,
-			deploy.LicenseCRName, deploy.SharedComponentNamespace,
-			20*time.Minute); err != nil {
-			if strings.Contains(err.Error(), "PendingVerification") {
-				fmt.Fprintf(out, "      WARN: license stuck at PendingVerification (disconnected mode? follow F5 docs to register manually)\n")
-			} else {
-				fmt.Fprintf(out, "      WARN: %v\n", err)
-			}
-		} else {
-			fmt.Fprintln(out, "      License Active.")
-		}
-	}
-
-	// 4. Apply the cluster-scoped GatewayClass that every BNK Gateway
-	//    references. This used to live in the http-routing-e2e scenario
-	//    only, which meant any other scenario creating a Gateway BEFORE
-	//    http-routing-e2e ran (which under topo-sorted --all is every
-	//    Gateway-creating scenario) had its Gateway marked-for-deletion
-	//    by f5-cne-controller — log line: "Not able to find gatewayClass
-	//    object: bnk-gatewayclass". The GatewayClass is platform-level
-	//    infrastructure, not test scaffolding, so it belongs here.
-	//
-	//    Block until f5-cne-controller has Accepted the GatewayClass —
-	//    if we declare DONE before the controller picks it up, the very
-	//    next workload to create a Gateway races the controller and the
-	//    Gateway lands in "Pending: Waiting for controller" with no
-	//    self-healing path. Treat the deploy as not-yet-successful until
-	//    this prerequisite settles.
-	fmt.Fprintln(out, "[4/5] Applying bnk-gatewayclass GatewayClass + waiting for Accepted=True ...")
-	if err := r.Apply(ctx, deploy.RenderGatewayClass()); err != nil {
-		return fmt.Errorf("apply bnk-gatewayclass: %w", err)
-	}
-	if err := waitGatewayClassAccepted(ctx, r, out, 3*time.Minute, 5*time.Minute); err != nil {
-		return err
-	}
-
-	//    Alongside it, the BNK 2.4 platform Infra CR: the singleton IPAM
-	//    source that GatewaySettings reference for address-less Gateways
-	//    (F5BnkGateway pools are gone in 2.4). Same platform-level status as
-	//    the GatewayClass, so it lives here rather than in a scenario.
-	//
-	//    Skipped entirely in selfip-dag, which runs the LEGACY SPK network
-	//    model (USE_GATEWAY_SETTINGS=false). There the controller never
-	//    reconciles an Infra CR, so applying one only buys a guaranteed
-	//    3-minute wait and a failed deploy — and the IPAM pool it carries is
-	//    unusable in that mode anyway. See docs/bnk-2.4.0-doc-errata.md #26.
-	if p.BNK.IsSelfIPDAG() {
-		fmt.Fprintf(out, "      Skipping Infra %s: %s runs the legacy SPK network model "+
-			"(USE_GATEWAY_SETTINGS=false), where Infra/GatewaySettings are not reconciled.\n",
-			deploy.InfraName, poc.DataplaneSelfIPDAG)
-		fmt.Fprintln(out, "      Address-less Gateways (the fic-dynamic-ip scenario) are unavailable in this mode.")
-	} else {
-		fmt.Fprintf(out, "      Applying Infra %s (IPAM pool %s = %s-%s) + waiting for Programmed=True ...\n",
-			deploy.InfraName, deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
-		//    FLO guards the singleton with f5-single-infra-quota; a fast deploy
-		//    can reach this apply before the quota controller has populated it.
-		if err := applyWithQuotaRetry(ctx, r, deploy.RenderInfra("default"), "f5-single-infra-quota", 6*time.Minute, out); err != nil {
-			return fmt.Errorf("apply Infra: %w", err)
-		}
-		if err := waitInfraProgrammed(ctx, r, out, 3*time.Minute); err != nil {
-			return err
-		}
-	}
-
-	// 5. TMM rollout strategy.
-	//
-	// Under wholeCluster, FLO runs TMM as a DaemonSet, not a Deployment. A
-	// DaemonSet's default updateStrategy is already RollingUpdate with
-	// maxUnavailable=1 — i.e. it rolls ONE TMM pod at a time so the other
-	// N-1 keep serving across a reconfig, which is exactly the behaviour the
-	// old Deployment-strategy patch hand-crafted (and there's one pod per
-	// app=f5-tmm node, so there's no surge/co-location risk to design
-	// around). So there's nothing to patch here — the desired rollout
-	// shape is the DaemonSet default.
-	fmt.Fprintln(out, "[5/5] TMM rollout: DaemonSet default (RollingUpdate maxUnavailable=1) — no patch needed.")
-
-	// 6. All-active data-plane finalize. Done last because it needs the
-	// rolled TMM pods up with net1 attached.
-	switch {
-	case p.BNK.IsSelfIPDAG():
-		// Once TMM has net1 (mapres grabs it as interface "1.1"), program
-		// the F5SPKVlan with one self-IP per TMM so each leaves standby and
-		// becomes active, plus pod_hash for the stateless DAG.
-		n := p.Cluster.Workers()
-		selfIPs := deploy.DAGSelfIPs(n)
-		fmt.Fprintf(out, "[6/6] Active/active: F5SPKVlan with %d self-IP(s) %v + pod_hash DAG ...\n", n, selfIPs)
-		waitTMMNet1(ctx, r, deploy.DAGNADName, 3*time.Minute, out)
-		if err := r.Apply(ctx, deploy.RenderTMMVlan("default", selfIPs)); err != nil {
-			fmt.Fprintf(out, "      WARN: apply F5SPKVlan: %v (TMMs stay standby)\n", err)
-			break
-		}
-		// Applying the CR is not the same as programming TMM. BNK 2.4 only
-		// reconciles F5SPKVlan in the legacy SPK network model; under
-		// USE_GATEWAY_SETTINGS=true the CR is accepted and then silently
-		// ignored — no status, no gRPC push, TMM left with a bare interface
-		// 1.1 and no self-IP. Reporting "N TMM(s) active" without checking is
-		// how that stayed invisible, so wait for Programmed and say what
-		// actually happened.
-		if err := deploy.WaitVlanProgrammed(ctx, r, deploy.DAGVlanName, 2*time.Minute); err != nil {
-			fmt.Fprintf(out, "      WARN: F5SPKVlan %s did not reach Programmed: %v\n", deploy.DAGVlanName, err)
-			fmt.Fprintf(out, "      TMMs stay standby (no self-IP on interface %s). Check the CNE controller's\n", deploy.DAGInterface)
-			fmt.Fprintln(out, "      USE_GATEWAY_SETTINGS is false — the legacy SPK model is the only one that")
-			fmt.Fprintln(out, "      reconciles F5SPKVlan. See docs/bnk-2.4.0-doc-errata.md #26.")
-			break
-		}
-		fmt.Fprintf(out, "      F5SPKVlan %s Programmed; %d TMM(s) active, each serving its own node's ingress\n",
-			deploy.DAGVlanName, n)
-	case p.BNK.IsAnycastBGP():
-		// Every TMM peers the EXTERNAL bnk-edge FRR (created by `cluster up`,
-		// at EdgeFRRIP on the shared L2) over net1 and advertises its routes
-		// over BGP. Apply the cluster-wide OcNOS template (one neighbor = the
-		// external FRR; router-id is the per-pod %%POD_IP%% token FLO expands),
-		// roll TMM once so it loads the config, inject passwd.conf (imish
-		// auth), then re-trigger redistribution (OcNOS only advertises once the
-		// redistribute statement is re-issued at runtime).
-		n := p.Cluster.Workers()
-		peerIP := cluster.EdgeFRRIP(p.Cluster.EdgeNet())
-		fmt.Fprintf(out, "[6/6] Anycast-BGP: OcNOS template (neighbor %s) + roll %d TMM(s) + passwd.conf + redistribute ...\n",
-			peerIP, n)
-		waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
-		// vip="" → advertise via `redistribute kernel` (FLO installs the
-		// Gateway VIP /32 as a kernel route once a workload Gateway exists).
-		applyOut, err := r.ApplyCapture(ctx, deploy.RenderAnycastZebosConfigMap("default", peerIP, ""))
-		if err != nil {
-			fmt.Fprintf(out, "      WARN: apply OcNOS ConfigMap: %v (TMMs won't peer)\n", err)
-		} else {
-			// The template was pre-seeded in [0/4], so TMM normally booted
-			// with it already mounted and there is nothing to reload —
-			// re-rolling the DaemonSet here would just rebuild every TMM for
-			// no config change. Only roll when this apply actually mutated
-			// the ConfigMap (FLO reasserted its own copy after we seeded it).
-			// Safe to re-run: FLO bakes the bnk-bgp NAD annotation into the
-			// f5-tmm DaemonSet's pod template (from
-			// CNEInstance.spec.networkAttachments), so restarted pods keep net1.
-			if strings.Contains(applyOut, "unchanged") {
-				fmt.Fprintln(out, "      OcNOS template already current (pre-seeded in [0/4]) — skipping TMM re-roll")
-			} else if err := r.Kubectl(ctx, "-n", "default", "rollout", "restart", "daemonset/f5-tmm"); err != nil {
-				fmt.Fprintf(out, "      WARN: rollout restart f5-tmm: %v\n", err)
-			}
-			// TMM pods roll one-at-a-time (DaemonSet maxUnavailable=1) and
-			// each heavy pod takes a few minutes, so the status timeout must
-			// scale with the node count or it spuriously trips on N>1.
-			rolloutTimeout := time.Duration(4*(n+1)) * time.Minute
-			if err := r.Kubectl(ctx, "-n", "default", "rollout", "status",
-				"daemonset/f5-tmm", "--timeout="+rolloutTimeout.String()); err != nil {
-				fmt.Fprintf(out, "      WARN: f5-tmm rollout did not complete in %s: %v\n", rolloutTimeout, err)
-			}
-			waitTMMNet1(ctx, r, deploy.BGPNADName, 3*time.Minute, out)
-			if err := deploy.InjectPasswdConfAll(ctx, r); err != nil {
-				fmt.Fprintf(out, "      WARN: inject passwd.conf: %v (OcNOS may not load until injected)\n", err)
-			}
-			if err := deploy.TriggerOcNOSRedistribute(ctx, r); err != nil {
-				fmt.Fprintf(out, "      WARN: trigger redistribute: %v (routes may not advertise until re-issued)\n", err)
-			}
-			fmt.Fprintf(out, "      %d TMM(s) peering external FRR %s over OcNOS; each advertises its routes over BGP (anycast model)\n",
-				n, peerIP)
-		}
-	}
-
-	// TMM gate: the f5-tmm DaemonSet lives in default, outside the shared-
-	// namespace gate below, and the finalize steps above only WARN when its
-	// rollout stalls — so a TMM pod stuck Pending on Insufficient memory still
-	// ended in DONE. 10 min leaves room for a cold TMM image pull.
-	fmt.Fprintf(out, "\nVerifying f5-tmm is ready on %d worker(s) ...\n", p.Cluster.Workers())
-	if err := deploy.WaitTMMReady(ctx, r, p.Cluster.Workers(), 10*time.Minute); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "      f5-tmm ready.")
-
-	// Final gate: every workload in the shared namespace must actually be
-	// available before this phase declares success. Without it a wedged
-	// component is invisible — f5-spk-csrc sat at 0 available for 29 minutes
-	// (hostPath mount of /etc/iproute2/rt_tables, absent on a stock k3s node)
-	// while every other check passed and the deploy reported DONE. A green
-	// deploy that is not green hides the next failure too.
-	fmt.Fprintf(out, "\nVerifying all %s workloads are available ...\n", deploy.SharedComponentNamespace)
-	if err := deploy.WaitWorkloadsAvailable(ctx, r,
-		deploy.SharedComponentNamespace, 5*time.Minute); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "      all workloads available.")
-
 	p.Status.Deploy = "ready"
 	p.Status.LastPhaseAt = time.Now().UTC()
 	if err := savePoC(repo, p, out); err != nil {
@@ -705,77 +252,7 @@ func runDeployCNE(ctx context.Context, out io.Writer, f *deployCNEFlags) error {
 	return nil
 }
 
-// seedBridgeCNIPlugin copies each k3s node's own bundled bridge plugin
-// (/bin/bridge, shipped by k3s) into /opt/cni/bin where Multus searches.
-// k3s leaves only host-local/loopback/multus-shim there, so a bridge NAD
-// otherwise fails sandbox creation with "failed to find plugin bridge".
-// Using the node-local binary avoids any external download. Idempotent
-// (skips nodes that already have it); best-effort per node.
-func seedBridgeCNIPlugin(ctx context.Context, tool string, nodes []string, out io.Writer) {
-	const script = `test -x /opt/cni/bin/bridge || ` +
-		`(cp -f /bin/bridge /opt/cni/bin/bridge && chmod 0755 /opt/cni/bin/bridge)`
-	for _, n := range nodes {
-		if n == "" {
-			continue
-		}
-		if err := exec.CommandContext(ctx, tool, "exec", n, "sh", "-c", script).Run(); err != nil {
-			fmt.Fprintf(out, "      WARN: seed bridge CNI plugin on %s: %v\n", n, err)
-		}
-	}
-}
-
-// waitTMMNet1 blocks until at least one TMM pod reports nadName in its
-// Multus network-status annotation (i.e. net1 attached), so whatever
-// binds net1 (the F5SPKVlan's interface "1.1" for selfip-dag, or ZeBOS's
-// update-source for anycast-bgp) has something to land on.
-func waitTMMNet1(ctx context.Context, r *deploy.Runner, nadName string, timeout time.Duration, out io.Writer) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		st, _ := r.KubectlCapture(ctx, "-n", "default", "get", "pods", "-l", "app=f5-tmm",
-			"-o", `jsonpath={range .items[*]}{.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}{end}`)
-		if strings.Contains(st, nadName) {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(5 * time.Second):
-		}
-	}
-	fmt.Fprintf(out, "      WARN: TMM net1 (%s) not observed within %s — net1-bound config may not apply until net1 is up\n",
-		nadName, timeout)
-}
-
-// disableBridgeNetfilter sets net.bridge.bridge-nf-call-iptables=0 on
-// every k3s node so packets crossing the bnk-bgp Multus bridge bypass
-// the node's iptables — otherwise Calico's natOutgoing MASQUERADE SNATs
-// FRR↔TMM data-plane traffic and breaks return symmetry over net1. Gated
-// on whether br_netfilter is actually loaded (it is on Docker Desktop;
-// on native-Linux docker the node container can't load the host module,
-// so the sysctl is absent and there's nothing to disable). docker
-// exec-only (podman unsupported — a pre-existing limitation carried over
-// from the bgp-peer-frr scenario). Best-effort per node; idempotent.
-func disableBridgeNetfilter(ctx context.Context, provider string, nodes []string, out io.Writer) {
-	const sysctl = "/proc/sys/net/bridge/bridge-nf-call-iptables"
-	for _, n := range nodes {
-		if n == "" {
-			continue
-		}
-		_ = exec.CommandContext(ctx, provider, "exec", n, "modprobe", "br_netfilter").Run()
-		o, err := exec.CommandContext(ctx, provider, "exec", n, "sh", "-c",
-			"if [ -e "+sysctl+" ]; then echo 0 > "+sysctl+" && echo set; else echo absent; fi").CombinedOutput()
-		switch {
-		case err != nil:
-			fmt.Fprintf(out, "      WARN: bridge-nf-call-iptables on %s: %v\n", n, err)
-		case strings.TrimSpace(string(o)) == "absent":
-			fmt.Fprintf(out, "      bridge-nf-call-iptables on %s: absent (NAD bridge bypasses iptables)\n", n)
-		default:
-			fmt.Fprintf(out, "      bridge-nf-call-iptables=0 on %s\n", n)
-		}
-	}
-}
-
-// ---------- shrink (optional) ----------
+// ---------- shrink ----------
 
 type deployShrinkFlags struct {
 	pocDir        string
@@ -802,7 +279,7 @@ The FLO operator owns every BNK workload spec via server-side-apply and
 reasserts it on a tight reconcile loop, so resource requests cannot be
 lowered by patching a Deployment or an intermediate F5* CR — FLO reverts it
 within milliseconds. The only layer it can't reach is Kubernetes admission,
-which runs AFTER FLO's apply. This step:
+which runs AFTER FLO's apply. This step (kit/platform/shrink/install.sh):
 
   1. Installs Kyverno (admission controller only, pinned).
   2. Applies a mutating ClusterPolicy that caps CPU/memory *requests*
@@ -843,59 +320,14 @@ func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) e
 		p.Metadata.Name, "deploy shrink"); err != nil {
 		return err
 	}
-
-	r := &deploy.Runner{
-		KubeconfigPath: kubeconfig,
-		HelmHome:       filepath.Join(repo, "artifacts", "helm-home"),
-		Out:            prefixWriter{w: out, prefix: "      | "},
-	}
-
 	fmt.Fprintf(out, "PoC:     %s\nCluster: %s\n\n", p.Metadata.Name, kubeconfig)
-
-	// 1. Kyverno (admission controller only).
-	fmt.Fprintf(out, "[1/4] Installing Kyverno %s (admission controller only) ...\n", version.KyvernoVersion)
-	if err := deploy.InstallKyverno(ctx, r); err != nil {
-		return fmt.Errorf("install kyverno: %w", err)
-	}
-
-	// 2. Render + apply the mutating ClusterPolicy.
-	fmt.Fprintf(out, "[2/4] Applying %s ClusterPolicy (cpu=%s mem=%s per container, f5-tmm excluded) ...\n",
-		deploy.ShrinkPolicyName, f.cpu, f.memory)
-	policy, err := deploy.RenderShrinkPolicy(deploy.ShrinkInputs{
-		CPURequest:    f.cpu,
-		MemoryRequest: f.memory,
-	})
-	if err != nil {
-		return err
-	}
-	rendered := filepath.Join(repo, "artifacts", "kyverno-shrink-requests-rendered.yaml")
-	if err := os.WriteFile(rendered, []byte(policy), 0o600); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "      rendered → %s\n", rendered)
-	if err := r.Apply(ctx, policy); err != nil {
-		return fmt.Errorf("apply shrink policy: %w", err)
-	}
-
-	// 3. Cap kube-system (calico/multus) via a direct DaemonSet patch —
-	//    Kyverno deliberately excludes system namespaces, and these have no
-	//    operator to revert it. The ~0.35c freed on the TMM node is what
-	//    lets the small-host (4-core) profile fit. Patching the DS template
-	//    rolls those pods automatically.
-	fmt.Fprintln(out, "[3/4] Capping kube-system DaemonSets (calico-node, kube-multus) ...")
-	shrinkKubeSystem(ctx, r, f.cpu, f.memory, out)
-
-	// 4. Recycle the F5 pods so the cap takes effect now (the policy only
-	//    mutates pods at admission, i.e. on creation). f5-tmm is left alone.
+	env := append(platformEnv(repo, p, kubeconfig), "SHRINK_CPU="+f.cpu, "SHRINK_MEMORY="+f.memory)
 	if f.noRecycle {
-		fmt.Fprintln(out, "[4/4] Skipping F5 pod recycle (--no-recycle); cap applies as pods restart.")
-	} else {
-		fmt.Fprintln(out, "[4/4] Recycling F5 pods (f5-tmm excluded) so the cap takes effect ...")
-		if err := recycleF5Pods(ctx, r, out); err != nil {
-			return fmt.Errorf("recycle F5 pods: %w", err)
-		}
+		env = append(env, "NO_RECYCLE=1")
 	}
-
+	if err := runPlatform(ctx, out, "shrink", env); err != nil {
+		return err
+	}
 	if j, jerr := appendJournal(repo, "deploy", "deploy shrink — APPLIED"); jerr == nil {
 		fmt.Fprintf(j, "- Kyverno shrink policy applied (cpu=%s mem=%s) at %s\n",
 			f.cpu, f.memory, time.Now().UTC().Format(time.RFC3339))
@@ -906,196 +338,113 @@ func runDeployShrink(ctx context.Context, out io.Writer, f *deployShrinkFlags) e
 	return nil
 }
 
-// kubeSystemShrinkTargets are the kube-system DaemonSets capped by the
-// shrink step via a direct patch (daemonset, container, and what it means
-// when the DaemonSet doesn't exist). Kyverno won't touch system namespaces,
-// and these are plain manifest-installed DaemonSets with no operator to
-// revert the change.
-var kubeSystemShrinkTargets = []struct{ ds, container, missing string }{
-	{"calico-node", "calico-node", "not present (different CNI?)"},
-	// e2e runs shrink before deploy cne installs Multus; deploy.EnsureMultus
-	// reads the applied shrink policy and caps Multus at install instead.
-	{"kube-multus-ds", "kube-multus", "not installed yet — deploy cne caps it when it installs Multus"},
+// ---------- the scripts ----------
+
+// platformEnv is the PoC and ocibnkctl's pins as kit/platform variables
+// (kit/platform/platform.env documents each; TestPlatformEnvMatchesGo keeps
+// that file's defaults equal to these pins).
+func platformEnv(repo string, p *poc.PoC, kubeconfig string) []string {
+	aigw := ""
+	if p.BNK.AIGateway.Enabled {
+		aigw = "true"
+	}
+	helmHome := filepath.Join(repo, "artifacts", "helm-home")
+	return []string{
+		"KUBECONFIG=" + kubeconfig,
+		"KIT_CALLER_DIR=" + repo,
+		"KIT_CACHE=" + filepath.Join(repo, "artifacts", "bin"),
+		"KIT_STATE=" + filepath.Join(repo, "artifacts"),
+		// A per-PoC helm state dir, so the operator's own repo cache and
+		// registry logins neither leak in nor get overwritten.
+		"HELM_REPOSITORY_CONFIG=" + helmHome + "/repositories.yaml",
+		"HELM_REPOSITORY_CACHE=" + helmHome + "/cache",
+		"HELM_REGISTRY_CONFIG=" + helmHome + "/registry.json",
+		"FAR_KEY=" + resolveRef(repo, p.BNK.FARKeyRef),
+		"JWT_FILE=" + resolveRef(repo, p.BNK.JWTRef),
+		"OPERATOR_NAMESPACE=f5-operators",
+		"SHARED_NAMESPACE=" + deploy.SharedComponentNamespace,
+		"BNK_NAMESPACE=default",
+		"REGISTRY=" + version.FARRegistryHost,
+		"MANIFEST_VERSION=" + version.CNEManifestVersion,
+		"MANIFEST_CHART=" + version.ReleaseManifestRepo + "/" + version.ReleaseManifestChart,
+		"FLO_CHART=" + version.FLOChartOCIRef,
+		"CERT_GEN_CHART=oci://" + version.FARRegistryHost + "/utils/f5-cert-gen",
+		"K8S_TOOLS_IMAGE=" + version.K8sToolsImage,
+		"CERT_MANAGER_REPO=" + version.CertManagerRepo,
+		"CERT_MANAGER_VERSION=" + version.CertManagerVersion,
+		"KYVERNO_CHART=" + version.KyvernoChart,
+		"KYVERNO_REPO=" + version.KyvernoRepo,
+		"KYVERNO_VERSION=" + version.KyvernoVersion,
+		"MULTUS_URL=" + deploy.MultusManifestURL,
+		"MULTUS_SHA=" + deploy.MultusManifestSHA,
+		"WHEREABOUTS_TAG=" + version.WhereaboutsTag,
+		"WHEREABOUTS_DS_URL=" + version.WhereaboutsDaemonSetURL,
+		"WHEREABOUTS_DS_SHA=" + version.WhereaboutsDaemonSetSHA,
+		"WHEREABOUTS_IPPOOL_URL=" + version.WhereaboutsIPPoolCRDURL,
+		"WHEREABOUTS_IPPOOL_SHA=" + version.WhereaboutsIPPoolCRDSHA,
+		"WHEREABOUTS_RES_URL=" + version.WhereaboutsReservationCRDURL,
+		"WHEREABOUTS_RES_SHA=" + version.WhereaboutsReservationCRDSHA,
+		"DATAPLANE_MODE=" + p.BNK.DataplaneMode(),
+		"TMM_WORKERS=" + strconv.Itoa(p.Cluster.Workers()),
+		"EDGE_OCTET=" + strconv.Itoa(p.Cluster.EdgeNet()),
+		"EDGE_PEER_IP=" + cluster.EdgeFRRIP(p.Cluster.EdgeNet()),
+		"LOCAL_AS=" + strconv.Itoa(deploy.BGPTMMAS),
+		"PEER_AS=" + strconv.Itoa(deploy.BGPPeerAS),
+		"INSTANCE_NAME=bnk-instance",
+		"DEPLOYMENT_SIZE=" + p.BNK.DeploymentSizeOrDefault(),
+		"METRIC_SUBSYSTEM=" + strconv.FormatBool(p.BNK.MetricSubsystemEnabled()),
+		"LOGGING_SUBSYSTEM=" + strconv.FormatBool(p.BNK.LoggingSubsystemEnabled()),
+		"AIGW_ENABLED=" + aigw,
+		"AIGW_METRICS=" + strconv.FormatBool(p.BNK.AIGateway.AIMetrics),
+		"AIGW_CONSOLE_URL=" + p.BNK.AIGateway.ConsoleURL,
+		"GATEWAYCLASS_NAME=" + deploy.GatewayClassName,
+		// k3s nodes are containers: reach them through the runtime.
+		"NODE_EXEC=" + p.Cluster.Provider + " exec",
+	}
 }
 
-// shrinkKubeSystem caps the calico/multus DaemonSet resource *requests*
-// (never limits) via `kubectl set resources`. Best-effort: a target that
-// doesn't exist is noted and skipped, any other failure warns; neither is
-// fatal. Patching the DS template rolls its pods automatically.
-func shrinkKubeSystem(ctx context.Context, r *deploy.Runner, cpu, memory string, out io.Writer) {
-	for _, t := range kubeSystemShrinkTargets {
-		if _, err := r.KubectlCapture(ctx, "-n", "kube-system", "get", "daemonset/"+t.ds,
-			"-o", "name"); err != nil && strings.Contains(err.Error(), "NotFound") {
-			fmt.Fprintf(out, "      %s %s — skipping\n", t.ds, t.missing)
-			continue
-		}
-		if err := r.Kubectl(ctx, "-n", "kube-system", "set", "resources",
-			"daemonset/"+t.ds, "--containers="+t.container,
-			"--requests=cpu="+cpu+",memory="+memory); err != nil {
-			fmt.Fprintf(out, "      WARN: cap %s/%s: %v (skipping)\n", t.ds, t.container, err)
+// runPlatform extracts kit/{lib,platform} to <PoC>/artifacts/kit (where the
+// operator can rerun them) and runs platform/<phase>/install.sh with env,
+// streaming its output.
+func runPlatform(ctx context.Context, out io.Writer, phase string, env []string) error {
+	var root string
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "KIT_STATE="); ok {
+			root = filepath.Join(v, "kit")
 		}
 	}
-}
-
-// recycleF5Pods deletes the F5 pods so they re-admit through the shrink
-// policy. f5-tmm is excluded (its pod-manager fights mutation); kube-system
-// is handled separately by shrinkKubeSystem (a DS patch that self-rolls).
-// Best-effort per namespace — a failure to delete one batch doesn't abort
-// the rest.
-func recycleF5Pods(ctx context.Context, r *deploy.Runner, out io.Writer) error {
-	// Whole-namespace recycles: f5-operators / f5-cne-core hold only F5 workloads.
-	for _, ns := range []string{"f5-operators", deploy.SharedComponentNamespace} {
-		if err := r.Kubectl(ctx, "-n", ns, "delete", "pods", "--all", "--wait=false"); err != nil {
-			fmt.Fprintf(out, "      WARN: delete pods -n %s: %v\n", ns, err)
+	for _, dir := range []string{"lib", "platform"} {
+		if err := kit.Extract(dir, root); err != nil {
+			return fmt.Errorf("extract kit/%s: %w", dir, err)
 		}
 	}
-	// default namespace: only f5-* pods, and NOT f5-tmm.
-	names, err := r.KubectlCapture(ctx, "-n", "default", "get", "pods",
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
-	if err != nil {
-		return err
-	}
-	for _, name := range strings.Split(strings.TrimSpace(names), "\n") {
-		name = strings.TrimSpace(name)
-		if !strings.HasPrefix(name, "f5-") || strings.HasPrefix(name, "f5-tmm-") {
-			continue
-		}
-		if err := r.Kubectl(ctx, "-n", "default", "delete", "pod", name, "--wait=false"); err != nil {
-			fmt.Fprintf(out, "      WARN: delete pod default/%s: %v\n", name, err)
-		}
+	script := filepath.Join(root, "platform", phase, "install.sh")
+	fmt.Fprintf(out, "Running %s\n", script)
+	w := prefixWriter{w: out, prefix: "      | "}
+	cmd := exec.CommandContext(ctx, "sh", script)
+	cmd.Env = append(os.Environ(), env...)
+	cmd.Stdout, cmd.Stderr = w, w
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("deploy %s: %s: %w", phase, filepath.Base(script), err)
 	}
 	return nil
 }
 
-// redactJWTSub trims a JWT subject claim down to "<type-prefix>-<4 chars>…"
-// for diagnostic display. The full sub is a subscription/account
-// identifier we don't want echoed verbatim into per-phase deploy logs
-// that operators routinely paste into tickets / slack / GitHub. The
-// prefix-plus-4 form keeps enough fingerprint to differentiate which
-// JWT is loaded without leaking the full ID.
-//
-// "TST-EE4C16F4-7B16-463E-B050-0026A6E837E4" → "TST-EE4C…"
-// "prod-account-12345"                       → "prod-acco…"
-// ""                                         → ""
-func redactJWTSub(s string) string {
-	if s == "" {
-		return ""
+// readEnvFile reads KEY=value lines.
+func readEnvFile(path string) (map[string]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	if i := strings.Index(s, "-"); i > 0 && len(s) > i+5 {
-		return s[:i+5] + "…"
+	m := map[string]string{}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), "="); ok {
+			m[k] = v
+		}
 	}
-	if len(s) > 4 {
-		return s[:4] + "…"
-	}
-	return s
+	return m, nil
 }
 
-// applyWithQuotaRetry applies manifest, retrying while the API server rejects
-// it with "status unknown for quota: <quotaName>" — FLO/CWC create the F5
-// singleton ResourceQuotas (f5-single-license-quota, f5-single-infra-quota)
-// alongside the resources they guard, and the quota controller can take
-// minutes to populate status.used (measured ~3.5 min for the infra quota on a
-// fast warm-cache deploy). Any other error returns immediately. Bounded by
-// window, polling every 5s.
-func applyWithQuotaRetry(ctx context.Context, r *deploy.Runner, manifest, quotaName string, window time.Duration, out io.Writer) error {
-	const interval = 5 * time.Second
-	attempts := int(window / interval)
-	if attempts < 1 {
-		attempts = 1
-	}
-	var lastErr error
-	for i := 1; i <= attempts; i++ {
-		lastErr = r.Apply(ctx, manifest)
-		if lastErr == nil {
-			return nil
-		}
-		msg := lastErr.Error()
-		if !strings.Contains(msg, "status unknown for quota") || !strings.Contains(msg, quotaName) {
-			return lastErr
-		}
-		fmt.Fprintf(out, "      quota %s status not yet computed, retrying in %s (attempt %d/%d) ...\n",
-			quotaName, interval, i, attempts)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(interval):
-		}
-	}
-	return fmt.Errorf("quota %s status never populated: %w", quotaName, lastErr)
-}
-
-// waitGatewayClassAccepted waits for bnk-gatewayclass to reach Accepted=True,
-// tolerating a merely-slow f5-cne-controller. `kubectl wait` fails hard the
-// instant its window closes, but on a loaded host the controller comes up
-// healthy just past that window — a longer wait (or a re-run) then succeeds,
-// so a hard 3-min fail is a false negative. On wait timeout we poll the
-// Accepted condition directly for up to grace more before failing the phase,
-// turning "controller is slow" into a proceed instead of an error.
-func waitGatewayClassAccepted(ctx context.Context, r *deploy.Runner, out io.Writer, wait, grace time.Duration) error {
-	if err := r.Wait(ctx, "", "Accepted", "gatewayclass/bnk-gatewayclass", wait); err == nil {
-		fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True")
-		return nil
-	}
-	fmt.Fprintf(out, "      Accepted=True not seen within %s — f5-cne-controller may be slow; polling up to %s more ...\n", wait, grace)
-	deadline := time.Now().Add(grace)
-	for {
-		status, _ := r.KubectlCapture(ctx, "get", "gatewayclass/bnk-gatewayclass",
-			"-o", `jsonpath={.status.conditions[?(@.type=="Accepted")].status}`)
-		switch strings.TrimSpace(status) {
-		case "True":
-			fmt.Fprintln(out, "      bnk-gatewayclass Accepted=True (settled after the initial wait window)")
-			return nil
-		case "False":
-			// The controller processed the class and rejected it — that's a
-			// real misconfiguration, not a slow controller. Fail fast instead
-			// of burning the rest of the grace window.
-			return fmt.Errorf("bnk-gatewayclass Accepted=False — f5-cne-controller rejected it (check `kubectl describe gatewayclass bnk-gatewayclass`)")
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("bnk-gatewayclass never reached Accepted=True after %s (f5-cne-controller not picking it up?)", wait+grace)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(10 * time.Second):
-		}
-	}
-}
-
-// waitInfraProgrammed polls the platform Infra CR until the controller
-// reports Programmed=True. Unlike the GatewayClass there is no `kubectl wait`
-// condition shortcut worth taking: the CR starts at Accepted=Unknown
-// ("Waiting for controller"), which is also exactly what a controller
-// missing USE_GATEWAY_SETTINGS=true looks like forever — so a timeout here
-// names that switch in the error.
-func waitInfraProgrammed(ctx context.Context, r *deploy.Runner, out io.Writer, wait time.Duration) error {
-	deadline := time.Now().Add(wait)
-	for {
-		status, _ := r.KubectlCapture(ctx, "-n", "default", "get", "infra/"+deploy.InfraName,
-			"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}`)
-		switch strings.TrimSpace(status) {
-		case "True":
-			fmt.Fprintf(out, "      Infra %s Programmed=True\n", deploy.InfraName)
-			return nil
-		case "False":
-			msg, _ := r.KubectlCapture(ctx, "-n", "default", "get", "infra/"+deploy.InfraName,
-				"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].message}`)
-			return fmt.Errorf("Infra %s Programmed=False: %s", deploy.InfraName, strings.TrimSpace(msg))
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("Infra %s never reached Programmed=True after %s — is USE_GATEWAY_SETTINGS=true on the CNE controller? (`kubectl -n default describe infra %s`)",
-				deploy.InfraName, wait, deploy.InfraName)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-}
-
-// loadDeployContext resolves the PoC, loads it, and confirms the
-// kubeconfig is present. Used by all three deploy subcommands.
 func loadDeployContext(ctx context.Context, pocDir string) (string, *poc.PoC, string, error) {
 	repo, err := resolvePoCDir(pocDir)
 	if err != nil {

@@ -25,7 +25,8 @@ pins live there (k3s node image, Calico, cert-manager, Kyverno, whereabouts —
 the latter SHA-pinned). The **FLO / CIS / cert-gen chart and image versions are
 deliberately NOT pinned in Go** — they are resolved at deploy time from the
 `f5-bigip-k8s-manifest` release-manifest chart on `repo.f5.com`, keyed off
-`version.CNEManifestVersion` (`internal/deploy/manifest.go`). A BNK bump is
+`version.CNEManifestVersion` (`kit/platform/flo/install.sh` at deploy time;
+`internal/deploy/manifest.go` for `manifest probe`). A BNK bump is
 therefore usually a one-line `CNEManifestVersion` change, not a sweep of chart
 versions — verify it first with `ocibnkctl manifest probe` (no cluster needed).
 Since 2.4.0 the tag is the plain product version (`2.4.0`); the 2.3 line used
@@ -149,7 +150,7 @@ with the control node tainted, the single TMM worker must hold every BNK
 request (~20.2 Gi on 2.4.0), so a 16 GB VM needs shrink even at 10 cores —
 `MinBaseline.MemoryGB = 24`. `doctor` fails on cores and warns on memory.
 
-`deploy shrink` (`internal/deploy/shrink.go`) lowers the footprint via a
+`deploy shrink` (`kit/platform/shrink/install.sh`) lowers the footprint via a
 **Kyverno mutating admission policy**, not via chart values — FLO owns every
 workload spec through server-side-apply and reasserts it on a tight reconcile
 loop, so admission (which runs after FLO's apply) is the only durable layer.
@@ -157,14 +158,23 @@ loop, so admission (which runs after FLO's apply) is the only durable layer.
 (`MinBaselineSmallHost`); it assumes both the shrink policy *and*
 `telemetry.metricSubsystem=false`.
 
+**The deploy phases are scripts.** `deploy prereqs|flo|shrink|cne` run
+`kit/platform/<phase>/install.sh` (POSIX sh + kubectl/helm, usable by hand on
+any cluster; variables and defaults in `kit/platform/platform.env`, helpers in
+`kit/platform/lib.sh`). `internal/cli/deploy.go` only gates, maps poc.yaml and
+ocibnkctl's pins onto the scripts' variables (`platformEnv`), and records
+status; change install behaviour in the scripts. `TestPlatformEnvMatchesGo`
+keeps platform.env's defaults equal to the Go pins, `TestPlatformCNEMatchesGo`
+keeps the scripts' CNEInstance equal to Go's (`render` still uses Go).
+
 The deploy phase composes: cert-manager via helm, Multus + whereabouts
 (cluster-wide IPAM for per-TMM net1) and the `bnk-bgp` NAD for the default
 anycast-bgp data plane, the FLO chart pulled at deploy time from the BNK
 release manifest at `repo.f5.com`, and a `CNEInstance` CR with
 `wholeCluster: true` + `advanced.demoMode.enabled: true` (TMM runs as a
 DaemonSet on the `app=f5-tmm` workers — no `tmmReplicas`). The CWC cert-gen
-step shells into an `alpine/k8s:1.31.5` container — that container image is a hard runtime
-dependency at deploy time.
+step runs `gen_cert.sh` locally when make/openssl/python3 are installed, else
+in an `alpine/k8s:1.31.5` container.
 
 ## Package layout
 
@@ -173,7 +183,7 @@ cmd/ocibnkctl/        main entrypoint (just wires internal/cli.NewRootCmd)
 internal/cli/          cobra subcommands — root.go assembles the tree
 internal/poc/          poc.yaml schema + I/O + validation
 internal/cluster/      native k3s backend (Provisioner) + docker/podman wrappers
-internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kubectl/helm wrapper)
+internal/deploy/       Go renderers (for `render`), FAR/JWT/manifest helpers (`manifest probe`), Runner (kubectl wrapper)
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)

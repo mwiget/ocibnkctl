@@ -13,7 +13,6 @@ package deploy
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,20 +35,6 @@ type Runner struct {
 	KubeconfigPath string
 	HelmHome       string
 	Out            io.Writer
-}
-
-// CheckTools verifies kubectl + helm are on the operator's PATH.
-func (r *Runner) CheckTools(ctx context.Context) error {
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return errors.New("kubectl not found on PATH — install kubectl (see https://kubernetes.io/docs/tasks/tools/) and retry")
-	}
-	if _, err := exec.LookPath("helm"); err != nil {
-		return errors.New("helm not found on PATH — install helm (see https://helm.sh/docs/intro/install/) and retry")
-	}
-	if _, err := os.Stat(r.KubeconfigPath); err != nil {
-		return fmt.Errorf("kubeconfig %s: %w", r.KubeconfigPath, err)
-	}
-	return nil
 }
 
 func (r *Runner) env() []string {
@@ -91,23 +76,6 @@ func (r *Runner) ApplyInNamespace(ctx context.Context, namespace, manifest strin
 		return fmt.Errorf("kubectl apply -n %q: %w\n%s", namespace, err, out.String())
 	}
 	return nil
-}
-
-// ApplyCapture is Apply but also returns kubectl's combined output, so
-// callers can tell a no-op apply ("... unchanged") from a real mutation
-// ("... configured"/"created"). The anycast-bgp path uses this to skip a
-// TMM re-roll when the routing template it pre-seeded is already current.
-func (r *Runner) ApplyCapture(ctx context.Context, manifest string) (string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
-	cmd.Env = r.env()
-	cmd.Stdin = strings.NewReader(manifest)
-	var out bytes.Buffer
-	cmd.Stdout = io.MultiWriter(r.Out, &out)
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("kubectl apply: %w\n%s", err, out.String())
-	}
-	return out.String(), nil
 }
 
 // Kubectl runs an arbitrary kubectl subcommand and streams output.
@@ -156,96 +124,4 @@ type OCIAuth struct {
 	RegistryHost string
 	Username     string
 	Password     string
-}
-
-// HelmRegistryLogin runs `helm registry login` with the password fed via
-// stdin so it never appears on argv.
-func (r *Runner) HelmRegistryLogin(ctx context.Context, auth OCIAuth) error {
-	cmd := exec.CommandContext(ctx, "helm",
-		"registry", "login", auth.RegistryHost,
-		"--username", auth.Username,
-		"--password-stdin")
-	cmd.Env = r.env()
-	cmd.Stdin = strings.NewReader(auth.Password + "\n")
-	var out bytes.Buffer
-	cmd.Stdout = io.MultiWriter(r.Out, &out)
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("helm registry login %s: %w\n%s", auth.RegistryHost, err, out.String())
-	}
-	return nil
-}
-
-// HelmUpgrade installs or upgrades a release. Pass repoURL non-empty for
-// HTTP charts (uses --repo); leave empty for OCI charts (chart name is
-// the full oci:// URL). valuesYAML is optional.
-//
-// It deliberately does NOT pass helm's --wait: on a freshly-recreated k3s the
-// helm post-install --wait loop can wedge indefinitely against the docker-proxy
-// API endpoint even though every resource is healthy (kubectl get/wait against
-// the same endpoint work). Callers gate readiness explicitly with r.Wait
-// (kubectl wait) — cert-manager waits on its webhook Deployment, Kyverno on its
-// admission controller.
-func (r *Runner) HelmUpgrade(ctx context.Context, release, chart, repoURL, namespace, chartVersion, valuesYAML string, extraArgs ...string) error {
-	var valuesPath string
-	if valuesYAML != "" {
-		tmp, err := os.CreateTemp("", "ocibnkctl-helm-values-*.yaml")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(tmp.Name())
-		if _, err := tmp.WriteString(valuesYAML); err != nil {
-			tmp.Close()
-			return err
-		}
-		tmp.Close()
-		valuesPath = tmp.Name()
-	}
-
-	args := []string{
-		"upgrade", "--install", release, chart,
-		"--namespace", namespace, "--create-namespace",
-	}
-	if repoURL != "" {
-		args = append(args, "--repo", repoURL)
-	}
-	if chartVersion != "" {
-		args = append(args, "--version", chartVersion)
-	}
-	if valuesPath != "" {
-		args = append(args, "-f", valuesPath)
-	}
-	args = append(args, extraArgs...)
-
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Env = r.env()
-	var out bytes.Buffer
-	cmd.Stdout = io.MultiWriter(r.Out, &out)
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("helm upgrade %s: %w\n%s", release, err, out.String())
-	}
-	return nil
-}
-
-// HelmUpgradeOCI runs `helm registry login` then `helm upgrade` for an
-// OCI chart so the login state is fresh for this invocation.
-func (r *Runner) HelmUpgradeOCI(ctx context.Context, auth OCIAuth, release, ociChart, namespace, chartVersion, valuesYAML string, extraArgs ...string) error {
-	if err := r.HelmRegistryLogin(ctx, auth); err != nil {
-		return err
-	}
-	return r.HelmUpgrade(ctx, release, ociChart, "", namespace, chartVersion, valuesYAML, extraArgs...)
-}
-
-// Helm runs an arbitrary helm subcommand.
-func (r *Runner) Helm(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Env = r.env()
-	var out bytes.Buffer
-	cmd.Stdout = io.MultiWriter(r.Out, &out)
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("helm %s: %w\n%s", strings.Join(args, " "), err, out.String())
-	}
-	return nil
 }

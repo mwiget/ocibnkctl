@@ -317,6 +317,30 @@ each phase README.
 
 **Exit:** full `e2e` + `scenario run --all` stay green. Riskiest phase.
 
+**Done (2026-10-28), in one step** (scripts and the Go switch together, as
+chosen). As built:
+
+- `kit/platform/<phase>/install.sh` + `platform.env` (variables, defaults
+  of a default PoC) + `lib.sh`. The scripts carry the ordering and retry
+  rationale as comments; the per-phase READMEs the plan mentioned became the
+  "Installing BNK with the scripts" section of `kit/README.md`.
+- `ocibnkctl deploy *` keeps the gates, poc.yaml mapping (`platformEnv`),
+  reachability and status, and runs the scripts; ~2,200 lines of Go deploy
+  logic are gone. `render` keeps the Go renderers; `TestPlatformCNEMatchesGo`
+  (the scripts' CNEInstance == Go's for every golden PoC shape) and
+  `TestPlatformEnvMatchesGo` (platform.env defaults == ocibnkctl's pins)
+  guard the two from drifting.
+- Gate, on a fresh PoC (BNK 2.4.1, anycast-bgp, one worker, test JWT):
+  `e2e` green in ~6 min (prereqs 16s, flo 12s, cne 4m42s; shrink correctly
+  skipped), no warnings, License Active via the JWKS path, the applied
+  CNEInstance and FLO values byte-identical to `ocibnkctl render`'s; then
+  `scenario run --all` 16/16 for every scenario the PoC supports — including
+  `core-file-collection` and both AI iRule-log checks, which ran in full
+  there (no logging subsystem). `llm-gateway` failed its `ai-gateway`
+  preflight because that PoC has no AI gateway, exactly as the Go version
+  did: `--all` does not filter scenarios by capability (a follow-up: report
+  such a scenario as skipped).
+
 ### Phase 5 — shrink the binary to what's hard in shell
 
 Binary = k3s provisioner + optional runner. Add `ocibnkctl kit extract

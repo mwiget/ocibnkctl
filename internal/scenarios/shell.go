@@ -96,7 +96,7 @@ func (s *shellScenario) Manifests(ctx *Context) ([]string, error) {
 		if err := os.RemoveAll(filepath.Join(root, dir)); err != nil {
 			return nil, err
 		}
-		if err := extractKit(dir, root); err != nil {
+		if err := kit.Extract(dir, root); err != nil {
 			return nil, err
 		}
 	}
@@ -117,29 +117,6 @@ func (s *shellScenario) Manifests(ctx *Context) ([]string, error) {
 		return err
 	})
 	return paths, err
-}
-
-// extractKit copies kit.FS's dir (recursively) to root/dir; *.sh files are
-// made executable.
-func extractKit(dir, root string) error {
-	return fs.WalkDir(kit.FS, dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		dst := filepath.Join(root, filepath.FromSlash(p))
-		if d.IsDir() {
-			return os.MkdirAll(dst, 0o755)
-		}
-		body, err := kit.FS.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		mode := os.FileMode(0o644)
-		if strings.HasSuffix(p, ".sh") && !strings.Contains(p, "/manifests/") {
-			mode = 0o755 // scripts run by hand; .sh payloads under manifests/ are data
-		}
-		return os.WriteFile(dst, body, mode)
-	})
 }
 
 func (s *shellScenario) Apply(ctx *Context) error {
