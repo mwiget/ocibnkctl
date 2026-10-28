@@ -178,11 +178,12 @@ peer's BGP table, `edge_curls`, `edge_bgp_wait` for session counts) and
 `lib/bnk.sh` (TMM pods and logs, OcNOS passwd.conf and redistribute, the
 logging-subsystem test).
 
-Every scenario is a script scenario except the two amber ones,
-`routing-template-multitenant` and `routing-config-tenant`, which still
-have their checks in Go
-(`internal/scenarios/<pkg>/`); what each checks is in `ocibnkctl scenario
-list` and in the per-scenario README that `ocibnkctl render` writes. Two files are templates, filled from
+Every scenario is a script scenario; what each checks is in its README. The
+two amber ones, `routing-template-multitenant` and `routing-config-tenant`,
+need BNK 2.4's legacy SPK network model (`DATAPLANE_MODE=selfip-dag`) and are
+reported not applicable elsewhere; their ARP next-hop probes need the node's
+network namespace, so they run only with `EDGE_DRIVER=ocibnkctl` and are
+skipped otherwise. Two files are templates, filled from
 live cluster state at apply time: `ai-semantic-cache/manifests/04-gateway.yaml.tmpl`
 (`CACHE_IP`) and `external-resource-pool/manifests/05-pool.yaml.tmpl`
 (`BACKEND_IP`).

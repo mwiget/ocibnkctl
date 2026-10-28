@@ -187,6 +187,9 @@ kit_copy_secret() {
 #                          so net1 keeps its kernel IP for BGP
 #   ai-gateway             the CNEInstance enables BNK's AI gateway
 #                          (spec.aiGateway.enabled, BNK 2.4.1+)
+#   legacy-spk             the CNE controller runs BNK 2.4's legacy SPK network
+#                          model (USE_GATEWAY_SETTINGS=false, selfip-dag),
+#                          the only one that reconciles F5SPKVlan / Vrf
 #   gateway-settings       the CNE controller runs the Infra/GatewaySettings
 #                          network model (USE_GATEWAY_SETTINGS=true), which
 #                          address-less Gateways need
@@ -217,6 +220,12 @@ kit_require() {
 		ai-gateway)
 			[ "$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.aiGateway.enabled}' 2>&1)" = true ] ||
 				kit_not_applicable "precondition ai-gateway: CNEInstance spec.aiGateway.enabled is not true (ocibnkctl: bnk.ai_gateway.enabled in poc.yaml, then deploy cne)"
+			;;
+		legacy-spk)
+			_kq_g=$(kubectl get cneinstances -A -o \
+				jsonpath='{.items[0].spec.advanced.cneController.env[?(@.name=="USE_GATEWAY_SETTINGS")].value}' 2>&1)
+			[ "$_kq_g" = false ] ||
+				kit_not_applicable "precondition legacy-spk: USE_GATEWAY_SETTINGS=${_kq_g:-unset}; only BNK 2.4's legacy SPK model (selfip-dag) reconciles F5SPKVlan, elsewhere the CRs are accepted and ignored"
 			;;
 		gateway-settings)
 			_kq_g=$(kubectl get cneinstances -A -o \

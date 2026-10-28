@@ -1,46 +1,97 @@
-# routing-config-tenant
+# `routing-config-tenant` — per-tenant routing (`RoutingConfig`)
 
-Per-tenant routing (RoutingConfig) — .tenant + per-tenant route domain in the template context
+F5 source: [Configure global BGP routing](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/border-gateway-protocol/configure-global-BGP-routing.html)
+&nbsp;·&nbsp; Rating: 🟡 (all assertions pass, but only in `selfip-dag` mode — so it is excluded from `scenario run --all`)
+&nbsp;·&nbsp; Depends on: `routing-template-multitenant`
 
-- Rating: **amber**
-- Depends on: `routing-template-multitenant` (apply those first)
+`RoutingConfig` is the VRF-scoped half of BNK 2.4 routing. Where a
+`GlobalRoutingConfig` renders one config per TMM **device**, a `RoutingConfig`
+renders one per device **per tenant**, into
+`/tmm-routing-config/conf-create/tenant/`.
 
-## What it does
+Its template context gains two keys the global one never has:
 
-RoutingConfig is the VRF-scoped half of BNK 2.4 routing: it binds a
-RoutingTemplate to one tenant (spec.vrf) and renders per TMM device into
-/tmm-routing-config/conf-create/tenant/.
+| key | global scope | tenant scope |
+|---|---|---|
+| `.tenant.spec.vrf` | absent | `red` |
+| `.routeDomainID` | `0` | `24195` (that tenant's route domain) |
+| `.vlans` | populated | populated |
 
-Asserts: the RoutingConfig reaches Programmed=True; a tenant config is
-rendered on every TMM; and the tenant template context carries what the
-global one does not —
+Live tenant render:
 
-  .tenant.spec.vrf   the tenant's VRF name (red)
-  .routeDomainID     that tenant's route domain, non-zero
-  .vlans             still populated, so a tenant template can source from
-                     its own per-TMM VLAN self-IP
+```
+! OCIBNKCTL-TENANT-CTX map[... routeDomainID:24195 ...
+    tenant:map[spec:map[templateRef:map[name:scn-rt-tenant] vrf:red]]
+    vlans:map[tenant-red:map[selfIPv4:198.51.100.11 tag:2001 vrf:red] ...]]
+!
+ip vrf red
+exit
+```
 
-Depends on routing-template-multitenant for the Vrf and the tagged per-tenant
-F5SPKVlans, and therefore on the same legacy SPK network model
-(USE_GATEWAY_SETTINGS=false, i.e. bnk.tmm_dataplane_mode: selfip-dag).
+## This explains the design doc's `<no value>`
 
-KNOWN DEFECT, elsewhere: under the OTHER network model
-(USE_GATEWAY_SETTINGS=true, VRFs from Infra.spec.vrfs) the same CR segfaults
-the controller —
+F5's design doc for the `.vlans` feature shows a template using
+`ip vrf {{ .tenant.spec.vrf }}` and a rendered result of:
 
-  panic: runtime error: invalid memory address or nil pointer dereference
-    internal/k8s.(*LoadBalancerController).RoutingConfigReconciler
-        internal/k8s/controller_routingconfig.go:562
+```
+ip vrf <no value>
+```
 
-and f5-cne-controller crash-loops, taking f5-validation-svc with it so every
-F5 CR apply fails admission with 502. This scenario does not reproduce that —
-it runs in the legacy model, where the same CR is handled cleanly. See
-docs/bnk-2.4.0-doc-errata.md.
+That isn't a bug in the feature — the example is applied as a **global**
+template, and `.tenant` only exists in tenant scope. In a `RoutingConfig`
+template the same expression renders `ip vrf red`, which is assertion 7 here.
 
-## Manifests
+## Known defect — under the *other* network model
 
-- `manifests/01-routing-template.yaml`
-- `manifests/02-routing-config.yaml`
+With `USE_GATEWAY_SETTINGS=true` (Infra/GatewaySettings) and a VRF programmed
+through `Infra.spec.vrfs`, the same CR segfaults the controller:
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+```
+panic: runtime error: invalid memory address or nil pointer dereference
+  [signal SIGSEGV code=0x1 addr=0x30]
+  internal/k8s.(*LoadBalancerController).RoutingConfigReconciler
+      /builds/f5ingress/f5ingress/internal/k8s/controller_routingconfig.go:562
+  ← syncRoutingConfig (controller_routingconfig.go:178)
+  ← sync (controller.go:4503) ← taskQueue.processItems (priority_queue.go:275)
+```
+
+and the blast radius is the cluster, not the CR: `f5-cne-controller`
+crash-loops, `f5-validation-svc` goes down with it, and **every** F5 CR apply
+then fails admission with `502 Bad Gateway`.
+
+This scenario runs in the legacy SPK model, where the same CR is handled
+cleanly — so it does not reproduce the panic, but assertion 2 checks the
+controller is still `Running` afterwards, which would catch a regression that
+brought the defect into this path. The defect itself is written up in
+`docs/bnk-2.4.0-doc-errata.md`.
+
+## Other findings worth knowing
+
+- **`RoutingConfig` is only reconciled in the BNK namespace** (`default`). The
+  same CR in another namespace draws no validation webhook, no status and no
+  log line at all — "tenant" here means VRF / route domain, **not** Kubernetes
+  namespace.
+- The status settles through `"CR config deployment is in progress"` before
+  reaching `Programmed=True`, so a single read right after apply sees `False`.
+- `RoutingTemplate` is immutable — re-running means delete + recreate.
+
+## How to run
+
+Needs BNK 2.4's legacy SPK network model (`bnk.tmm_dataplane_mode: selfip-dag`,
+i.e. `USE_GATEWAY_SETTINGS=false`); on any other cluster the scenario reports
+itself not applicable. Run `routing-template-multitenant` first: this one
+reuses its tenant `red`.
+
+```bash
+ocibnkctl scenario run routing-config-tenant --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh)):
+
+```sh
+sh kit/scenarios/routing-config-tenant/apply.sh
+sh kit/scenarios/routing-config-tenant/verify.sh     # one JSON line per check
+sh kit/scenarios/routing-config-tenant/cleanup.sh
+```
+

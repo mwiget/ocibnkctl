@@ -56,3 +56,21 @@ bnk_tmm_logs() {
 bnk_logging_subsystem() {
 	[ "$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.telemetry.loggingSubsystem.enabled}')" = true ]
 }
+
+# bnk_tmm_pods_by_age — Running TMM pods, oldest first: DP-0, DP-1, ...
+# (the order the controller binds a VLAN's selfip_v4s[i] to).
+bnk_tmm_pods_by_age() {
+	kubectl -n "$BNK_NAMESPACE" get pod -l app=f5-tmm --field-selector=status.phase=Running \
+		--sort-by=.metadata.creationTimestamp -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+}
+
+# bnk_node_netns NODE CMD... — run CMD in a cluster node's network namespace,
+# where the per-node Multus bridges live (with NET_ADMIN). Only possible when
+# the nodes are containers on this host (EDGE_DRIVER=ocibnkctl: k3s nodes);
+# returns 2 otherwise, so callers can skip.
+bnk_node_netns() {
+	[ "$EDGE_DRIVER" = ocibnkctl ] || return 2
+	_bnn_node=$1
+	shift
+	"$EDGE_RUNTIME" run --rm --network "container:$_bnn_node" --cap-add NET_ADMIN "$EDGE_TOOLS_IMAGE" "$@"
+}
