@@ -16,7 +16,7 @@ umask 077
 work=$(mktemp -d) || kit_die "mktemp"
 trap 'rm -rf "$work"' EXIT
 kubectl -n "$FLO_NAMESPACE" get secret "$PLATFORM_ADMIN_SECRET" -o jsonpath='{.data.password}' |
-	base64 --decode >"$work/password" && [ -s "$work/password" ] ||
+	kit_b64d >"$work/password" && [ -s "$work/password" ] ||
 	kit_die "read $FLO_NAMESPACE/$PLATFORM_ADMIN_SECRET (FLO creates it when the AI gateway is enabled)"
 printf sk-mock >"$work/api-key"
 secret() {

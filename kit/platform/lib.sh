@@ -44,14 +44,14 @@ far_init() {
 	if grep -q '"auths"' "$_fi_f"; then
 		cp "$_fi_f" "$PLAT_WORK/dockerconfig.json"
 		# "auth": base64("<user>:<password>")
-		sed -n 's/.*"auth" *: *"\([^"]*\)".*/\1/p' "$_fi_f" | head -1 | base64 --decode >"$PLAT_WORK/auth" ||
+		sed -n 's/.*"auth" *: *"\([^"]*\)".*/\1/p' "$_fi_f" | head -1 | kit_b64d >"$PLAT_WORK/auth" ||
 			kit_die "decode the auth in $_fi_tgz"
 		sed 's/:.*//' "$PLAT_WORK/auth" | tr -d '\n' >"$PLAT_WORK/registry-user"
 		sed 's/^[^:]*://' "$PLAT_WORK/auth" >"$PLAT_WORK/registry-pass"
 		return 0
 	fi
-	if tr -d ' \n\r' <"$_fi_f" | base64 --decode 2>/dev/null | grep -q service_account; then
-		tr -d ' \n\r' <"$_fi_f" | base64 --decode >"$PLAT_WORK/sa.json"
+	if tr -d ' \n\r' <"$_fi_f" | kit_b64d 2>/dev/null | grep -q service_account; then
+		tr -d ' \n\r' <"$_fi_f" | kit_b64d >"$PLAT_WORK/sa.json"
 	elif grep -q service_account "$_fi_f"; then
 		cp "$_fi_f" "$PLAT_WORK/sa.json"
 	else
@@ -80,7 +80,7 @@ jwt_type() {
 	_jt_seg() { # decode JWT segment N (base64url, unpadded)
 		_jt_s=$(tr -d ' \n\r' <"$_jt_f" | cut -d. -f"$1" | tr '_-' '/+')
 		case $((${#_jt_s} % 4)) in 2) _jt_s="$_jt_s==" ;; 3) _jt_s="$_jt_s=" ;; esac
-		printf '%s' "$_jt_s" | base64 --decode 2>/dev/null
+		printf '%s' "$_jt_s" | kit_b64d 2>/dev/null
 	}
 	_jt_h=$(_jt_seg 1 | tr 'A-Z' 'a-z')
 	_jt_c=$(_jt_seg 2)

@@ -27,7 +27,9 @@ FROM alpine:3.21
 ARG OCIBNKCTL_VERSION
 ARG TARGETARCH
 
-RUN apk add --no-cache docker-cli kubectl helm git ca-certificates make openssl python3
+# curl: the kit's scripts download pinned manifests and tools (they fall back
+# to busybox wget, but curl is what they are tested with).
+RUN apk add --no-cache docker-cli kubectl helm git ca-certificates make openssl python3 curl
 
 # Download + checksum-verify the released ocibnkctl binary for the target arch.
 RUN cd /tmp \
