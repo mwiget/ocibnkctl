@@ -9,3 +9,10 @@ labs/
 
 # Customer-supplied secrets (FAR key + license JWT) — never commit.
 keys/
+
+# Local agent scratch/notes (opencode skills, session logs) — not shared,
+# except session-ops-log, which is committed for the team (see below).
+/.opencode/*
+!/.opencode/skill/
+/.opencode/skill/*
+!/.opencode/skill/session-ops-log/
