@@ -7,7 +7,7 @@ spec:
   product:
     gatewayAPI: true
     type: BNK
-  manifestVersion: "2.4.1"
+  manifestVersion: "2.4.2"
   # wholeCluster=true runs TMM as a DaemonSet — one pod per node carrying
   # the TMM label (app=f5-tmm). This is the F5-standard mode (f5-bnk-udf,
   # dpubnkctl, and the BF3 installs all use it); scaling out is purely a

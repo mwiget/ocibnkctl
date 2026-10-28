@@ -1,4 +1,4 @@
-# BNK 2.4.1 manifests — PoC golden
+# BNK 2.4.2 manifests — PoC golden
 
 Rendered by `ocibnkctl render` (dev). Every file here is what `ocibnkctl deploy …`
 and `ocibnkctl scenario run …` would apply for this PoC; apply them in the order below
@@ -6,7 +6,7 @@ to install BNK by hand, on this cluster or any other.
 
 | Setting | Value |
 |---|---|
-| CNE release manifest | `2.4.1` |
+| CNE release manifest | `2.4.2` |
 | FLO chart | _unresolved — see below_ |
 | f5-cert-gen chart | _unresolved — see below_ |
 | TMM dataplane mode | `selfip-dag` |
@@ -14,7 +14,7 @@ to install BNK by hand, on this cluster or any other.
 | Host profile | `standard` |
 
 Unresolved chart versions: run `ocibnkctl manifest probe` (needs only the FAR key), or
-`helm pull oci://repo.f5.com/release/f5-bigip-k8s-manifest --version 2.4.1` and read the BOM.
+`helm pull oci://repo.f5.com/release/f5-bigip-k8s-manifest --version 2.4.2` and read the BOM.
 
 All commands assume `kubectl`/`helm` already point at the target cluster, and that you
 have logged in to the F5 registry: see [registry login](#registry-login). On macOS use

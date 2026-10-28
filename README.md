@@ -1,6 +1,6 @@
 # ocibnkctl
 
-![BNK](https://img.shields.io/badge/BNK-2.4.1-0a3a5c)
+![BNK](https://img.shields.io/badge/BNK-2.4.2-0a3a5c)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30.14-326ce5?logo=kubernetes&logoColor=white)
 ![k3s](https://img.shields.io/badge/k3s-v1.30.14-ffc61c)
 ![Go](https://img.shields.io/github/go-mod/go-version/mwiget/ocibnkctl)
@@ -9,7 +9,7 @@
 [![regcachectl](https://img.shields.io/badge/image%20cache-regcachectl-2496ed?logo=docker&logoColor=white)](https://github.com/mwiget/regcachectl)
 [![Release](https://img.shields.io/github/v/release/mwiget/ocibnkctl?label=download)](https://github.com/mwiget/ocibnkctl/releases/latest)
 
-Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.4.1
+Single-binary CLI that deploys F5 BIG-IP Next for Kubernetes (BNK) 2.4.2
 on a [k3s](https://k3s.io/) cluster — one combined control-plane + worker
 (server) plus one or more workers (agents) dedicated to TMM
 (`cluster.tmm_nodes`, default 1) running in demo mode (virtio inside the
@@ -95,8 +95,8 @@ k3s node containers → remove the cluster's docker network.
 
 | Component | Version |
 |---|---|
-| BNK | 2.4.1 |
-| CNE release manifest | 2.4.1 |
+| BNK | 2.4.2 |
+| CNE release manifest | 2.4.2 |
 | Kubernetes (k3s node image) | 1.30.14 (`rancher/k3s:v1.30.14-k3s1`) |
 | Calico | v3.28.2 |
 | cert-manager | v1.16.2 |
@@ -108,7 +108,7 @@ tag before bumping it — no cluster, no kubeconfig, just the FAR key:
 
 ```bash
 ocibnkctl manifest probe                                  # the pinned tag
-ocibnkctl manifest probe 2.4.1                            # a candidate tag
+ocibnkctl manifest probe 2.4.2                            # a candidate tag
 ocibnkctl manifest probe --far ~/keys/far.tgz --all       # full BOM, outside a PoC
 ```
 
@@ -431,11 +431,12 @@ ocibnkctl version
 ```
 
 Releases follow `v<bnk-version>[-<n>]` — the first cut for a BNK
-release is plain `v2.4.1`, then `v2.4.1-1`, `v2.4.1-2`, … The `2.4.1`
+release is plain `v2.4.2`, then `v2.4.2-1`, `v2.4.2-2`, … The `2.4.2`
 prefix tracks the pinned BNK release; the optional `-n` suffix
 increments per ocibnkctl-only iteration (bug fixes, new scenarios)
 that ships a fresh binary against the same BNK release. Previous BNK
-lines are frozen on branches: `release/2.4.0` (tags `v2.4.0` …
+lines are frozen on branches: `release/2.4.1` (tags `v2.4.1` …
+`v2.4.1-5`), `release/2.4.0` (tags `v2.4.0` …
 `v2.4.0-2`), `release/2.3.2`, `release/2.3.1` (tags `v2.3.1` …
 `v2.3.1-13`) and `release/2.3.0` (tags `v2.3.0`, `v2.3.0-1`).
 
@@ -776,7 +777,7 @@ internal/bnkforge/     bnk-forge HTTP client (copy-fork of dpubnkctl)
 internal/embedded/     go:embed AGENTS.md, CLAUDE.md, profiles/
 kit/                   every manifest ocibnkctl applies, as plain files
                        (platform/, scenarios/, lib/render.sh — see kit/README.md)
-internal/version/      build-stamped + BNK 2.4.1 pins + min-spec floor
+internal/version/      build-stamped + BNK 2.4.2 pins + min-spec floor
 ```
 
 ## Repo layout (a PoC created by `ocibnkctl init`)
