@@ -246,6 +246,26 @@ and TMM egress route a public provider needs), "Configure with kubectl"
 "Limits in 2.4.1". Check a claim against those before telling the user a
 feature exists.
 
+## The kit: the same steps as plain scripts
+
+Everything the deploy phases and the scenarios do is plain `sh` + `kubectl`
++ `helm` in the **kit**, which ocibnkctl carries and runs:
+
+- `artifacts/kit/` — written on every `deploy` / `scenario run`, exactly what
+  ran; `ocibnkctl kit extract <dir>` writes a fresh copy anywhere.
+- `platform/<phase>/install.sh` — the BNK install (prereqs, flo, shrink,
+  cne); variables and defaults in `platform/platform.env`.
+- `scenarios/<name>/{apply,verify,cleanup}.sh` — each scenario;
+  `verify.sh` prints one JSON line per check. `EDGE_DRIVER` (see
+  `lib/edge.sh`) picks the data-plane client: `none`, `pod` (in-cluster),
+  `external` (your host), `ocibnkctl` (this PoC's edge FRR).
+- `README.md` — what every file and variable is.
+
+Use it to show the operator what a step really does, to rerun a single
+step, or to work on a cluster ocibnkctl did not build. On this PoC, still
+run phases through `ocibnkctl`: it applies the safety gates, keeps
+`poc.yaml` and the journal in sync, and passes the right variables.
+
 ## bnk-forge (optional)
 
 If `~/git/bnk-forge` (or `$OCIBNKCTL_BNK_FORGE_PATH`) exists when

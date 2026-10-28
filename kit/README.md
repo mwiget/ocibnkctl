@@ -8,6 +8,10 @@ This is Phase 1 of [docs/agentic-kit-plan.md](../docs/agentic-kit-plan.md).
 For one PoC's ready-to-apply set, in order, with the commands: `ocibnkctl
 render`. This directory is the source that render fills in.
 
+Get it without cloning the repo: `ocibnkctl kit extract <dir>`, or the
+`bnk-kit_<version>.tar.gz` attached to every release. Paths below start with
+`kit/`, as in the repo; in an extract or the tarball, drop that prefix.
+
 ## Layout
 
 ```

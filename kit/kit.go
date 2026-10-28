@@ -28,11 +28,15 @@ import (
 	"strings"
 )
 
-// FS holds the kit tree: platform/ (the BNK install) and scenarios/
-// (per-scenario manifests), plus lib/.
+// FS holds the kit tree: platform/ (the BNK install), scenarios/, lib/ and
+// README.md.
 //
-//go:embed all:platform all:scenarios lib
+//go:embed all:platform all:scenarios lib README.md
 var FS embed.FS
+
+// Tree is what makes up a usable kit on disk (ExtractAll, the release
+// tarball): everything in FS.
+var Tree = []string{"README.md", "lib", "platform", "scenarios"}
 
 var (
 	varRef   = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
@@ -155,4 +159,14 @@ func Extract(dir, root string) error {
 		}
 		return os.WriteFile(dst, body, mode)
 	})
+}
+
+// ExtractAll writes the whole kit (Tree) to root, replacing what is there.
+func ExtractAll(root string) error {
+	for _, dir := range Tree {
+		if err := Extract(dir, root); err != nil {
+			return err
+		}
+	}
+	return nil
 }

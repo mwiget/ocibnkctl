@@ -413,6 +413,12 @@ three archives per release plus a `checksums.txt`:
 | Linux (Intel/AMD) | `ocibnkctl_<version>_linux_amd64.tar.gz` |
 | Linux (ARM64) | `ocibnkctl_<version>_linux_arm64.tar.gz` |
 | macOS (Apple Silicon) | `ocibnkctl_<version>_darwin_arm64.tar.gz` |
+| any — the kit, no binary | `bnk-kit_<version>.tar.gz` |
+
+`bnk-kit_<version>.tar.gz` is the same release as plain files: the BNK
+install (`platform/<phase>/install.sh`) and the test scenarios
+(`scenarios/<name>/`), sh + kubectl + helm, for any cluster. Start with
+`bnk-kit/README.md`. `ocibnkctl kit extract <dir>` writes the same tree.
 
 One-liner install (Linux amd64; swap the suffix for your platform):
 

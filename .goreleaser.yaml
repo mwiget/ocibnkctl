@@ -5,6 +5,9 @@ project_name: ocibnkctl
 before:
   hooks:
     - go mod tidy
+    # The kit (install scripts, scenarios) as its own artifact, usable
+    # without the binary; attached via release.extra_files below.
+    - make kit-tarball VERSION={{ .Version }}
 
 builds:
   - id: ocibnkctl
@@ -43,6 +46,8 @@ archives:
 checksum:
   name_template: checksums.txt
   algorithm: sha256
+  extra_files:
+    - glob: ./build/bnk-kit_*.tar.gz
 
 snapshot:
   version_template: "{{ .Tag }}-next"
@@ -63,6 +68,8 @@ changelog:
 release:
   draft: false
   prerelease: false
+  extra_files:
+    - glob: ./build/bnk-kit_*.tar.gz
   header: |
     ## ocibnkctl {{ .Tag }}
 
@@ -74,5 +81,9 @@ release:
     ```
     ocibnkctl version
     ```
+
+    `bnk-kit_{{ .Version }}.tar.gz` is the same release as plain files —
+    the BNK install scripts and the test scenarios (sh + kubectl + helm),
+    for any cluster, no binary needed. Start with `bnk-kit/README.md`.
   footer: |
     **Full changelog**: https://github.com/mwiget/ocibnkctl/compare/{{ .PreviousTag }}...{{ .Tag }}
