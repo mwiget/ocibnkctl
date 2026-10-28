@@ -65,7 +65,7 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 	in := CNEInputs{
 		InstanceName:     "bnk-instance",
 		ManifestVersion:  version.CNEManifestVersion,
-		DeploymentSize:   "Small",
+		DeploymentSize:   p.BNK.DeploymentSizeOrDefault(),
 		TMMNodeLabelKey:  k,
 		TMMNodeLabelVal:  v,
 		MetricSubsystem:  p.BNK.MetricSubsystemEnabled(),
