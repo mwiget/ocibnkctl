@@ -1,15 +1,13 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
-	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/version"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
 // ShrinkPolicyName is the Kyverno ClusterPolicy name the shrink step
@@ -77,19 +75,12 @@ func RenderShrinkPolicy(in ShrinkInputs) (string, error) {
 	if in.MemoryRequest == "" {
 		in.MemoryRequest = DefaultShrinkMemoryRequest
 	}
-	raw, err := embedded.Templates.ReadFile("templates/kyverno-shrink-requests.yaml.tmpl")
-	if err != nil {
-		return "", fmt.Errorf("load kyverno-shrink-requests.yaml.tmpl: %w", err)
-	}
-	tmpl, err := template.New("shrink").Parse(string(raw))
-	if err != nil {
-		return "", err
-	}
-	var out bytes.Buffer
-	if err := tmpl.Execute(&out, in); err != nil {
-		return "", err
-	}
-	return out.String(), nil
+	return kit.Render("platform/shrink/kyverno-shrink-requests.yaml", map[string]string{
+		"SHARED_NAMESPACE":   in.SharedComponentNamespace,
+		"OPERATOR_NAMESPACE": in.OperatorNamespace,
+		"CPU_REQUEST":        in.CPURequest,
+		"MEMORY_REQUEST":     in.MemoryRequest,
+	})
 }
 
 // KyvernoHelmArgs trims the Kyverno chart to the admission controller.

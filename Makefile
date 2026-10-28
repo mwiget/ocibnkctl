@@ -184,7 +184,8 @@ smoke: test build
 	echo "[11] render writes the plain-file bundle offline, without secrets"; \
 	  ./bin/ocibnkctl render --poc $(SMOKE_DIR) >/tmp/smoke-render.log 2>&1; \
 	  for f in README.md 10-flo/02-flo-values.yaml 20-cne/03-cne-instance.yaml \
-	           20-cne/04-license.yaml.tmpl scenarios/http-routing-e2e/06-httproute.yaml; do \
+	           20-cne/04-license.yaml.tmpl 20-cne/04-license-jwks-configmap.yaml lib/render.sh \
+	           scenarios/http-routing-e2e/06-httproute.yaml; do \
 	    test -s $(SMOKE_DIR)/artifacts/render/$$f || { echo "render MISSING $$f"; exit 1; }; \
 	  done; \
 	  if grep -rq "dockerconfigjson:" $(SMOKE_DIR)/artifacts/render; then \
@@ -194,6 +195,12 @@ smoke: test build
 	    echo "render should refuse to overwrite without --force"; exit 1; \
 	  fi; \
 	  ./bin/ocibnkctl render --poc $(SMOKE_DIR) --force >/dev/null; \
+	echo "[12] kit/lib/render.sh fills a template and rejects an unset variable"; \
+	  NAME=smoke-ns sh kit/lib/render.sh kit/platform/prereqs/namespace.yaml | grep -q "name: smoke-ns" \
+	    || { echo "render.sh did not substitute NAME"; exit 1; }; \
+	  if sh kit/lib/render.sh kit/platform/prereqs/namespace.yaml >/dev/null 2>&1; then \
+	    echo "render.sh accepted an unset variable"; exit 1; \
+	  fi; \
 	echo "PASS"
 
 clean:

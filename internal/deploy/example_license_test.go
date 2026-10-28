@@ -26,14 +26,14 @@ func TestExampleLicenseTstJWT(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("docs = %d", len(docs))
 	}
-	emb, _ := os.ReadFile("../embedded/templates/jwks-tst.json")
+	emb, _ := os.ReadFile("../../kit/platform/cne/jwks-tst.json")
 	var a, b any
 	json.Unmarshal(emb, &a)
 	json.Unmarshal([]byte(docs[0]["data"].(map[string]any)["key"].(string)), &b)
 	ja, _ := json.Marshal(a)
 	jb, _ := json.Marshal(b)
 	if string(ja) != string(jb) {
-		t.Error("ConfigMap JWKS differs from the embedded jwks-tst.json")
+		t.Error("ConfigMap JWKS differs from kit/platform/cne/jwks-tst.json")
 	}
 	cm, _ := RenderJWKSConfigMap("")
 	cr, _ := RenderLicenseCR(LicenseInputs{JWT: "<JWT>", JWKSConfigMap: JWKSConfigMapName})

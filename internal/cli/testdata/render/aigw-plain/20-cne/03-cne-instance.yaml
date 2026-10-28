@@ -1,0 +1,167 @@
+apiVersion: k8s.f5.com/v1
+kind: CNEInstance
+metadata:
+  name: bnk-instance
+  namespace: default
+spec:
+  product:
+    gatewayAPI: true
+    type: BNK
+  manifestVersion: "2.4.1"
+  # wholeCluster=true runs TMM as a DaemonSet — one pod per node carrying
+  # the TMM label (app=f5-tmm). This is the F5-standard mode (f5-bnk-udf,
+  # dpubnkctl, and the BF3 installs all use it); scaling out is purely a
+  # matter of how many workers carry the label — there is no tmmReplicas.
+  # f5-bnk-udf proves this works WITHOUT a DPU (demoMode=true, dpu
+  # disabled), so dpu stays disabled here.
+  #
+  # gatewayAPI=true is satisfied by wholeCluster=true (no watchNamespaces
+  # needed). A non-empty networkAttachments is always supplied below (the
+  # bnk-bgp whereabouts NAD) — both because every DaemonSet TMM needs a
+  # net1 on the shared edge L2, and because empty networkAttachments +
+  # wholeCluster tripped a FLO "assignment to entry in nil map" panic in
+  # f5tmm_daemonset.go on BNK 2.3 / FLO v2.21.13.
+  wholeCluster: true
+  dpu:
+    enabled: false
+  # Active/active data plane: FLO injects these Multus NAD(s) onto every
+  # TMM pod (net1). selfip-dag keeps mapres TRUE so mapres grabs net1
+  # onto the data plane as interface "1.1" for the F5SPKVlan to bind;
+  # anycast-bgp sets mapres FALSE so net1 keeps its kernel IP for ZeBOS
+  # to source BGP from (see TMM_MAPRES_ADDL_VETHS_ON_DP below).
+  networkAttachments:
+  - bnk-bgp
+  # No replica field under wholeCluster: FLO runs TMM as a DaemonSet, so the
+  # pod count equals the number of app=f5-tmm-labelled worker nodes
+  # (cluster.tmm_nodes). Each per-node TMM serves the traffic that lands on
+  # its own node — transparent cross-node fan-out of one VIP needs
+  # DPU/SR-IOV (not demo mode).
+  storageClassName: standard
+  telemetry:
+    # Off by default; on only for the AI gateway's metrics, whose HSL
+    # receiver runs inside the fluentd this subsystem deploys.
+    loggingSubsystem:
+      enabled: false
+    # metricSubsystem drives TMM's observer/tmStats sidecar (~700m/1Gi) and
+    # the cluster metrics pipeline (observer / observer-receiver / otel).
+    # The small-host (4-core) profile disables it: the f5-tmm-pod-manager
+    # enforces TMM's per-container resource VALUES (no override survives),
+    # but it honors a smaller container SET — dropping this sidecar takes
+    # the TMM pod from 4.1c to ~3.4c so it fits a single 4-core node.
+    metricSubsystem:
+      enabled: true
+  # BNK 2.4.1 AI/LLM gateway. FLO renders the AIGateway CR f5-aigateway from
+  # this: console (NodePort, port 3000), the f5-aigateway-admin login Secret,
+  # aigw-dns-resolver for provider hostnames and, with aiMetrics, ClickHouse
+  # plus the fluentd HSL receiver. Needs DSSM's default Sentinel pair.
+  aiGateway:
+    enabled: true
+    aiMetrics: false
+  certificate:
+    clusterIssuer: bnk-ca-cluster-issuer
+  deploymentSize: "Small"
+  registry:
+    uri: repo.f5.com
+    imagePullSecrets:
+    - name: far-secret
+    imagePullPolicy: Always
+  # Match the f5-bnk-udf shape on these flags (pseudoCNI/dynamic
+  # routing/firewall ACL all enabled). They aren't strictly needed for
+  # demo-mode TMM, but disabling them tripped an upstream FLO panic in
+  # f5tmm_daemonset.go ("assignment to entry in nil map") on BNK 2.3
+  # — the enabled path initializes maps the disabled path leaves nil.
+  pseudoCNI:
+    enabled: true
+  dynamicRouting:
+    enabled: true
+  coreCollection:
+    enabled: false
+  firewallACL:
+    enabled: true
+  advanced:
+    # The single switch that makes BNK runnable on kind: virtio in the
+    # pod netns instead of SR-IOV / DPU-backed interfaces.
+    demoMode:
+      enabled: true
+    maintenanceMode:
+      enabled: false
+    envDiscovery:
+      enabled: false
+      stopOnFail: true
+      runAfterSuccess: true
+    cneController:
+      env:
+      - name: "TMM_DEFAULT_MTU"
+        value: "1500"
+      # BNK 2.4 ships BOTH network models and this switch picks which one the
+      # controller actually reconciles. They are mutually exclusive:
+      #
+      #   true  — Infra + GatewaySettings (the F5BnkGateway-pool replacement).
+      #           Infra.spec.networks/vrfs program TMM; address-less Gateways
+      #           allocate from the platform Infra IPAM pool (deploy.RenderInfra,
+      #           the fic-dynamic-ip scenario). The LEGACY SPK CRs (F5SPKVlan,
+      #           Vrf) are still accepted by the API server and the validation
+      #           webhook, then never reconciled — no .status, no gRPC push, TMM
+      #           never hears about them — and the RoutingTemplate `.vlans`
+      #           variable stays empty because nothing populates it.
+      #   false — legacy SPK model. F5SPKVlan/Vrf reconcile normally
+      #           (READY=True, "CR config sent to all grpc endpoints",
+      #           declTmm.vlan + declTmm.self_ip on TMM) and `.vlans` is
+      #           populated per TMM. Infra/GatewaySettings go quiet.
+      #
+      # Verified on one cluster, one binary (f5ingress v14.91.12-0.4.7), by
+      # flipping this var: see docs/bnk-2.4.0-doc-errata.md. selfip-dag needs
+      # false — it drives TMM through an F5SPKVlan — which is why that mode
+      # silently produced a bare interface 1.1 while this was hardcoded true.
+      - name: "USE_GATEWAY_SETTINGS"
+        value: "true"
+    tmm:
+      # TMM scheduling is driven by the `app=f5-tmm` label that
+      # `ocibnkctl cluster up` applies to the worker node — FLO's
+      # operator picks nodes with that label on its own. There is no
+      # nodeSelector field in CNEInstance's schema (BNK 2.3 strict-
+      # decodes unknown fields under spec.advanced.tmm).
+      #
+      # Annotations must be non-empty: FLO's TMM deployment reconciler
+      # (f5tmm_deployment.go:170) panics with "assignment to entry in
+      # nil map" if it tries to merge into a nil annotations map. A
+      # single innocuous entry primes the map.
+      annotations:
+        ocibnkctl.f5.com/managed-by: ocibnkctl
+      env:
+      - name: "TMM_CALICO_ROUTER"
+        value: "default"
+      - name: "TMM_DEFAULT_MTU"
+        value: "1500"
+      # mapres governs whether TMM's userspace data plane grabs net1.
+      #   TRUE  (standby / selfip-dag) — mapres claims net1 as interface
+      #         "1.1" and flushes its kernel IP; the F5SPKVlan binds 1.1.
+      #   FALSE (anycast-bgp) — net1 keeps its kernel IP so ZeBOS can
+      #         `update-source net1` for its BGP session.
+      - name: "TMM_MAPRES_ADDL_VETHS_ON_DP"
+        value: "FALSE"
+      # OcNOS (IP Infusion) routing daemon: with ZEBOS_STATE=ocnos FLO swaps
+      # the f5-tmm-routing container from f5dr-img (ZeBOS) to ocnos-img
+      # (verified live: ocnos-img:v0.23.0-0.3.1). Matches tmmlitectl so the
+      # two tools share one routing stack. The OcNOS BGP config is delivered
+      # via the f5-tmm-dynamic-routing-template ConfigMap (see
+      # RenderAnycastZebosConfigMap) and peers the external bnk-edge FRR.
+      - name: "ZEBOS_STATE"
+        value: ocnos
+      # Cap TMM's mbuf/buffer pool to 768 x 2MB = 1.5GiB instead of letting
+      # the generic-socket driver auto-size to ~fill its cgroup memory limit.
+      # FLO hard-pins the f5-tmm container to 2Gi (the f5-tmm-pod-manager
+      # enforces it — no Deployment/Kyverno override survives), and stock TMM
+      # mlock()s its pool, so auto-sizing lands at ~2.04GiB and the unevictable
+      # overshoot OOM-kills the whole pod (memory.oom.group) on cgroup-v2 hosts
+      # where pinned pages can't spill to swap (e.g. Ubuntu 26.04 / kernel 7).
+      # Pinning it low fits 2Gi with headroom on EVERY host (older releases
+      # only avoided the OOM by luck), with no functional loss on the demo/veth
+      # datapath. IGNORE_MEM_LIMIT skips mapres's no-hugepage memory gate so TMM
+      # starts without host hugepages (USE_PHYS_MEM=false generic-socket mode).
+      # This mirrors tmmlite, which sets both unconditionally. Not host-gated:
+      # safe and strictly more robust everywhere.
+      - name: "TMM_MAPRES_HUGEPAGES"
+        value: "768"
+      - name: "TMM_IGNORE_MEM_LIMIT"
+        value: "TRUE"

@@ -767,7 +767,9 @@ internal/poc/          poc.yaml schema + I/O
 internal/cluster/      native k3s backend + docker/podman wrappers
 internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen
 internal/bnkforge/     bnk-forge HTTP client (copy-fork of dpubnkctl)
-internal/embedded/     go:embed AGENTS.md, CLAUDE.md, templates/
+internal/embedded/     go:embed AGENTS.md, CLAUDE.md, profiles/
+kit/                   every manifest ocibnkctl applies, as plain files
+                       (platform/, scenarios/, lib/render.sh — see kit/README.md)
 internal/version/      build-stamped + BNK 2.4.1 pins + min-spec floor
 ```
 

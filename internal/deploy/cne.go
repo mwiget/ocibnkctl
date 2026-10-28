@@ -1,13 +1,11 @@
 package deploy
 
 import (
-	"bytes"
-	"fmt"
-	"text/template"
+	"strconv"
 
-	"github.com/mwiget/ocibnkctl/internal/embedded"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/version"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
 // CNEInputs is the flat shape passed to cne-instance.yaml.tmpl. Much
@@ -30,12 +28,13 @@ type CNEInputs struct {
 	// AIGateway is CNEInstance.spec.aiGateway; the block is only rendered
 	// when AIGateway.Enabled.
 	AIGateway poc.AIGateway
-	// NetworkAttachments is CNEInstance.spec.networkAttachments — the
-	// Multus NAD(s) FLO attaches to every TMM pod. Empty in the default
-	// demo shape; selfip-dag sets it to the DAG bridge NAD so mapres can
-	// grab net1 and the F5SPKVlan self-IPs can bind; anycast-bgp sets it
-	// to the bnk-bgp NAD so ZeBOS can source BGP from net1.
-	NetworkAttachments []string
+	// NetworkAttachment is the one entry of
+	// CNEInstance.spec.networkAttachments — the Multus NAD FLO attaches to
+	// every TMM pod. Empty (no list at all) in the standby shape; selfip-dag
+	// sets the DAG bridge NAD so mapres can grab net1 and the F5SPKVlan
+	// self-IPs can bind; anycast-bgp sets the bnk-bgp NAD so ZeBOS can
+	// source BGP from net1.
+	NetworkAttachment string
 	// MapresOnDP is the string value for the TMM_MAPRES_ADDL_VETHS_ON_DP
 	// env var ("TRUE"/"FALSE"). standby + selfip-dag use TRUE (mapres
 	// grabs net1 as interface 1.1); anycast-bgp uses FALSE so net1 keeps
@@ -83,31 +82,36 @@ func RenderCNEInstance(p *poc.PoC) (string, error) {
 	//                 kernel IP so ZeBOS can source BGP from it).
 	switch p.BNK.DataplaneMode() {
 	case poc.DataplaneSelfIPDAG:
-		in.NetworkAttachments = []string{DAGNADName}
+		in.NetworkAttachment = DAGNADName
 		// The F5SPKVlan this mode renders is only reconciled in the legacy
 		// SPK model; with USE_GATEWAY_SETTINGS=true the controller accepts
 		// the CR and silently never programs it, leaving TMM with a bare
 		// interface 1.1 and no self-IP.
 		in.UseGatewaySettings = "false"
 	case poc.DataplaneAnycastBGP:
-		in.NetworkAttachments = []string{BGPNADName}
+		in.NetworkAttachment = BGPNADName
 		in.MapresOnDP = "FALSE"
 	}
-	return renderTemplate("templates/cne-instance.yaml.tmpl", in)
+	return kit.Render("platform/cne/cne-instance.yaml", in.vars())
 }
 
-func renderTemplate(path string, data any) (string, error) {
-	raw, err := embedded.Templates.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("load %s: %w", path, err)
+// vars maps the inputs onto cne-instance.yaml's variables.
+func (in CNEInputs) vars() map[string]string {
+	v := map[string]string{
+		"INSTANCE_NAME":        in.InstanceName,
+		"MANIFEST_VERSION":     in.ManifestVersion,
+		"DEPLOYMENT_SIZE":      in.DeploymentSize,
+		"LOGGING_SUBSYSTEM":    strconv.FormatBool(in.LoggingSubsystem),
+		"METRIC_SUBSYSTEM":     strconv.FormatBool(in.MetricSubsystem),
+		"MAPRES_ON_DP":         in.MapresOnDP,
+		"USE_GATEWAY_SETTINGS": in.UseGatewaySettings,
+		"NAD_NAME":             in.NetworkAttachment,
+		"AIGW_ENABLED":         "",
+		"AIGW_METRICS":         strconv.FormatBool(in.AIGateway.AIMetrics),
+		"AIGW_CONSOLE_URL":     in.AIGateway.ConsoleURL,
 	}
-	tmpl, err := template.New(path).Parse(string(raw))
-	if err != nil {
-		return "", err
+	if in.AIGateway.Enabled {
+		v["AIGW_ENABLED"] = "true"
 	}
-	var out bytes.Buffer
-	if err := tmpl.Execute(&out, data); err != nil {
-		return "", fmt.Errorf("execute %s: %w", path, err)
-	}
-	return out.String(), nil
+	return v
 }

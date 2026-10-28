@@ -11,7 +11,6 @@
 package grpcroute
 
 import (
-	"embed"
 	"fmt"
 	"io/fs"
 	"os"
@@ -22,10 +21,10 @@ import (
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*.yaml
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "grpc-loadbalance"

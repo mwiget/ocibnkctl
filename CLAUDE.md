@@ -98,8 +98,19 @@ keys/            # gitignored — FAR tgz + JWT live here
 Every CLI subcommand takes `--poc <dir>` (defaults to `.`). The PoC dir is
 both *input* (poc.yaml, customer keys) and *output* (artifacts/, journal/),
 and it's resume-safe: each phase is idempotent. The scaffolding for new
-PoCs lives in `internal/embedded/files/` and `internal/embedded/templates/`
-and is shipped inside the binary via `go:embed` (`internal/embedded/`).
+PoCs lives in `internal/embedded/files/` and is shipped inside the binary via
+`go:embed` (`internal/embedded/`).
+
+**Manifests live in `kit/`, not in Go.** Every manifest the binary applies —
+platform (`kit/platform/<phase>/`) and scenario
+(`kit/scenarios/<name>/manifests/`) — is a plain file, embedded via
+`kit/kit.go`. Templates use only `${NAME}` and `#@if NAME`/`#@end` guarded
+blocks, rendered by `kit.Render` in Go or `kit/lib/render.sh` in the shell
+(`TestRenderShellParity` keeps them identical). To change a manifest, edit the
+kit file; `kit/README.md` documents every platform file and its variables.
+`internal/cli/testdata/render/` pins `ocibnkctl render`'s output byte for byte —
+regenerate with `go test ./internal/cli -run TestRenderGolden -update` only for
+a deliberate manifest change, and review that diff.
 
 ## Pipeline shape
 
@@ -166,7 +177,8 @@ internal/deploy/       cert-manager, FLO, License CR, CWC cert-gen, Runner (kube
 internal/scenarios/    test-case framework + per-scenario subpackages (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)
-internal/embedded/     go:embed of AGENTS.md, CLAUDE.md, templates/
+internal/embedded/     go:embed of PoC scaffolding (AGENTS.md, CLAUDE.md, profiles/)
+kit/                   every applied manifest as plain files + render.sh (see kit/README.md)
 internal/version/      build-stamped version + BNK 2.4.1 pins + min-spec floor
 ```
 

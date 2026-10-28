@@ -1,6 +1,6 @@
 # Plan: from ctl binary to agentic kit
 
-Status: **proposal** — Phase 0 (`ocibnkctl render`) implemented 2026-10-28.
+Status: Phase 0 (`ocibnkctl render`) and Phase 1 (manifests in `kit/`) implemented 2026-10-28.
 
 ## Why
 
@@ -117,12 +117,43 @@ reference for Phase 1.
 ### Phase 1 — move the data out of Go (no behaviour change)
 
 Move `internal/embedded/templates/*`, every scenario `manifests/` dir and the
-`Sprintf` manifests into `kit/`; convert Go templates to `${VAR}` + overlays;
-Go renders through the same path.
+`Sprintf` manifests into `kit/`; convert Go templates to `${VAR}` + guarded
+blocks; Go renders through the same path.
 
-**Exit:** Phase 0 output is byte-identical (or `kubectl kustomize`-diff
-equal) before/after. `make smoke` gains `kubeconform` over `kit/` and a
-"no unresolved `${`" check.
+**Exit:** Phase 0 output is byte-identical before/after. `make smoke` checks
+that kit YAML parses and that no `${` is left unresolved.
+
+**Done (2026-10-28).** As built:
+
+- **Guarded blocks, not kustomize overlays.** Tested: kustomize drops every
+  comment and re-sorts keys, which would throw away the templates'
+  explanations and rule out byte-identical parity, and Go could only use it
+  by shelling out to `kubectl`. Instead, optional sections sit between
+  `#@if NAME` / `#@end` comment lines. Only two templates need them
+  (CNEInstance: `networkAttachments`, `aiGateway`, `consoleURL`; License:
+  `jwksConfigMapRef`); everything else is `${NAME}` substitution.
+- **One renderer, two implementations.** `kit.Render` (Go) and
+  `kit/lib/render.sh` (POSIX sh + awk, no `envsubst`, so macOS works);
+  `TestRenderShellParity` runs every kit template through both, under every
+  awk installed.
+- **Golden files** (`internal/cli/testdata/render/`, five PoC shapes) were
+  captured before the move; every platform manifest came out byte-identical.
+  The deliberate diffs: the two scenario `.tmpl` files switched from
+  `{{.Field}}` to `${NAME}`, the bundle ships `lib/render.sh` and uses it
+  instead of `envsubst`, and render now emits the test-JWT JWKS ConfigMap
+  that `deploy cne` had been applying since the tst-JWKS change (a real
+  drift between the two paths, which this phase exists to prevent).
+- **Checks:** every kit YAML parses (templates after rendering);
+  `kit/README.md` must document every platform file. kubeconform schema
+  validation is not added: it isn't installed here, and smoke should not
+  depend on it.
+- **Deferred to Phase 3:** manifests that Go *generates* rather than fills
+  — loops in `routingtemplate`/`routingconfigtenant`, the inline manifests in
+  `grpcroute`, `corefiles`, `aitokencountdssm`, `aiepp` and `llmgateway` —
+  move when those scenarios are ported. `cluster/edge.go` and `k3s.go` hold
+  container config, not Kubernetes manifests, and stay. `RenderFRRPeer`,
+  `RenderFRRStaticNAD` and `RenderBGPNAD` are unused leftovers of the
+  in-cluster FRR and were left in place.
 
 ### Phase 2 — shell scenario contract + pilots
 

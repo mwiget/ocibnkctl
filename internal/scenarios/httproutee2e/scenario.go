@@ -31,17 +31,16 @@
 package httproutee2e
 
 import (
-	"embed"
 	"fmt"
 	"io/fs"
 	"strings"
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*.yaml
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "http-routing-e2e"

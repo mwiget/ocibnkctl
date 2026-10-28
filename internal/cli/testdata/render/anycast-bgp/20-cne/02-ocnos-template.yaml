@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: f5-tmm-dynamic-routing-template
+  namespace: default
+data:
+  ZebOS.conf: |
+    route-map RMALL permit 10
+    !
+    router bgp 65000
+      bgp router-id %%POD_IP%%
+      bgp log-neighbor-changes
+      bgp graceful-restart restart-time 120
+      no bgp default ipv4-unicast
+      redistribute kernel route-map RMALL
+      redistribute connected route-map RMALL
+      redistribute static route-map RMALL
+      !
+      neighbor 192.168.99.41 remote-as 65001
+      neighbor 192.168.99.41 update-source net1
+      !
+      address-family ipv4
+        neighbor 192.168.99.41 activate
+        neighbor 192.168.99.41 soft-reconfiguration inbound
+      exit-address-family
+    !

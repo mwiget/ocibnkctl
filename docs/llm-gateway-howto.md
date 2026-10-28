@@ -345,7 +345,7 @@ from step 4, a **principal**, and a **virtual key** scoped to the model. Clients
 `http://<address>/v1/chat/completions` with `Authorization: Bearer <virtual key>`.
 
 To script it instead, the same calls are in
-[`llm-setup.sh`](../internal/scenarios/llmgateway/manifests/llm-setup.sh);
+[`llm-setup.sh`](../kit/scenarios/llm-gateway/manifests/llm-setup.sh);
 run it from a pod in the cluster with the platform admin's password.
 
 **7. Check the route reached TMM.** Changes reach TMM in batches: allow a
@@ -571,7 +571,7 @@ Kubernetes objects: use the console or the gateway API (base
 paths `/governance/orgs`, `/governance/teams`, `/governance/principals`,
 `/governance/budgets`, `/virtual-keys`). A request must fit the budget and
 rate limit of its principal, team and organization;
-[`llm-setup.sh`](../internal/scenarios/llmgateway/manifests/llm-setup.sh)
+[`llm-setup.sh`](../kit/scenarios/llm-gateway/manifests/llm-setup.sh)
 shows the calls.
 
 **Test.** `GET /v1/models` is answered by TMM itself; only a chat request

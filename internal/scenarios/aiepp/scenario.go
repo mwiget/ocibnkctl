@@ -25,7 +25,6 @@
 package aiepp
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -36,10 +35,10 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
 	"github.com/mwiget/ocibnkctl/internal/version"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*.yaml
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "ai-inference-epp"

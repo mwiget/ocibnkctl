@@ -1,0 +1,28 @@
+# bgp-anycast
+
+BGP anycast all-active data plane (how-to #3) — every TMM advertises over the shared edge FRR
+
+- Rating: **green**
+- Depends on: `bgp-peer-frr` (apply those first)
+
+## What it does
+
+Verification-only scenario for the anycast-bgp data-plane mode (the default).
+It applies nothing — the deploy path installed the bnk-bgp NAD, mapres=FALSE,
+and the cluster-wide OcNOS template, and the cluster backend runs the external
+bnk-edge FRR (the ToR) every TMM peers. This scenario asserts the anycast model
+against that one external FRR:
+
+  - the external FRR is reachable (else the cluster isn't in the edge-fabric
+    anycast shape — skips cleanly)
+  - every Running TMM has its own BGP session Established to the external FRR
+    (count of Established == TMM-pod count)
+  - the external FRR learned the TMM-advertised routes (BGP RIB non-empty)
+  - the FRR has MULTIPLE next-hops for the TMM net1 subnet — real ECMP fan-out
+    across workers, now that all TMMs share one L2 with one FRR (the edge-fabric
+    improvement over per-node-isolated bridges)
+
+## Manifests
+
+None — this scenario acts imperatively (e.g. exec into TMM or the BGP peer);
+the steps are in the description above.

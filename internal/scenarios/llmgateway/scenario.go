@@ -9,13 +9,12 @@
 // chat completions through TMM from the external edge and checks what the
 // gateway enforced and what it metered.
 //
-// The API calls live in manifests/llm-setup.sh, run as an in-cluster Job, so
+// The API calls live in kit/scenarios/llm-gateway/manifests/llm-setup.sh, run as an in-cluster Job, so
 // the same script is the documented manual path (docs/llm-gateway-howto.md).
 package llmgateway
 
 import (
 	"bytes"
-	"embed"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -23,10 +22,10 @@ import (
 	"time"
 
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
+	"github.com/mwiget/ocibnkctl/kit"
 )
 
-//go:embed manifests/*
-var manifestFS embed.FS
+var manifestFS = kit.Scenario(scnName)
 
 const (
 	scnName  = "llm-gateway"

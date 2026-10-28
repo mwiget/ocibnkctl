@@ -1,7 +1,5 @@
 package deploy
 
-import "fmt"
-
 // BNK 2.4.0 replaced the per-namespace F5BnkGateway IP pools with a
 // platform-level, singleton `Infra` CR (gateway.k8s.f5.com/v1alpha1) in the
 // CNEInstance namespace, consumed by per-tenant GatewaySettings CRs. A
@@ -37,30 +35,16 @@ const GatewayClassName = "bnk-gatewayclass"
 
 // RenderGatewayClass returns the GatewayClass bound to the F5 CNE controller.
 func RenderGatewayClass() string {
-	return `apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: ` + GatewayClassName + `
-spec:
-  controllerName: f5.com/default-f5-cne-controller
-  description: "F5 BIG-IP Kubernetes Gateway managed by FLO"
-`
+	return mustRender("platform/cne/gatewayclass.yaml", map[string]string{"GATEWAYCLASS_NAME": GatewayClassName})
 }
 
 // RenderInfra returns the platform Infra CR for the CNEInstance namespace.
 func RenderInfra(namespace string) string {
-	return fmt.Sprintf(`apiVersion: gateway.k8s.f5.com/v1alpha1
-kind: Infra
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  ipams:
-  - name: %s
-    ipPools:
-    - rangeStart: %s
-      rangeEnd: %s
-  networkAttachments: []
-  networks: []
-`, InfraName, namespace, DynamicVIPPool, DynamicVIPRangeStart, DynamicVIPRangeEnd)
+	return mustRender("platform/cne/infra.yaml", map[string]string{
+		"INFRA_NAME":      InfraName,
+		"NAMESPACE":       namespace,
+		"VIP_POOL":        DynamicVIPPool,
+		"VIP_RANGE_START": DynamicVIPRangeStart,
+		"VIP_RANGE_END":   DynamicVIPRangeEnd,
+	})
 }

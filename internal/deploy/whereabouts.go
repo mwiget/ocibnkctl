@@ -70,31 +70,5 @@ func RenderBGPNADWhereabouts(namespace string, octet int) string {
 // the per-node bridges are isolated L2; whereabouts allocates from one shared
 // store, which is what a DaemonSet of TMM pods sharing a single edge L2 needs.
 func renderWhereaboutsBridgeNAD(name, namespace, bridge, subnet, rangeStart, rangeEnd string) string {
-	return fmt.Sprintf(`apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
-metadata:
-  name: %s
-  namespace: %s
-  annotations:
-    # FLO's TMM-template propagation expects a resourceName on the NAD
-    # (the SR-IOV convention). Bridge CNI has no hardware behind it, so
-    # this is a documentary stand-in that silences a reconcile warning.
-    k8s.v1.cni.cncf.io/resourceName: bridge.cni.io/%s
-spec:
-  config: |
-    {
-      "cniVersion": "0.3.1",
-      "type": "bridge",
-      "bridge": "%s",
-      "ipMasq": false,
-      "isGateway": false,
-      "hairpinMode": true,
-      "ipam": {
-        "type": "whereabouts",
-        "range": "%s",
-        "range_start": "%s",
-        "range_end": "%s"
-      }
-    }
-`, name, namespace, name, bridge, subnet, rangeStart, rangeEnd)
+	return mustRender("platform/cne/nad-bridge-whereabouts.yaml", bridgeNADVars(name, namespace, bridge, subnet, rangeStart, rangeEnd))
 }

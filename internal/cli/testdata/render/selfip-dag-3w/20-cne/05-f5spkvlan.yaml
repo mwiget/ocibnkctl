@@ -1,0 +1,14 @@
+apiVersion: k8s.f5net.com/v1
+kind: F5SPKVlan
+metadata:
+  name: f5-tmm-dag
+  namespace: default
+spec:
+  name: f5-tmm-dag
+  category: external
+  interfaces: ["1.1"]
+  selfip_v4s: [192.0.2.10,192.0.2.11,192.0.2.12]
+  prefixlen_v4: 24
+  pod_hash: SRC_ADDR
+  cmp_hash: SRC_ADDR
+  mtu: 1500
