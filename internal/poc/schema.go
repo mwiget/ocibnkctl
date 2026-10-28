@@ -198,6 +198,14 @@ type BNK struct {
 	//                     Also lowers the `doctor` core floor. Pair with
 	//                     `ocibnkctl deploy shrink` to cap every other pod.
 	HostProfile string `yaml:"host_profile,omitempty"`
+	// DeploymentSize is CNEInstance.spec.deploymentSize — FLO's own
+	// sizing lever, which the CRD describes as replacing "all references
+	// to specific resource sizing in the instance CR". One of Tiny,
+	// Small, Medium, Large, Max; empty means Small, the footprint this
+	// tool has always shipped. It is orthogonal to HostProfile (which
+	// only sheds TMM's metrics sidecar) and to `deploy shrink` (which
+	// caps requests by admission, after FLO has applied them).
+	DeploymentSize string `yaml:"deployment_size,omitempty"`
 	// ActiveActive is the legacy bool for the all-active multi-TMM data
 	// plane. DEPRECATED in favour of TMMDataplaneMode — kept as a
 	// back-compat alias: `tmm_active_active: true` is equivalent to
@@ -267,6 +275,20 @@ const (
 	HostProfileStandard = "standard"
 	HostProfileSmall    = "small"
 )
+
+// Deployment sizes accepted by CNEInstance.spec.deploymentSize. The
+// enum is fixed by the CRD; anything else is rejected at admission, so
+// validate() catches a typo before a deploy burns minutes on it.
+var DeploymentSizes = []string{"Tiny", "Small", "Medium", "Large", "Max"}
+
+// DeploymentSizeOrDefault is the value for CNEInstance.spec.deploymentSize.
+// Small is the default this tool has always emitted.
+func (b BNK) DeploymentSizeOrDefault() string {
+	if b.DeploymentSize == "" {
+		return "Small"
+	}
+	return b.DeploymentSize
+}
 
 // TMM data-plane mode values for BNK.TMMDataplaneMode.
 const (

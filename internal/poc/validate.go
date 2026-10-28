@@ -112,6 +112,22 @@ func (p *PoC) Validate() ValidationResult {
 	if p.BNK.IsSmallHost() {
 		r.Warnings = append(r.Warnings, "bnk.host_profile=small: TMM metrics subsystem (observer sidecar) is disabled so TMM fits a 4-core node; e2e auto-runs `deploy shrink` to cap the remaining pods.")
 	}
+	// deployment_size is a fixed CRD enum. Catching a typo here saves a
+	// deploy that would otherwise fail at CNEInstance admission, minutes in.
+	if p.BNK.DeploymentSize != "" {
+		valid := false
+		for _, s := range DeploymentSizes {
+			if p.BNK.DeploymentSize == s {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			r.Errors = append(r.Errors, fmt.Sprintf(
+				"bnk.deployment_size %q: must be one of %s (CNEInstance.spec.deploymentSize)",
+				p.BNK.DeploymentSize, strings.Join(DeploymentSizes, ", ")))
+		}
+	}
 
 	// TMM data-plane mode: validate the enum value and reconcile it with
 	// the legacy tmm_active_active bool. The two all-active modes are
