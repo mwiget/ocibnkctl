@@ -347,6 +347,27 @@ Binary = k3s provisioner + optional runner. Add `ocibnkctl kit extract
 <dir>`; publish `kit/` as a release tarball usable with no binary. Rewrite
 the PoC `AGENTS.md` around the kit, with the binary as an accelerator.
 
+**Done (2026-10-28).** By now the binary is already what this phase asked
+for: `cluster up/scale/destroy` (the k3s provisioner), thin `deploy`
+wrappers that gate, map poc.yaml and run the platform scripts, the scenario
+runner and reports, and `render`. Added here:
+
+- `ocibnkctl kit extract <dir>` — the whole kit (`kit.Tree`: README.md,
+  lib, platform, scenarios), scripts executable; refuses to overwrite
+  anything but a previous extract.
+- `bnk-kit_<version>.tar.gz` with every release: `make kit-tarball` (kit/
+  without its Go files, under `bnk-kit/`) runs as a goreleaser before
+  hook; the tarball is a release extra file and in `checksums.txt`.
+  Validated with goreleaser `check` and a `--snapshot --skip=publish` run.
+  `TestKitTreeIsWhatShips` keeps the tarball's contents equal to
+  `kit.Tree`; an extracted kit was diffed identical to the tarball.
+- The PoC's `AGENTS.md` gains "The kit: the same steps as plain scripts":
+  what is where, when to use it, and that on the PoC itself the phases
+  still go through `ocibnkctl` (gates, poc.yaml, journal).
+
+Still open from the earlier phases: the two `selfip-dag` routing-template
+scenarios (Go) and the third-party cluster run.
+
 ## Open questions
 
 - **Kit location:** `kit/` in this repo (recommended while parity tests

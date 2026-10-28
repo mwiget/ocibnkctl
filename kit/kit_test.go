@@ -296,3 +296,43 @@ func TestReadmeCoversPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The release tarball is kit/ minus its Go files (Makefile kit-tarball);
+// `ocibnkctl kit extract` writes Tree from FS. Both must be the same set.
+func TestKitTreeIsWhatShips(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") {
+			onDisk = append(onDisk, e.Name())
+		}
+	}
+	sort.Strings(onDisk)
+	tree := append([]string(nil), Tree...)
+	sort.Strings(tree)
+	if strings.Join(onDisk, " ") != strings.Join(tree, " ") {
+		t.Fatalf("kit/ ships %v, kit.Tree is %v", onDisk, tree)
+	}
+}
+
+// An extracted kit works where it lands: scripts resolve their helpers
+// relative to themselves, and keep their executable bit.
+func TestExtractAllRuns(t *testing.T) {
+	root := t.TempDir()
+	if err := ExtractAll(root); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(root + "/platform/cne/install.sh")
+	if err != nil || fi.Mode()&0o100 == 0 {
+		t.Fatalf("install.sh missing or not executable: %v %v", fi, err)
+	}
+	cmd := exec.Command("sh", root+"/lib/render.sh", root+"/platform/prereqs/namespace.yaml")
+	cmd.Env = append(os.Environ(), "NAME=extracted")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "name: extracted") {
+		t.Fatalf("render from the extract: %v\n%s", err, out)
+	}
+}

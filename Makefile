@@ -1,4 +1,4 @@
-.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64 runner-image
+.PHONY: all build build-linux-arm64 build-darwin-arm64 build-all install test clean tidy fmt vet smoke release release-linux-amd64 release-linux-arm64 release-darwin-arm64 runner-image kit-tarball
 
 all: build-all
 
@@ -81,6 +81,17 @@ release-darwin-arm64:
 	    -o bin/ocibnkctl-$(VERSION)-darwin-arm64 ./cmd/ocibnkctl
 	cd bin && sha256sum ocibnkctl-$(VERSION)-darwin-arm64 \
 	    > ocibnkctl-$(VERSION)-darwin-arm64.sha256
+
+# The kit as its own release artifact: kit/ without its Go files (the same
+# tree `ocibnkctl kit extract` writes; TestKitTreeIsWhatShips keeps them
+# equal), under a bnk-kit/ top directory. goreleaser runs this as a before
+# hook and attaches the result.
+KIT_TARBALL = build/bnk-kit_$(VERSION).tar.gz
+kit-tarball:
+	@rm -rf build/bnk-kit && mkdir -p build/bnk-kit
+	@cp -R kit/. build/bnk-kit/ && find build/bnk-kit -name '*.go' -delete
+	@tar -czf $(KIT_TARBALL) -C build bnk-kit
+	@echo "$(KIT_TARBALL)"
 
 release: release-linux-amd64 release-linux-arm64 release-darwin-arm64
 
@@ -200,6 +211,14 @@ smoke: test build
 	    || { echo "render.sh did not substitute NAME"; exit 1; }; \
 	  if sh kit/lib/render.sh kit/platform/prereqs/namespace.yaml >/dev/null 2>&1; then \
 	    echo "render.sh accepted an unset variable"; exit 1; \
+	  fi; \
+	echo "[13] kit extract writes a runnable kit and refuses to overwrite"; \
+	  rm -rf $(SMOKE_DIR)/kit-x; ./bin/ocibnkctl kit extract $(SMOKE_DIR)/kit-x >/dev/null; \
+	  test -x $(SMOKE_DIR)/kit-x/platform/cne/install.sh || { echo "kit extract: install.sh missing"; exit 1; }; \
+	  NAME=x sh $(SMOKE_DIR)/kit-x/lib/render.sh $(SMOKE_DIR)/kit-x/platform/prereqs/namespace.yaml | grep -q "name: x" \
+	    || { echo "kit extract: render.sh broken"; exit 1; }; \
+	  if ./bin/ocibnkctl kit extract $(SMOKE_DIR)/kit-x >/dev/null 2>&1; then \
+	    echo "kit extract should refuse to overwrite without --force"; exit 1; \
 	  fi; \
 	echo "PASS"
 
