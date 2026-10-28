@@ -1,0 +1,30 @@
+name: llm-gateway
+title: "LLM gateway (BNK 2.4.1 AI gateway) — virtual keys, model scope, metering, console"
+rating: green
+dependencies: [bgp-peer-frr]
+description: |
+  The BNK 2.4.1 AI/LLM gateway end to end. Requires bnk.ai_gateway.enabled
+  (FLO installs the console, the AI gateway API and, with ai_metrics,
+  ClickHouse) and the anycast-bgp data plane (clients reach the Gateway VIP
+  from the external edge over BGP).
+
+  Apply: deploys mock-llm (llm-d-inference-sim, OpenAI-compatible, no GPU, no
+  API key) in llm-demo, then runs llm-setup.sh as a Job against the AI gateway
+  API: tenant "demo", provider key → mock, model gpt-4o-mini, principal
+  demo-app, route demo-llm on 203.0.113.140:80 (Gateway + HTTPRoute + AppPolicy
+  + AIGatewayProfile), and a virtual key scoped to gpt-4o-mini.
+
+  Verify, from the edge FRR's netns (a client outside the cluster):
+    - the virtual key gets a 200 chat completion with a usage block
+    - a wrong key gets 401, no key gets 401
+    - a model outside the key's scope gets 403
+    - with ai_metrics, ClickHouse holds one record per request
+    - the route's AIGatewayProfile reports Programmed
+
+  Works around an f5ingress 2.4.1 race: a new route's Gateway apply can fail
+  with "AI profile ... is not prepared yet" and is not retried, so TMM never
+  gets the virtual server. Verify restarts f5-cne-controller once when it sees
+  that state.
+
+  Cleanup deletes llm-demo. The tenant and its objects stay (the API owns
+  them); delete them in the console or with the API.

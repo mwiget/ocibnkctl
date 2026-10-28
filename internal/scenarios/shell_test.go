@@ -50,6 +50,58 @@ func TestTokenCountingLoggingSubsystem(t *testing.T) {
 	}
 }
 
+// The virtual key lands in <PoC>/artifacts/llm-gateway/virtual-key (0600,
+// where ask.sh reads it) and never in the scenario's output.
+func TestLLMGatewayKeyHandling(t *testing.T) {
+	stubs(t, healthyKubectl, healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	t.Setenv("KIT_STATE", "")
+	ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+	s := Find("llm-gateway")
+	if _, err := s.Manifests(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("apply: %v\n%s", err, ctx.Out)
+	}
+	if r := s.Verify(ctx); r.Status != "ok" {
+		t.Fatalf("verify: %s %q", r.Status, r.Summary)
+	}
+	path := filepath.Join(ctx.PoCDir, "artifacts", "llm-gateway", "virtual-key")
+	b, err := os.ReadFile(path)
+	fi, _ := os.Stat(path)
+	if err != nil || strings.TrimSpace(string(b)) != "vk-test-123" || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("key file %s: %q %v mode=%v", path, b, err, fi)
+	}
+	if strings.Contains(ctx.Out.(*strings.Builder).String(), "vk-test-123") {
+		t.Error("the virtual key appears in the scenario output")
+	}
+}
+
+// A gateway that serves a model outside the key's scope fails that check.
+func TestLLMGatewayScopeEnforced(t *testing.T) {
+	stubs(t, healthyKubectl, strings.Replace(healthyDocker,
+		`*"Bearer vk-test-123"*gpt-5*) printf '{"error":"Model not allowed"}\nOCIBNKCTL_HTTP_STATUS=403\n' ;;`,
+		`*"Bearer vk-test-123"*gpt-5*) printf '{"usage":{}}\nOCIBNKCTL_HTTP_STATUS=200\n' ;;`, 1))
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "llm-gateway")
+	if r.Status != "failed" || r.Summary != "failed: model outside the key's scope → 403" {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
+	}
+}
+
+// Half the requests on the busy pod is load-blind balancing: steering fails.
+func TestEPPSteeringFails(t *testing.T) {
+	stubs(t, healthyKubectl, strings.Replace(healthyDocker,
+		`*'seq 10'*) for i in 1 2 3 4 5 6 7 8 9 10; do echo "ocibnkctl-epp-role=idle pod=mock-vllm-idle-1"; done ;;`,
+		`*'seq 10'*) for i in 1 2 3 4 5; do echo ocibnkctl-epp-role=idle; echo ocibnkctl-epp-role=busy; done ;;`, 1))
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "ai-inference-epp")
+	if r.Status != "failed" || !strings.Contains(r.Summary, "EPP steered every request to the idle pod") {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
+	}
+}
+
 // One token off in one DSSM bucket fails the exact-match check, and only it.
 func TestDSSMMismatch(t *testing.T) {
 	stubs(t, strings.Replace(healthyKubectl, `echo "x:TMMTOKtotal|vs=$lb|mode=$m|model=gpt-stub~~~S75"`,
@@ -170,6 +222,16 @@ func stubs(t *testing.T, kubectl, docker string) {
 	body, _ := os.ReadFile(tgz)
 	sum := fmt.Sprintf("%x", sha256.Sum256(body))
 	t.Setenv("KIT_CACHE", cache)
+	// ai-inference-epp fetches the GAIE CRDs; seed a stand-in the same way.
+	gaie := filepath.Join(cache, "gaie-v1.4.0", "manifests.yaml")
+	if err := os.MkdirAll(filepath.Dir(gaie), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gaie, []byte("# stand-in GAIE CRDs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GAIE_SHA", fmt.Sprintf("%x", sha256.Sum256([]byte("# stand-in GAIE CRDs\n"))))
+	t.Setenv("GAIE_URL", "http://127.0.0.1:9/unreachable") // a fetch would fail loudly
 	t.Setenv("GRPCURL_SHA_X86_64", sum)
 	t.Setenv("GRPCURL_SHA_ARM64", sum)
 }
@@ -183,6 +245,23 @@ const healthyKubectl = `case "$*" in
 *"get service/stub-modelcache"*) printf 10.43.0.9 ;;
 *"get gateway/scn-semcache-gateway"*annotations*) printf 'semantic_cache=enabled,semantic_cache_ip_port=10.43.0.9:5050' ;;
 *"get httproute"*sse-enabled*) printf true ;;
+*"get httproute scn-epp-route"* | *"get inferencepool"*) printf 'Accepted=True ResolvedRefs=True ' ;;
+*"get f5-epps"*) printf 'Accepted=True ResolvedRefs=True Programmed=True Available=True ' ;;
+*"get service llm-pool-epp"*) printf '9002 9003 9090' ;;
+*"get role,rolebinding"*) echo role.rbac.authorization.k8s.io/llm-pool-epp ;;
+*"get cneinstance bnk-instance"*eppNamespaces*) printf '["inference"]' ;;
+*"tmctl -d blade profile_ext_proc_stat"*) echo "name scn-epp-llm-pool-epp-ivs" ;;
+*"tmctl -d blade inference_epp_stats"*)
+	# the captured tmctl shape; 2 consults before the run, 12 after
+	n=$(cat "$STUB_STATE.epp" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_STATE.epp"
+	c=2; [ "$n" -gt 0 ] && c=12
+	printf 'name          schedule_calls schedule_successes schedule_skipped\n------------- -------------- ------------------ ----------------\ninference_epp             %s                 %s                0\n\nschedule_fallbacks immediate_responses\n------------------ -------------------\n                 0                   0\n' $c $c ;;
+*"get --raw"*metrics*)
+	n=$(cat "$STUB_STATE.metrics" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_STATE.metrics"
+	m=2; [ "$n" -gt 0 ] && m=12
+	echo 'epp_tokenizer_guard_events_total{event="encode_failed"} 20'
+	echo "f5_epp_prefix_index_lookups_total{instance=\"a\",pool=\"llm-pool\",result=\"miss\"} $m"
+	echo 'f5_epp_prefix_index_lookups_total{instance="a",pool="llm-pool",result="no_query"} 21' ;;
 *"get grpcroute"*) printf True ;;
 *"get f5-big-cne-irule/aitok-counter"*) printf aitok-counter ;;
 *"exec f5-dssm-db-0"*)
@@ -207,6 +286,15 @@ const healthyKubectl = `case "$*" in
 *"get httproute"* | *"get l4route"*) printf True ;;
 *"get f5-big-cne-irule/pp-prepend"*) printf pp-prepend ;;
 *"get netpolicy"*) printf scn-proxy-attach ;;
+*"get cneinstances"*aiGateway.enabled*) printf true ;;
+*"get cneinstances"*aiGateway.aiMetrics*) printf true ;;
+*"get secret f5-aigateway-admin"*) printf cGFzcw== ;;
+*" create secret "* | *" create configmap "*) echo "apiVersion: v1" ;;
+*"get job llm-setup"*) printf 1/ ;;
+*"logs job/llm-setup"*) printf 'creating tenant demo\nVKEY=vk-test-123\n' ;;
+*"virtual_server_stat"*) echo "default-demo-llm-203.0.113.140-http-80-vs" ;;
+*"get aigatewayprofiles"*) printf 'Programmed=True: ok' ;;
+*"exec f5-aigateway-clickhouse-0"*) printf '200\t1\t30\n401\t2\t0\n403\t1\t0\n' ;;
 *"get cneinstances"*TMM_MAPRES*) printf FALSE ;;
 *"get cneinstances"*USE_GATEWAY_SETTINGS*) printf true ;;
 *"get cneinstances"*networkAttachments*) printf bnk-bgp ;;
@@ -237,9 +325,15 @@ const healthyDocker = `case "$*" in
 	echo "*192.168.99.160 4 65000 12 14 0 0 0 00:02:13 3" ;;
 *"vtysh -c show bgp ipv4 unicast 192.168."*) echo "Paths: (1 available, best #1, table default)" ;;
 *"vtysh -c show ip bgp"* | *"vtysh -c show bgp ipv4 unicast"*)
-	for o in 100 101 102 103 104 106 107 108 109 111 120 121 122 123; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
+	for o in 100 101 102 103 104 106 107 108 109 111 120 121 122 123 124 140; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
 *"ip route show"*) echo "$7 via 192.168.99.160 dev eth1" ;;
 *socat*) echo ocibnkctl-scenario-udp-lb-OK ;;
+*"Bearer vk-test-123"*gpt-5*) printf '{"error":"Model not allowed"}\nOCIBNKCTL_HTTP_STATUS=403\n' ;;
+*"Bearer vk-test-123"*) printf '{"choices":[],"usage":{"total_tokens":30}}\nOCIBNKCTL_HTTP_STATUS=200\n' ;;
+*"Bearer sk-not-a-virtual-key"*) printf '{"error":"Invalid virtual key"}\nOCIBNKCTL_HTTP_STATUS=401\n' ;;
+*OCIBNKCTL_HTTP_STATUS*) printf '{"error":"missing Authorization header"}\nOCIBNKCTL_HTTP_STATUS=401\n' ;;
+*'seq 10'*) for i in 1 2 3 4 5 6 7 8 9 10; do echo "ocibnkctl-epp-role=idle pod=mock-vllm-idle-1"; done ;;
+*'seq 1)'*) echo "ocibnkctl-epp-role=idle pod=mock-vllm-idle-1" ;;
 */grpcurl*Index*) echo '{"description": "gRPC testing server"}' ;;
 */grpcurl*list*) echo grpcbin.GRPCBin ;;
 *curl*)

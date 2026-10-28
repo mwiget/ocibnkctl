@@ -18,8 +18,6 @@ import (
 	// Side-effect imports: each blank-imported package registers its
 	// scenario(s) with internal/scenarios at init time. Add new ones
 	// here as they land.
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aiepp"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/llmgateway"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingconfigtenant"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingtemplate"
 )

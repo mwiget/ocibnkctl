@@ -20,10 +20,10 @@ spec:
         env:
         - name: ADMIN_PASSWORD
           valueFrom: {secretKeyRef: {name: llm-admin, key: password}}
-        - {name: TENANT, value: "demo"}
-        - {name: VIP, value: "203.0.113.140"}
-        - {name: MODEL, value: "gpt-4o-mini"}
-        - {name: PROVIDER_URL, value: "http://mock-llm.llm-demo.svc:8080/v1"}
+        - {name: TENANT, value: "${TENANT}"}
+        - {name: VIP, value: "${VIP}"}
+        - {name: MODEL, value: "${MODEL}"}
+        - {name: PROVIDER_URL, value: "${PROVIDER_URL}"}
         - name: PROVIDER_KEY
           valueFrom: {secretKeyRef: {name: llm-provider, key: api-key}}
         volumeMounts:

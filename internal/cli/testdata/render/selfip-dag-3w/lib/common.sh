@@ -24,6 +24,9 @@ KIT_FAILED=0
 KIT_SKIPPED=0
 # Where scenarios keep downloaded tools (e.g. grpcurl) between runs.
 KIT_CACHE=${KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/bnk-kit}
+# Where scenarios keep what apply.sh hands to verify.sh (e.g. a generated
+# API key), by scenario name. ocibnkctl points it at <PoC>/artifacts.
+KIT_STATE=${KIT_STATE:-$KIT_CACHE/state}
 
 kit_log() { printf '%s\n' "$*" >&2; }
 
@@ -161,6 +164,8 @@ kit_copy_secret() {
 #   anycast-bgp            the CNEInstance runs the anycast-bgp data plane:
 #                          a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE,
 #                          so net1 keeps its kernel IP for BGP
+#   ai-gateway             the CNEInstance enables BNK's AI gateway
+#                          (spec.aiGateway.enabled, BNK 2.4.1+)
 #   gateway-settings       the CNE controller runs the Infra/GatewaySettings
 #                          network model (USE_GATEWAY_SETTINGS=true), which
 #                          address-less Gateways need
@@ -187,6 +192,10 @@ kit_require() {
 			_kq_n=$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.networkAttachments[*]}' 2>&1)
 			[ "$_kq_m" = FALSE ] && [ -n "$_kq_n" ] ||
 				kit_die "precondition anycast-bgp: needs a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE (got mapres=${_kq_m:-unset} networkAttachments=${_kq_n:-none}); otherwise mapres takes net1 and BGP has no source address"
+			;;
+		ai-gateway)
+			[ "$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.aiGateway.enabled}' 2>&1)" = true ] ||
+				kit_die "precondition ai-gateway: CNEInstance spec.aiGateway.enabled is not true (ocibnkctl: bnk.ai_gateway.enabled in poc.yaml, then deploy cne)"
 			;;
 		gateway-settings)
 			_kq_g=$(kubectl get cneinstances -A -o \

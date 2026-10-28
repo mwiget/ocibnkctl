@@ -226,7 +226,8 @@ In batches, one PR each:
 |---|---|---|
 | A | `bgp-peer-frr`, `tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`, `proxy-protocol-l4` | done, verified live |
 | B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | done; five verified live, `core-file-collection` stub-tested only (it permanently changes the cluster) |
-| C | `ai-inference-epp`, `llm-gateway`, `routing-template-multitenant`, `routing-config-tenant` | |
+| C | `ai-inference-epp`, `llm-gateway` | done, verified live |
+| C2 | `routing-template-multitenant`, `routing-config-tenant` (amber) | open: need a `selfip-dag` cluster to verify |
 | D | `pod` edge driver; third-party cluster run (the exit check) | |
 
 Batch A notes: `bgp-peer-frr` was moved forward rather than left for last —
@@ -268,6 +269,24 @@ usage in all 24 buckets over 40 requests, grpcurl was fetched and verified —
 and bare with `EDGE_DRIVER=none`. With one worker `bgp-anycast`'s ECMP check
 is trivially satisfied; it still wants a run on a multi-worker cluster with
 an edge router.
+
+Batch C notes: `ai-inference-epp` fetches the GAIE CRDs with `kit_fetch`
+(the pin moved from `internal/version` to its `scenario.env`, and
+`deploy.EnsureGAIECRDs` went with its only user); the tmctl and Prometheus
+parsers became awk, tested against the captured fixtures the Go tests used.
+`llm-gateway`'s manifests used Go-template `{{.Field}}` syntax without a
+`.tmpl` suffix — fine through ocibnkctl, which rendered them, but not
+usable by hand from `kit/` — and are now `${VAR}` templates. Its virtual key
+goes to `KIT_STATE` (ocibnkctl: `<PoC>/artifacts`, so
+`artifacts/llm-gateway/virtual-key`, where the profile's `ask.sh` reads it);
+the admin password and provider key only pass through 0600 files and
+pipes. Preflight gained `ai-gateway`, read from the CNEInstance.
+
+Live (BNK 2.4.1, AI gateway with metrics): `ai-inference-epp` 20/20 — all
+10 requests on the idle pod, 10 EPP consults, 10 prefix-index lookups;
+`llm-gateway` 7/7, including the f5ingress 2.4.1 profile race (the
+controller restart recovered it) and ClickHouse records for 200, 401 and
+403. Both pass bare with `EDGE_DRIVER=none`.
 
 ### Phase 4 — platform install as scripts
 
