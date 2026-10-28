@@ -126,10 +126,14 @@ sh kit/scenarios/cluster-wide-watch/cleanup.sh
 
 Data-plane checks need a client outside the cluster that reaches Gateway
 VIPs over the routes TMM advertises. `EDGE_DRIVER` (`lib/edge.sh`) says
-where it is: `none` (the default by hand: those checks are reported as
-skipped), `external` (`EDGE_EXEC` / `EDGE_VTYSH` run commands on your own
-client and BGP router), or `ocibnkctl` (the external FRR container
-`cluster up` builds; `ocibnkctl scenario run` sets it). The script
+where it is:
+
+| `EDGE_DRIVER` | Client | BGP checks |
+|---|---|---|
+| `none` (default by hand) | — data-plane checks are reported skipped | skipped |
+| `pod` | an in-cluster netshoot pod on `EDGE_POD_NAD` (default `default/bnk-bgp`), routing `EDGE_POD_ROUTES` (default `203.0.113.0/24`) via a TMM's address on that NAD; created on first use, removed with `sh kit/lib/edge-pod.sh down`. Works on any cluster with a NAD that reaches TMM | with `EDGE_VTYSH` |
+| `external` | your own host: `EDGE_EXEC` is the command prefix that runs a command there (e.g. `ssh lab-client`) | with `EDGE_VTYSH` (e.g. `ssh lab-frr vtysh -c`) |
+| `ocibnkctl` | the external FRR container `cluster up` builds; `ocibnkctl scenario run` sets it | yes | The script
 helpers are in `lib/common.sh` (assertions, `kit_count`, apply, retry,
 preflight, `kit_fetch` for checksum-pinned tool downloads into `KIT_CACHE`),
 `lib/edge.sh` (client commands, `edge_check_vip` waits for a VIP in the

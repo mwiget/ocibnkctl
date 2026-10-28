@@ -16,8 +16,9 @@
 # 1 otherwise. Everything else, logs included, goes to stderr. ocibnkctl
 # parses those lines into its scenario report; a human just reads them.
 
-KIT_SCENARIO_DIR=$(cd "$(dirname "$0")" && pwd)
-KIT_LIB=$(cd "$KIT_SCENARIO_DIR/../../lib" && pwd)
+# Preset both to source this from outside scenarios/<name>/ (lib/edge-pod.sh).
+KIT_SCENARIO_DIR=${KIT_SCENARIO_DIR:-$(cd "$(dirname "$0")" && pwd)}
+KIT_LIB=${KIT_LIB:-$(cd "$KIT_SCENARIO_DIR/../../lib" && pwd)}
 cd "$KIT_SCENARIO_DIR" || exit 2
 
 KIT_FAILED=0

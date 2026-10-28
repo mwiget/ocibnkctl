@@ -1,0 +1,30 @@
+# The EDGE_DRIVER=pod client (lib/edge.sh): a netshoot pod attached to a NAD
+# that reaches TMM's data-plane interface, with static routes for the VIP
+# range via a TMM's address on that NAD. Created on first use, kept between
+# scenarios; remove with `sh kit/lib/edge-pod.sh down`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${EDGE_POD_NS}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${EDGE_POD_NAME}
+  namespace: ${EDGE_POD_NS}
+  labels:
+    app: bnk-edge-client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: ${EDGE_POD_NAD}
+spec:
+  # The NAD's bridge exists only on the nodes TMM runs on.
+  nodeSelector:
+    ${EDGE_POD_NODE_LABEL_KEY}: "${EDGE_POD_NODE_LABEL_VALUE}"
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: client
+    image: ${EDGE_TOOLS_IMAGE}
+    command: ["sleep", "infinity"]
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN"] # to add the VIP routes

@@ -228,7 +228,7 @@ In batches, one PR each:
 | B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | done; five verified live, `core-file-collection` stub-tested only (it permanently changes the cluster) |
 | C | `ai-inference-epp`, `llm-gateway` | done, verified live |
 | C2 | `routing-template-multitenant`, `routing-config-tenant` (amber) | open: need a `selfip-dag` cluster to verify |
-| D | `pod` edge driver; third-party cluster run (the exit check) | |
+| D | `pod` edge driver; third-party cluster run (the exit check) | `pod` driver done, verified live; third-party run open (no such cluster available) |
 
 Batch A notes: `bgp-peer-frr` was moved forward rather than left for last —
 every data-plane scenario depends on it, and once it is a script the rest of
@@ -287,6 +287,25 @@ Live (BNK 2.4.1, AI gateway with metrics): `ai-inference-epp` 20/20 — all
 `llm-gateway` 7/7, including the f5ingress 2.4.1 profile race (the
 controller restart recovered it) and ClickHouse records for 200, 401 and
 403. Both pass bare with `EDGE_DRIVER=none`.
+
+Batch D notes: the `pod` driver is a client, not a BGP peer. The plan had
+an in-cluster FRR on a NAD, but peering it means adding a neighbor to TMM's
+OcNOS template — a platform change on the cluster under test. A netshoot
+pod on a NAD that reaches TMM's data plane, with static routes for the VIP
+range via a TMM's address on it (read from TMM's Multus network-status),
+needs nothing from the cluster but the NAD, and runs every data-plane check
+(curl, socat, grpcurl via `edge_tool`, which now also copies tools into the
+pod). BGP-table checks still need a router CLI (`EDGE_VTYSH`). With several
+TMMs the route goes to one of them: no ECMP, which only `bgp-anycast`
+checks, through the router.
+
+Live (BNK 2.4.1, anycast-bgp), bare from `kit/` with only `KUBECONFIG` and
+`EDGE_DRIVER=pod`: the pod took 192.168.95.161 on `default/bnk-bgp` and
+routed the VIPs via TMM's auto-detected .160; http-routing-e2e 5/5 curls,
+tcp-l4 20/20, udp-l4 5/5, grpc-loadbalance list + unary over L4 (grpcurl
+copied into the pod), ai-token-counting-dssm 40/40 with all 24 DSSM buckets
+matching; only BGP-table checks skipped. That is the closest this setup can
+get to the exit check: the scripts never touched the ocibnkctl edge fabric.
 
 ### Phase 4 — platform install as scripts
 

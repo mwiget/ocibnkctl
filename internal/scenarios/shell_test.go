@@ -137,6 +137,48 @@ func TestBGPPeerLongLivedSession(t *testing.T) {
 	}
 }
 
+// With the in-cluster pod client every scenario's data-plane checks run
+// (BGP-table checks skip: the pod has no router CLI), and the pod is routed
+// via the TMM's address on the NAD.
+func TestShellScenariosPodDriver(t *testing.T) {
+	for _, s := range loadShellScenarios() {
+		t.Run(s.Name(), func(t *testing.T) {
+			stubs(t, healthyKubectl, healthyDocker)
+			t.Setenv("EDGE_DRIVER", "pod")
+			ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+			if _, err := s.Manifests(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Apply(ctx); err != nil {
+				t.Fatalf("apply: %v\n%s", err, ctx.Out)
+			}
+			r := s.Verify(ctx)
+			if r.Status != "ok" {
+				t.Fatalf("status=%s summary=%q\n%s", r.Status, r.Summary, ctx.Out)
+			}
+			for _, a := range r.Assertions {
+				if a.Skipped && !strings.Contains(a.Got, "EDGE_VTYSH") && !strings.Contains(a.Got, "loggingSubsystem") {
+					t.Errorf("%q skipped for another reason: %s", a.Description, a.Got)
+				}
+			}
+		})
+	}
+}
+
+// The pod client routes the VIP range via the TMM's net1 address, parsed
+// from its Multus network-status, and is set up once per pod.
+func TestEdgePodRoutesViaTMM(t *testing.T) {
+	stubs(t, healthyKubectl, healthyDocker)
+	t.Setenv("EDGE_DRIVER", "pod")
+	if r := runPilot(t, "http-routing-e2e"); r.Status != "ok" {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
+	}
+	routes, err := os.ReadFile(os.Getenv("STUB_STATE") + ".route")
+	if err != nil || strings.Count(string(routes), "ip route replace 203.0.113.0/24 via 192.168.99.160 dev net1") != 1 {
+		t.Fatalf("route setup = %q (%v), want one route via the TMM's net1 address", routes, err)
+	}
+}
+
 // bgp-peer-frr counts only Established rows on the edge L2: an Active
 // neighbor next to an Established one is 1 of 2, a failure.
 func TestBGPPeerCountsEstablished(t *testing.T) {
@@ -239,6 +281,14 @@ func stubs(t *testing.T, kubectl, docker string) {
 // healthyKubectl answers like a healthy anycast-bgp BNK cluster for every
 // call the kit scenarios make.
 const healthyKubectl = `case "$*" in
+*"exec edge-client -- "*)
+	# the pod edge client: run its command through the client stub
+	for a; do shift; [ "$a" = -- ] && break; done
+	exec docker run --rm stub-client "$@" ;;
+*"get pod edge-client"*labels*) [ -f "$STUB_STATE.routed" ] && printf yes; exit 0 ;;
+*"label pod edge-client"*) touch "$STUB_STATE.routed" ;;
+*"get pod f5-tmm-abc"*network-status*)
+	printf '[{\n "name": "k8s-pod-network",\n "ips": ["10.42.0.9"]\n},{\n "name": "default/bnk-bgp",\n "interface": "net1",\n "ips": [\n  "192.168.99.160"\n ]\n}]' ;;
 *"get gatewayclass"*) printf True ;;
 *"get pod -l app=ext-backend"*) printf 10.42.1.5 ;;
 *"get pool.k8s.f5net.com"*) printf '10.42.1.5:80 ' ;;
@@ -327,6 +377,8 @@ const healthyDocker = `case "$*" in
 *"vtysh -c show ip bgp"* | *"vtysh -c show bgp ipv4 unicast"*)
 	for o in 100 101 102 103 104 106 107 108 109 111 120 121 122 123 124 140; do echo "*> 203.0.113.$o/32 192.168.99.160"; done ;;
 *"ip route show"*) echo "$7 via 192.168.99.160 dev eth1" ;;
+*"ip route replace"*) echo "$*" >>"$STUB_STATE.route" ;;
+*"ip route get"*) echo "203.0.113.100 via 192.168.99.160 dev net1 src 192.168.99.170" ;;
 *socat*) echo ocibnkctl-scenario-udp-lb-OK ;;
 *"Bearer vk-test-123"*gpt-5*) printf '{"error":"Model not allowed"}\nOCIBNKCTL_HTTP_STATUS=403\n' ;;
 *"Bearer vk-test-123"*) printf '{"choices":[],"usage":{"total_tokens":30}}\nOCIBNKCTL_HTTP_STATUS=200\n' ;;

@@ -19,7 +19,10 @@ fi
 
 edge_check_vip "$bgp" "$VIP"
 
-r=$(edge_client ip route show "$VIP" 2>&1)
+# The pod client routes the VIP range as one static prefix, so resolve the
+# route there; elsewhere require the exact /32 BGP installed (so a default
+# route cannot pass for it).
+if [ "$EDGE_DRIVER" = pod ]; then r=$(edge_client ip route get "$VIP" 2>&1); else r=$(edge_client ip route show "$VIP" 2>&1); fi
 if [ -z "$r" ]; then
 	kit_fail "$route" "no route"
 elif [ -n "$EDGE_PREFIX" ]; then
