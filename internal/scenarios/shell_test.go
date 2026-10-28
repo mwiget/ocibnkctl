@@ -2,8 +2,8 @@ package scenarios
 
 import (
 	"context"
-	"errors"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,7 +21,7 @@ func TestShellScenariosHealthy(t *testing.T) {
 	for _, s := range loadShellScenarios() {
 		for _, driver := range []string{"", "none"} {
 			t.Run(s.Name()+"/edge="+driver, func(t *testing.T) {
-				stubs(t, healthyKubectl, healthyDocker)
+				stubs(t, stubKubectlFor(s), healthyDocker)
 				t.Setenv("EDGE_DRIVER", driver)
 				r := runPilot(t, s.Name())
 				if r.Status != "ok" {
@@ -144,7 +144,7 @@ func TestBGPPeerLongLivedSession(t *testing.T) {
 func TestShellScenariosPodDriver(t *testing.T) {
 	for _, s := range loadShellScenarios() {
 		t.Run(s.Name(), func(t *testing.T) {
-			stubs(t, healthyKubectl, healthyDocker)
+			stubs(t, stubKubectlFor(s), healthyDocker)
 			t.Setenv("EDGE_DRIVER", "pod")
 			ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
 			if _, err := s.Manifests(ctx); err != nil {
@@ -158,7 +158,9 @@ func TestShellScenariosPodDriver(t *testing.T) {
 				t.Fatalf("status=%s summary=%q\n%s", r.Status, r.Summary, ctx.Out)
 			}
 			for _, a := range r.Assertions {
-				if a.Skipped && !strings.Contains(a.Got, "EDGE_VTYSH") && !strings.Contains(a.Got, "loggingSubsystem") {
+				// the pod client has no router CLI and no node netns
+				if a.Skipped && !strings.Contains(a.Got, "EDGE_VTYSH") && !strings.Contains(a.Got, "loggingSubsystem") &&
+					!strings.Contains(a.Got, "node netns") {
 					t.Errorf("%q skipped for another reason: %s", a.Description, a.Got)
 				}
 			}
@@ -238,8 +240,35 @@ func TestParseVerify(t *testing.T) {
 
 // stubs writes fake kubectl/docker commands into a directory prepended to
 // PATH. Each prints canned answers for the calls the pilots make.
+// routingRender is what TMM renders from routing-template-multitenant's
+// template: the context dump (shape captured from BNK 2.4.0 GA with the
+// legacy SPK model) plus one marker line per tenant, own self-IPs.
+const routingRender = `route-map RMALL permit 10
+! OCIBNKCTL-CTX map[global:map[spec:map[bgp:map[neighbors:[] routerIdSource:192.168.27.225 startASN:65000] templateRef:map[name:scn-rt-vlans]] tmmAllocatedIPs:map[DP-0:192.168.27.225] virtualIpTmmAssignment:map[]] routeDomainID:0 secrets:map[neighborPasswords:map[]] vlans:map[tenant-green:map[prefixLenV4:24 prefixLenV6:112 selfIPv4:198.51.101.11 selfIPv6:2001:db8:2::11 tag:2002 vrf:green] tenant-red:map[prefixLenV4:24 prefixLenV6:112 selfIPv4:198.51.100.11 selfIPv6:2001:db8:1::11 tag:2001 vrf:red]]]
+! OCIBNKCTL-VLAN tenant-green selfIPv4=198.51.101.11 selfIPv6=2001:db8:2::11 prefixLenV4=24 prefixLenV6=112 tag=2002 vrf=green
+! OCIBNKCTL-VLAN tenant-red selfIPv4=198.51.100.11 selfIPv6=2001:db8:1::11 prefixLenV4=24 prefixLenV6=112 tag=2001 vrf=red
+router bgp 65000`
+
+// The same render from a cluster in the Infra/GatewaySettings model (captured
+// before the fix): no .vlans key, no marker lines.
+const routingRenderNoVlans = `! OCIBNKCTL-CTX map[global:map[spec:map[bgp:map[neighbors:[map[ip:192.168.100.41 remoteAs:65001]] routerIdSource:192.168.27.247 startASN:65000] templateRef:map[name:scn-rt-vlans]] tmmAllocatedIPs:map[DP-0:192.168.27.247] virtualIpTmmAssignment:map[]] routeDomainID:0 secrets:map[neighborPasswords:map[]]]`
+
+// legacyKubectl is healthyKubectl in BNK 2.4's legacy SPK model, where the
+// amber routing scenarios apply.
+var legacyKubectl = strings.Replace(healthyKubectl, `*"get cneinstances"*USE_GATEWAY_SETTINGS*) printf true ;;`,
+	`*"get cneinstances"*USE_GATEWAY_SETTINGS*) printf false ;;`, 1)
+
+// stubKubectlFor picks the cluster model a scenario needs.
+func stubKubectlFor(s *shellScenario) string {
+	if s.Rating() == Amber {
+		return legacyKubectl
+	}
+	return healthyKubectl
+}
+
 func stubs(t *testing.T, kubectl, docker string) {
 	t.Helper()
+	t.Setenv("ROUTING_RENDER", routingRender)
 	dir := t.TempDir()
 	for name, body := range map[string]string{"kubectl": kubectl, "docker": docker} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
@@ -287,6 +316,15 @@ const healthyKubectl = `case "$*" in
 	for a; do shift; [ "$a" = -- ] && break; done
 	exec docker run --rm stub-client "$@" ;;
 *"get pod edge-client"*labels*) [ -f "$STUB_STATE.routed" ] && printf yes; exit 0 ;;
+*"get daemonset f5-tmm"*desiredNumberScheduled*) printf 1 ;;
+*"get f5-spk-vlans"*Programmed* | *"get vrf"*Programmed* | *"get routingconfig"*Programmed*) printf True ;;
+*"tmctl -d blade vlan_member_stat"*) echo "tenant-red 1.1 1 tenant-green 1.1 1" ;;
+*"conf-create/default_scn-grc-vlans_"*) printf '%s\n' "$ROUTING_RENDER" ;;
+*"conf-create/tenant/default_scn-rc-tenant_"*)
+	echo '! OCIBNKCTL-TENANT-CTX map[global:map[] routeDomainID:2 tenant:map[spec:map[templateRef:map[name:scn-rt-tenant] vrf:red]] vlans:map[tenant-red:map[tag:2001]]]'
+	echo 'ip vrf red' ;;
+*"get pod f5-tmm-abc"*nodeName*) printf k3s-stub-agent-0 ;;
+*"get pod -l app=f5-cne-controller"*) printf 'Running 0' ;;
 *"label pod edge-client"*) touch "$STUB_STATE.routed" ;;
 *"get pod f5-tmm-abc"*network-status*)
 	printf '[{\n "name": "k8s-pod-network",\n "ips": ["10.42.0.9"]\n},{\n "name": "default/bnk-bgp",\n "interface": "net1",\n "ips": [\n  "192.168.99.160"\n ]\n}]' ;;
@@ -381,6 +419,11 @@ const healthyDocker = `case "$*" in
 *"ip route replace"*) echo "$*" >>"$STUB_STATE.route" ;;
 *"ip route get"*) echo "203.0.113.100 via 192.168.99.160 dev net1 src 192.168.99.170" ;;
 *socat*) echo ocibnkctl-scenario-udp-lb-OK ;;
+*"ip link add scn-vlp"*) echo "scn-vlp.2001@scn-vlp UP 198.51.100.254/24" ;;
+*"arping -I scn-vlp.2001"*198.51.101.*)
+	# iputils arping, as netshoot ships it (captured on a selfip-dag cluster)
+	printf 'ARPING 198.51.101.11 from 198.51.100.254 scn-vlp.2001\nSent 3 probes (3 broadcast(s))\nReceived 0 response(s)\n'; exit 1 ;;
+*arping*) echo "Unicast reply from 198.51.100.11 [aa:bb:cc:dd:ee:ff]" ;;
 *"Bearer vk-test-123"*gpt-5*) printf '{"error":"Model not allowed"}\nOCIBNKCTL_HTTP_STATUS=403\n' ;;
 *"Bearer vk-test-123"*) printf '{"choices":[],"usage":{"total_tokens":30}}\nOCIBNKCTL_HTTP_STATUS=200\n' ;;
 *"Bearer sk-not-a-virtual-key"*) printf '{"error":"Invalid virtual key"}\nOCIBNKCTL_HTTP_STATUS=401\n' ;;
@@ -517,6 +560,58 @@ exit 0
 	err := s.Apply(ctx)
 	if !errors.Is(err, ErrNotApplicable) || !strings.Contains(err.Error(), "CRD gateways.gateway.networking.k8s.io not installed") {
 		t.Fatalf("err=%v log:\n%s", err, ctx.Out)
+	}
+}
+
+// Under the Infra/GatewaySettings model the routing scenarios are not
+// applicable (F5SPKVlan is accepted and ignored there).
+func TestRoutingNotApplicableOutsideLegacySPK(t *testing.T) {
+	stubs(t, healthyKubectl, healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+	for _, n := range []string{"routing-template-multitenant", "routing-config-tenant"} {
+		if r := Run(ctx, Find(n)); r.Status != "skipped" || !strings.Contains(r.Summary, "legacy-spk") {
+			t.Errorf("%s: status=%s summary=%q", n, r.Status, r.Summary)
+		}
+	}
+}
+
+// On a selfip-dag cluster every scenario whose data plane rides the
+// anycast-bgp routes is not applicable — none may run and fail instead.
+func TestDataPlaneScenariosSkipOutsideAnycast(t *testing.T) {
+	selfipDag := strings.Replace(legacyKubectl, `*"get cneinstances"*TMM_MAPRES*) printf FALSE ;;`,
+		`*"get cneinstances"*TMM_MAPRES*) printf TRUE ;;`, 1)
+	stubs(t, selfipDag, healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	for _, s := range loadShellScenarios() {
+		if s.Rating() == Amber {
+			continue // the legacy-model scenarios apply here
+		}
+		ctx := &Context{Ctx: context.Background(), PoC: poc.New("stub"), PoCDir: t.TempDir(), Out: &strings.Builder{}}
+		if _, err := s.Manifests(ctx); err != nil {
+			t.Fatal(err)
+		}
+		err := s.Apply(ctx)
+		needsBGP := false
+		for _, d := range s.Dependencies() {
+			needsBGP = needsBGP || d == "bgp-peer-frr"
+		}
+		if (s.Name() == "bgp-peer-frr" || needsBGP) && !errors.Is(err, ErrNotApplicable) {
+			t.Errorf("%s depends on the anycast-bgp data plane but applied on selfip-dag (err=%v)", s.Name(), err)
+		}
+	}
+}
+
+// A render without .vlans fails on exactly that check, which names the
+// cause, not on a cascade of empty fields.
+func TestRoutingNoVlans(t *testing.T) {
+	stubs(t, legacyKubectl, healthyDocker)
+	t.Setenv("ROUTING_RENDER", routingRenderNoVlans)
+	t.Setenv("EDGE_DRIVER", "")
+	t.Setenv("ROUTING_WAIT", "1")
+	r := runPilot(t, "routing-template-multitenant")
+	if r.Status != "failed" || r.Summary != "failed: RoutingTemplate context exposes .vlans (the feature under test)" {
+		t.Fatalf("status=%s summary=%q", r.Status, r.Summary)
 	}
 }
 

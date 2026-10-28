@@ -213,13 +213,12 @@ the deployed cluster. Each scenario maps to one article in the
 renders manifests into `artifacts/scenarios/<name>/`, applies them, asserts
 reconciled state, and writes a JSON+md report under `reports/<timestamp>/`.
 
-Scenarios self-register at `init()` time via `scenarios.Register(s)` and
-implement the `Scenario` interface in `internal/scenarios/scenario.go`:
-`Manifests` (pure render) → `Apply` → `Verify` → `Cleanup`. Each lives in
-its own subpackage (`aitokencount/`, `bgppeer/`, etc.).
+Scenarios implement the `Scenario` interface in
+`internal/scenarios/scenario.go`: `Manifests` (pure render) → `Apply` →
+`Verify` → `Cleanup`.
 
-**Script scenarios (the direction of travel).** A scenario can instead live
-entirely in `kit/scenarios/<name>/`: `scenario.yaml` (metadata),
+**Every scenario is a script scenario.** Each lives entirely in
+`kit/scenarios/<name>/`: `scenario.yaml` (metadata),
 `scenario.env` (variables + defaults), `apply.sh` / `verify.sh` /
 `cleanup.sh` (POSIX sh + kubectl, sourcing `kit/lib/common.sh`) and
 `manifests/`. `internal/scenarios/shell.go` registers every kit scenario
@@ -231,11 +230,11 @@ and router) or `none` (data-plane checks reported *skipped*). Preflight
 (`kit_require`) reads the cluster, not poc.yaml; a capability the cluster
 lacks (data-plane mode, AI gateway, a CRD) exits 3 (`kit_not_applicable`),
 which the runner reports as a *skipped* scenario, while a broken one (a
-GatewayClass not Accepted) still fails. Every scenario is a
-script scenario except the two amber `routing-template-multitenant` and
-`routing-config-tenant` (still Go). `shell_test.go` runs every script
-scenario's real scripts against a stub kubectl/docker
-(`TestShellScenariosHealthy`, both edge drivers).
+GatewayClass not Accepted) still fails. There are no Go scenario packages
+left. `shell_test.go` runs every scenario's real scripts against a stub
+kubectl/docker (`TestShellScenariosHealthy` under both edge drivers,
+`TestShellScenariosPodDriver`); the amber routing pair runs against a stub
+in the legacy SPK model.
 
 `Dependencies()` is the ordering contract: `scenario run --all` topo-sorts the
 green scenarios by it (`topoSortByDeps` in `internal/cli/scenario.go`) so e.g.
@@ -254,10 +253,9 @@ Ratings — set by the scenario itself, only after it's been run:
 | **amber** | control-plane verifies; data-plane plumbing partially missing (a real BNK 2.3 gap, the k3s shape, or both — see the scenario's `Description()` for which) |
 | **red**   | requires DPUs / real upstream BIG-IP / bondable NICs — listed for discoverability, never executed |
 
-When adding a new scenario, prefer a script scenario in
-`kit/scenarios/<name>/` (copy one of the pilots). A Go scenario is a
-subpackage under `internal/scenarios/<slug>/` registered via the package's
-`init()` and imported from `internal/cli/scenario.go`'s import block.
+When adding a new scenario, add a directory under `kit/scenarios/<name>/`
+(copy a close one) and extend the stub cluster in `shell_test.go` with the
+answers it needs; there is nothing to register or import.
 
 ## BGP / NAD detail (matters when touching scenarios)
 

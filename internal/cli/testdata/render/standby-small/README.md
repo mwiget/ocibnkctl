@@ -157,10 +157,10 @@ adapt them for another cluster.
 | [http-routing-e2e](scenarios/http-routing-e2e/README.md) | green | script | bgp-peer-frr | HTTP traffic steering with Gateway API HTTPRoute (how-to #8) — full data plane via NAD |
 | [llm-gateway](scenarios/llm-gateway/README.md) | green | script | bgp-peer-frr | LLM gateway (BNK 2.4.1 AI gateway) — virtual keys, model scope, metering, console |
 | [proxy-protocol-l4](scenarios/proxy-protocol-l4/README.md) | green | script | bgp-peer-frr | Proxy Protocol iRule on an L4 route (how-to #9) — F5BigCneIrule + L4Route + NetPolicy |
+| [routing-template-multitenant](scenarios/routing-template-multitenant/README.md) | amber | script | — | Expose VLAN/Self-IPs in a RoutingTemplate (.vlans) — two tagged tenants on one interface |
+| [routing-config-tenant](scenarios/routing-config-tenant/README.md) | amber | script | routing-template-multitenant | Per-tenant routing (RoutingConfig) — .tenant + per-tenant route domain in the template context |
 | [tcp-l4-loadbalance](scenarios/tcp-l4-loadbalance/README.md) | green | script | bgp-peer-frr | TCP load balancer via L4Route — weighted backends (70/30) |
 | [udp-l4-loadbalance](scenarios/udp-l4-loadbalance/README.md) | green | script | bgp-peer-frr | UDP load balancer via L4Route — alpine/socat echo backend |
-| [routing-template-multitenant](scenarios/routing-template-multitenant/README.md) | amber | manifests | — | Expose VLAN/Self-IPs in a RoutingTemplate (.vlans) — two tagged tenants on one interface |
-| [routing-config-tenant](scenarios/routing-config-tenant/README.md) | amber | manifests | routing-template-multitenant | Per-tenant routing (RoutingConfig) — .tenant + per-tenant route domain in the template context |
 
 ## Registry login
 

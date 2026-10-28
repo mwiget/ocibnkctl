@@ -133,3 +133,26 @@ minutes, then reconciled seconds after the controller restarted with `false`.
   plain `2001:db8:1::N` (a `2001:db8:red::11` is refused by the CRD schema).
 - `spec.bgp` requires `routerIdSource` (or `routerIdSubnet`+`routerIdPrefix`);
   `%POD_IP%` arrives in the context **already expanded** per TMM.
+
+## How to run
+
+Needs BNK 2.4's legacy SPK network model (`bnk.tmm_dataplane_mode: selfip-dag`,
+i.e. `USE_GATEWAY_SETTINGS=false`); on any other cluster the scenario reports
+itself not applicable.
+
+```bash
+ocibnkctl scenario run routing-template-multitenant --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh)):
+
+```sh
+sh kit/scenarios/routing-template-multitenant/apply.sh
+sh kit/scenarios/routing-template-multitenant/verify.sh     # one JSON line per check
+sh kit/scenarios/routing-template-multitenant/cleanup.sh
+```
+
+The ARP next-hop and isolation probes run from a peer in the TMM node's
+network namespace, which needs the nodes to be containers on this host
+(`EDGE_DRIVER=ocibnkctl`); elsewhere they are reported skipped.

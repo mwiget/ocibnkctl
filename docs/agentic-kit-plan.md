@@ -227,7 +227,7 @@ In batches, one PR each:
 | A | `bgp-peer-frr`, `tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`, `proxy-protocol-l4` | done, verified live |
 | B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | done; five verified live, `core-file-collection` stub-tested only (it permanently changes the cluster) |
 | C | `ai-inference-epp`, `llm-gateway` | done, verified live |
-| C2 | `routing-template-multitenant`, `routing-config-tenant` (amber) | open: need a `selfip-dag` cluster to verify |
+| C2 | `routing-template-multitenant`, `routing-config-tenant` (amber) | done, verified live on selfip-dag |
 | D | `pod` edge driver; third-party cluster run (the exit check) | `pod` driver done, verified live; third-party run open (no such cluster available) |
 
 Batch A notes: `bgp-peer-frr` was moved forward rather than left for last —
@@ -365,8 +365,24 @@ runner and reports, and `render`. Added here:
   what is where, when to use it, and that on the PoC itself the phases
   still go through `ocibnkctl` (gates, poc.yaml, journal).
 
-Still open from the earlier phases: the two `selfip-dag` routing-template
-scenarios (Go) and the third-party cluster run.
+Still open from the earlier phases: the third-party cluster run.
+
+**Batch C2 (2026-10-28), on a throwaway selfip-dag PoC.** The routing pair
+is ported and the last Go scenario packages are gone (`internal/scenarios`
+now holds only the framework, the shell adapter and three edge helpers).
+The same cluster gave the platform scripts' `selfip-dag` branch its first
+live run: `e2e` green (cne 5m36s) with the DAG NAD, F5SPKVlan Programmed,
+Infra correctly skipped, License Active. Then: routing-template-multitenant
+and routing-config-tenant green, including the ARP next-hop and
+tenant-isolation probes from the node netns; `scenario run --all` skipped
+every anycast-bgp / GatewaySettings / AI-gateway scenario as not
+applicable and passed cwc-admin-access, cluster-wide-watch and
+core-file-collection. Two defects found there and fixed: the isolation
+probe misread iputils arping's `Received 0 response(s)` (the stub now
+serves that captured output), and `http-routing-e2e` lacked the
+anycast-bgp preflight the Go version had, so it ran and failed instead of
+being skipped (`TestDataPlaneScenariosSkipOutsideAnycast` now requires the
+preflight of every scenario depending on `bgp-peer-frr`).
 
 ## Open questions
 

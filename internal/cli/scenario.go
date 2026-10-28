@@ -14,12 +14,6 @@ import (
 	"github.com/mwiget/ocibnkctl/internal/deploy"
 	"github.com/mwiget/ocibnkctl/internal/poc"
 	"github.com/mwiget/ocibnkctl/internal/scenarios"
-
-	// Side-effect imports: each blank-imported package registers its
-	// scenario(s) with internal/scenarios at init time. Add new ones
-	// here as they land.
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingconfigtenant"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingtemplate"
 )
 
 func newScenarioCmd() *cobra.Command {

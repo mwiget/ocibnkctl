@@ -74,3 +74,24 @@ brought the defect into this path. The defect itself is written up in
 - The status settles through `"CR config deployment is in progress"` before
   reaching `Programmed=True`, so a single read right after apply sees `False`.
 - `RoutingTemplate` is immutable — re-running means delete + recreate.
+
+## How to run
+
+Needs BNK 2.4's legacy SPK network model (`bnk.tmm_dataplane_mode: selfip-dag`,
+i.e. `USE_GATEWAY_SETTINGS=false`); on any other cluster the scenario reports
+itself not applicable. Run `routing-template-multitenant` first: this one
+reuses its tenant `red`.
+
+```bash
+ocibnkctl scenario run routing-config-tenant --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh)):
+
+```sh
+sh kit/scenarios/routing-config-tenant/apply.sh
+sh kit/scenarios/routing-config-tenant/verify.sh     # one JSON line per check
+sh kit/scenarios/routing-config-tenant/cleanup.sh
+```
+
