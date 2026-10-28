@@ -1034,6 +1034,7 @@ Rating is a stable hint about what's testable in this demo-TMM shape:
 | 6 | [`ai-token-counting`](internal/scenarios/aitokencount) | 🟢 | bgp-peer-frr | how-to #6 — Gateway annotation reconciled; TMM data-plane `TOKEN(...)` counters fire |
 | 6 | [`ai-token-counting-dssm`](internal/scenarios/aitokencountdssm) | 🟢 | bgp-peer-frr | how-to #6 (custom-iRule variant) — 4 LBs; HTTPRoute iRule counts streaming + non-streaming tokens into DSSM/Redis; counters match backend usage exactly (scraped by tmm-stat-exporter → `f5tmm_token_*`) |
 | 7 | [`ai-semantic-cache`](internal/scenarios/aisemcache) | 🟢 | bgp-peer-frr | how-to #7 — semantic-cache iRule fires (`CLIENT_ACCEPTED` + `HTTP_REQUEST`) on every request |
+| 7 | [`ai-inference-epp`](internal/scenarios/aiepp) | 🟢 | bgp-peer-frr | how-to #7 (BNK 2.4 F5 Endpoint Picker) — `F5EPP` + GAIE `InferencePool` in front of a busy and an idle mock vLLM pod; all 10 requests reach the idle pod, one successful EPP consult each (`inference_epp_stats`), every prompt tokenized (EPP prefix-index counters) |
 | 8 | [`http-routing-e2e`](internal/scenarios/httproutee2e) | 🟢 | bgp-peer-frr | how-to #8 — Gateway+HTTPRoute; 5/5 end-to-end curls via the BGP-advertised VIP through TMM |
 | 9 | [`proxy-protocol-l4`](internal/scenarios/proxyprotocol) | 🟢 | bgp-peer-frr | how-to #9 — `F5BigCneIrule` PROXY-v1 on an L4Route; backend echoes the parsed client IP |
 | 10 | [`external-resource-pool`](internal/scenarios/extrespool) | 🟢 | bgp-peer-frr | how-to #10 — BNK `Pool` CR as an HTTPRoute backendRef (off-cluster member by IP) |

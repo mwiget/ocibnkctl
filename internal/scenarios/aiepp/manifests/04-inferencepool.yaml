@@ -1,0 +1,20 @@
+# Both mock pods (busy + idle) match the selector; the EPP decides which one
+# gets each request. FailClose (the GAIE default) is kept on purpose: if the
+# EPP consult fails, the request fails, instead of FailOpen quietly
+# round-robining and hiding the fault from the steering assertion.
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: llm-pool
+  namespace: scn-epp
+spec:
+  selector:
+    matchLabels:
+      app: mock-vllm
+  targetPorts:
+  - number: 8000
+  endpointPickerRef:
+    name: llm-pool-epp
+    port:
+      number: 9002
+    failureMode: FailClose

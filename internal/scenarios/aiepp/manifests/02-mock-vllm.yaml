@@ -1,0 +1,175 @@
+# Mock vLLM: a stdlib-only Python server that speaks just enough of vLLM's
+# surface for the F5 EPP to score it:
+#
+#   GET  /metrics              vLLM Prometheus series (engine=vllm reads these)
+#   GET  /health, /v1/models   readiness + model discovery
+#   POST /v1/chat/completions  OpenAI-shaped JSON naming the pod that served it
+#   POST /v1/completions       (same)
+#
+# Two Deployments share app=mock-vllm, so both are in the InferencePool, but
+# they publish very different load. The ROLE env picks which:
+#
+#   busy  40 queued, 64 running, KV cache 97% full  (saturated)
+#   idle   0 queued,  0 running, KV cache  2% full
+#
+# A round-robin balancer would split traffic about 50/50; an EPP that reads
+# the metrics sends everything to the idle pod. That difference is what the
+# scenario asserts. The series names are the ones the BNK 2.4.0 EPP's
+# core-metrics-extractor reads for engine=vllm (from its logged effective
+# config): num_requests_waiting, num_requests_running, kv_cache_usage_perc,
+# cache_config_info.
+#
+# MODEL is only what /metrics and /v1/models report. The EPP picks its
+# tokenizer from the model named in each request body, so the scenario's
+# requests name the same repo. It must have a tokenizer.json on HuggingFace:
+# facebook/opt-125m has none (404), so every prompt tokenizes to nothing.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-vllm
+  namespace: scn-epp
+data:
+  server.py: |
+    import json, os, socket, threading, time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    MODEL = os.environ.get("MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+    ROLE = os.environ.get("ROLE", "idle")
+    POD = socket.gethostname()
+    WAITING, RUNNING, KV = {"busy": (40, 64, 0.97), "idle": (0, 0, 0.02)}[ROLE]
+
+    lock = threading.Lock()
+    served = 0
+
+    def metrics():
+        m = 'model_name="%s"' % MODEL
+        return "\n".join([
+            "# TYPE vllm:num_requests_waiting gauge",
+            "vllm:num_requests_waiting{%s} %d" % (m, WAITING),
+            "# TYPE vllm:num_requests_running gauge",
+            "vllm:num_requests_running{%s} %d" % (m, RUNNING),
+            "# TYPE vllm:kv_cache_usage_perc gauge",
+            "vllm:kv_cache_usage_perc{%s} %.2f" % (m, KV),
+            "# TYPE vllm:cache_config_info gauge",
+            'vllm:cache_config_info{block_size="16",num_gpu_blocks="4096",%s} 1' % m,
+            "# TYPE vllm:lora_requests_info gauge",
+            'vllm:lora_requests_info{max_lora="0",running_lora_adapters="",waiting_lora_adapters=""} %d' % int(time.time()),
+            "# TYPE vllm:request_success_total counter",
+            "vllm:request_success_total{%s} %d" % (m, served),
+            "",
+        ])
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def send(self, code, body, ctype="application/json"):
+            b = body.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("X-Served-By", POD)
+            self.end_headers()
+            self.wfile.write(b)
+
+        def do_GET(self):
+            if self.path == "/metrics":
+                self.send(200, metrics(), "text/plain; version=0.0.4")
+            elif self.path == "/health":
+                self.send(200, "")
+            elif self.path == "/v1/models":
+                self.send(200, json.dumps({"object": "list", "data": [{"id": MODEL, "object": "model"}]}))
+            else:
+                self.send(404, '{"error":"not found"}')
+
+        def do_POST(self):
+            global served
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n)
+            if self.path not in ("/v1/chat/completions", "/v1/completions"):
+                self.send(404, '{"error":"not found"}')
+                return
+            with lock:
+                served += 1
+            # The marker is what the scenario counts, one per response.
+            content = "ocibnkctl-epp-role=%s pod=%s" % (ROLE, POD)
+            self.send(200, json.dumps({
+                "id": "cmpl-mock", "object": "chat.completion", "model": MODEL,
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": max(1, len(body) // 4), "completion_tokens": 4,
+                          "total_tokens": max(1, len(body) // 4) + 4},
+            }))
+            print("served POST %s (%d bytes) -> %s" % (self.path, n, content), flush=True)
+
+        def log_message(self, *args):
+            pass  # the EPP scrapes /metrics every 50ms; access logs would drown the POST lines
+
+    ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-vllm-busy
+  namespace: scn-epp
+  labels: {app: mock-vllm, role: busy}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-vllm, role: busy}
+  template:
+    metadata:
+      labels: {app: mock-vllm, role: busy}
+    spec:
+      containers:
+      - name: vllm
+        image: python:3.12-alpine
+        command: ["python3", "-u", "/app/server.py"]
+        env:
+        - {name: ROLE, value: busy}
+        ports:
+        - {name: http, containerPort: 8000}
+        volumeMounts:
+        - {name: app, mountPath: /app}
+        readinessProbe:
+          httpGet: {path: /health, port: 8000}
+          periodSeconds: 2
+        resources:
+          requests: {cpu: 10m, memory: 24Mi}
+          limits:   {cpu: 200m, memory: 64Mi}
+      volumes:
+      - name: app
+        configMap: {name: mock-vllm}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-vllm-idle
+  namespace: scn-epp
+  labels: {app: mock-vllm, role: idle}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-vllm, role: idle}
+  template:
+    metadata:
+      labels: {app: mock-vllm, role: idle}
+    spec:
+      containers:
+      - name: vllm
+        image: python:3.12-alpine
+        command: ["python3", "-u", "/app/server.py"]
+        env:
+        - {name: ROLE, value: idle}
+        ports:
+        - {name: http, containerPort: 8000}
+        volumeMounts:
+        - {name: app, mountPath: /app}
+        readinessProbe:
+          httpGet: {path: /health, port: 8000}
+          periodSeconds: 2
+        resources:
+          requests: {cpu: 10m, memory: 24Mi}
+          limits:   {cpu: 200m, memory: 64Mi}
+      volumes:
+      - name: app
+        configMap: {name: mock-vllm}
