@@ -19,6 +19,7 @@ package scenarios
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/mwiget/ocibnkctl/internal/deploy"
@@ -137,6 +138,11 @@ type Scenario interface {
 	// is not an error.
 	Cleanup(*Context) error
 }
+
+// ErrNotApplicable wraps an Apply error meaning the cluster lacks what the
+// scenario needs (another data-plane mode, no AI gateway, an older BNK); Run
+// reports it as skipped. Shell scenarios signal it with kit_not_applicable.
+var ErrNotApplicable = errors.New("not applicable")
 
 // Registry holds every scenario this binary knows about. Scenarios
 // register themselves at init() time via Register(s).

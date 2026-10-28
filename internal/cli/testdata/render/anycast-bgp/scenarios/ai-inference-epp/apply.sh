@@ -9,7 +9,7 @@
 kit_require anycast-bgp gatewayclass:bnk-gatewayclass
 # The F5EPP CRD ships with BNK 2.4+.
 kubectl get crd f5-epps.inference.k8s.f5.com >/dev/null 2>&1 ||
-	kit_die "F5EPP CRD not installed: the F5 Endpoint Picker needs BNK 2.4+"
+	kit_not_applicable "F5EPP CRD not installed: the F5 Endpoint Picker needs BNK 2.4+"
 
 kit_log "installing GAIE $GAIE_VERSION CRDs"
 kit_fetch "$GAIE_URL" "$GAIE_SHA" "$KIT_CACHE/gaie-$GAIE_VERSION/manifests.yaml"

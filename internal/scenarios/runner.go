@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,6 +54,12 @@ func Run(ctx *Context, s Scenario) Result {
 
 	fmt.Fprintln(ctx.Out, "[2/3] Applying ...")
 	if err := s.Apply(ctx); err != nil {
+		// Not applicable here (the cluster lacks what the scenario is
+		// about): skipped, not failed, so --all stays meaningful on any
+		// cluster.
+		if errors.Is(err, ErrNotApplicable) {
+			return finalize(ctx, s, started, Result{Status: "skipped", Summary: err.Error()})
+		}
 		return finalize(ctx, s, started, Result{
 			Status:  "failed",
 			Summary: "apply: " + err.Error(),

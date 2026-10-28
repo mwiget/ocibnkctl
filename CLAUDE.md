@@ -228,7 +228,10 @@ that has a `verify.sh` — no Go, no import. `verify.sh` prints one JSON
 (`kit/lib/edge.sh`) picks the data-plane client: `ocibnkctl` (the external
 FRR container, set by `scenario run`), `external` (the operator's own client
 and router) or `none` (data-plane checks reported *skipped*). Preflight
-(`kit_require`) reads the cluster, not poc.yaml. Every scenario is a
+(`kit_require`) reads the cluster, not poc.yaml; a capability the cluster
+lacks (data-plane mode, AI gateway, a CRD) exits 3 (`kit_not_applicable`),
+which the runner reports as a *skipped* scenario, while a broken one (a
+GatewayClass not Accepted) still fails. Every scenario is a
 script scenario except the two amber `routing-template-multitenant` and
 `routing-config-tenant` (still Go). `shell_test.go` runs every script
 scenario's real scripts against a stub kubectl/docker
