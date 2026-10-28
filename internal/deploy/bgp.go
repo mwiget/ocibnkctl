@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -209,10 +210,13 @@ spec:
 // comes up and nothing fails; the only symptom is a wall of error banners in
 // the deploy and scenario output. Two trailing exits, not three: one leaves
 // address-family, one leaves router-bgp.
+//
+// The statements themselves live in kit/lib/ocnos-redistribute.cfg, which the
+// kit's shell helpers (kit/lib/bnk.sh) load the same way.
 func OcNOSRedistributeScript() string {
-	return fmt.Sprintf(
-		`printf 'router bgp %d\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\n' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg`,
-		BGPTMMAS)
+	cfg := mustRender("lib/ocnos-redistribute.cfg", map[string]string{"LOCAL_AS": strconv.Itoa(BGPTMMAS)})
+	return "printf '" + strings.ReplaceAll(cfg, "\n", `\n`) +
+		"' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg"
 }
 
 func TriggerOcNOSRedistribute(ctx context.Context, r *Runner) error {

@@ -70,8 +70,9 @@ func templateVars(src string) []string {
 	return out
 }
 
-// templates are the kit files the renderer is run on: platform/ manifests
-// and scenario .tmpl files. Other scenario files are applied verbatim.
+// templates are the kit files the renderer is run on: platform/ manifests,
+// scenario .tmpl files and lib/*.cfg. Other scenario files are applied
+// verbatim.
 func templates(t *testing.T) []string {
 	t.Helper()
 	var out []string
@@ -79,7 +80,8 @@ func templates(t *testing.T) []string {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		if (strings.HasPrefix(p, "platform/") && strings.HasSuffix(p, ".yaml")) || strings.HasSuffix(p, ".tmpl") {
+		if (strings.HasPrefix(p, "platform/") && strings.HasSuffix(p, ".yaml")) || strings.HasSuffix(p, ".tmpl") ||
+			(strings.HasPrefix(p, "lib/") && strings.HasSuffix(p, ".cfg")) {
 			out = append(out, p)
 		}
 		return nil
