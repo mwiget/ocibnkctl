@@ -1,0 +1,15 @@
+apiVersion: k8s.f5net.com/v1
+kind: Vrf
+metadata:
+  name: red
+  namespace: default
+spec:
+  strictIsolation: true
+---
+apiVersion: k8s.f5net.com/v1
+kind: Vrf
+metadata:
+  name: green
+  namespace: default
+spec:
+  strictIsolation: true

@@ -1,0 +1,13 @@
+apiVersion: gateway.k8s.f5.com/v1alpha1
+kind: Infra
+metadata:
+  name: infra
+  namespace: default
+spec:
+  ipams:
+  - name: bnk-dynamic-vips
+    ipPools:
+    - rangeStart: 203.0.113.110
+      rangeEnd: 203.0.113.119
+  networkAttachments: []
+  networks: []

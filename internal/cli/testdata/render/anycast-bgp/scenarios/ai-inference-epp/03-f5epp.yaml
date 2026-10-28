@@ -1,0 +1,19 @@
+# Minimal F5EPP: poolRef + engine are the only required fields. engine=vllm
+# selects the vLLM metric names, ZMQ KV-event transport and scrape port
+# 8000. With spec.tokenizer unset the EPP autoloads the tokenizer from
+# HuggingFace for the model named in each request (Qwen/Qwen2.5-0.5B-Instruct,
+# ungated). The mock publishes no ZMQ KV events, so the picker falls back to
+# speculative cache tracking; the docs say that only lowers prefix-cache
+# accuracy.
+#
+# The controller renders <pool>-epp Deployment/Service/ServiceAccount and
+# <pool>-epp-config ConfigMap from this — llm-pool-epp here.
+apiVersion: inference.k8s.f5.com/v1alpha1
+kind: F5EPP
+metadata:
+  name: llm-pool-epp
+  namespace: scn-epp
+spec:
+  poolRef:
+    name: llm-pool
+  engine: vllm

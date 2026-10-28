@@ -1,0 +1,24 @@
+apiVersion: k8s.f5net.com/v1alpha1
+kind: RoutingTemplate
+metadata:
+  name: scn-rt-vlans
+  namespace: default
+spec:
+  body: |
+    route-map RMALL permit 10
+    !
+    ! OCIBNKCTL-CTX {{ printf "%v" . }}
+    {{- range $name, $v := .vlans }}
+    ! OCIBNKCTL-VLAN {{ $name }} selfIPv4={{ $v.selfIPv4 }} selfIPv6={{ $v.selfIPv6 }} prefixLenV4={{ $v.prefixLenV4 }} prefixLenV6={{ $v.prefixLenV6 }} tag={{ $v.tag }} vrf={{ $v.vrf }}
+    {{- end }}
+    !
+    router bgp {{ .global.spec.bgp.startASN }}
+      bgp router-id {{ .global.spec.bgp.routerIdSource }}
+    {{- range $name, $v := .vlans }}
+    {{- if $v.vrf }}
+      ! tenant {{ $v.vrf }} sources from its own per-TMM self-IP
+      neighbor {{ $v.selfIPv4 }} description tenant-{{ $v.vrf }}-selfip
+    {{- end }}
+    {{- end }}
+    exit
+    !

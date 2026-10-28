@@ -1,0 +1,26 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: bnk-bgp
+  namespace: default
+  annotations:
+    # FLO's TMM-template propagation expects a resourceName on the NAD
+    # (the SR-IOV convention). Bridge CNI has no hardware behind it, so
+    # this is a documentary stand-in that silences a reconcile warning.
+    k8s.v1.cni.cncf.io/resourceName: bridge.cni.io/bnk-bgp
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "type": "bridge",
+      "bridge": "br-bnk-bgp",
+      "ipMasq": false,
+      "isGateway": false,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "whereabouts",
+        "range": "192.168.99.0/24",
+        "range_start": "192.168.99.160",
+        "range_end": "192.168.99.250"
+      }
+    }

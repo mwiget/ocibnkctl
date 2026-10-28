@@ -1,0 +1,11 @@
+apiVersion: k8s.f5net.com/v1alpha1
+kind: GlobalRoutingConfig
+metadata:
+  name: scn-grc-vlans
+  namespace: default
+spec:
+  templateRef:
+    name: scn-rt-vlans
+  bgp:
+    startASN: 65000
+    routerIdSource: "%POD_IP%"

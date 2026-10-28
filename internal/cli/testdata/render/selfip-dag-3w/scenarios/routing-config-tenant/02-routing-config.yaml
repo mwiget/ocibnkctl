@@ -1,0 +1,9 @@
+apiVersion: k8s.f5net.com/v1alpha1
+kind: RoutingConfig
+metadata:
+  name: scn-rc-tenant
+  namespace: default
+spec:
+  vrf: red
+  templateRef:
+    name: scn-rt-tenant
