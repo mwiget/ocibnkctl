@@ -1,0 +1,21 @@
+name: cluster-wide-watch
+title: "Components needing cluster-wide access (how-to #2) — single controller reconciling a new namespace"
+rating: green
+dependencies: []
+description: |
+  Demonstrates BNK's "Whole Cluster" / cluster-wide-access pattern. The F5
+  how-to is architectural prose with no YAML; it makes two claims:
+
+    - "A single BIG-IP Next for Kubernetes Controller [...] watches
+      multiple namespaces."
+    - "All BIG-IP Next for Kubernetes pods run in the same namespace."
+
+  This scenario makes them explicit: it applies a brand-new namespace with
+  an nginx backend, a Gateway and an HTTPRoute, then checks that the
+  CNEInstance watches the whole cluster (wholeCluster=true, or the older
+  watchNamespaces=["All"]), that f5-cne-controller is a single replica, and
+  that this one controller reconciles the new namespace's Gateway
+  (Programmed=True) and HTTPRoute (Accepted=True) with no per-namespace
+  install. Control plane only, so it needs no edge client.
+
+  Cleanup deletes the scn-cwatch namespace.

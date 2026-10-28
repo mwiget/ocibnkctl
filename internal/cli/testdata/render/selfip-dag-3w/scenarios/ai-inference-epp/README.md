@@ -36,12 +36,12 @@ the cluster needs internet access.
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `02-mock-vllm.yaml`
-- `03-f5epp.yaml`
-- `04-inferencepool.yaml`
-- `05-gateway.yaml`
-- `06-httproute.yaml`
+- `manifests/01-namespace.yaml`
+- `manifests/02-mock-vllm.yaml`
+- `manifests/03-f5epp.yaml`
+- `manifests/04-inferencepool.yaml`
+- `manifests/05-gateway.yaml`
+- `manifests/06-httproute.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

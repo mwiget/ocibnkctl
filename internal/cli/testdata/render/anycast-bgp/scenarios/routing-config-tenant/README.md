@@ -39,8 +39,8 @@ docs/bnk-2.4.0-doc-errata.md.
 
 ## Manifests
 
-- `01-routing-template.yaml`
-- `02-routing-config.yaml`
+- `manifests/01-routing-template.yaml`
+- `manifests/02-routing-config.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

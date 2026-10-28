@@ -37,10 +37,10 @@ left behind by an earlier run.
 
 ## Manifests
 
-- `01-vrfs.yaml`
-- `02-vlans.yaml`
-- `03-routing-template.yaml`
-- `04-global-routing-config.yaml`
+- `manifests/01-vrfs.yaml`
+- `manifests/02-vlans.yaml`
+- `manifests/03-routing-template.yaml`
+- `manifests/04-global-routing-config.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

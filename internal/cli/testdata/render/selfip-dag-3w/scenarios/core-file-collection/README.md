@@ -38,7 +38,7 @@ mounts — slow but symmetric.
 
 ## Manifests
 
-- `01-cneinstance-patch.yaml`
+- `manifests/01-cneinstance-patch.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

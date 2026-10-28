@@ -70,8 +70,11 @@ func finalize(ctx *Context, s Scenario, started time.Time, r Result) Result {
 	if ctx.Verbose && len(r.Assertions) > 0 {
 		for _, a := range r.Assertions {
 			mark := "✓"
-			if !a.OK {
+			switch {
+			case !a.OK:
 				mark = "✗"
+			case a.Skipped:
+				mark = "–"
 			}
 			line := fmt.Sprintf("      %s %s", mark, a.Description)
 			if a.Got != "" {

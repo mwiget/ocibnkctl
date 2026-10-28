@@ -1,44 +1,70 @@
-# cluster-wide-watch
+# `cluster-wide-watch` — single controller reconciling a fresh namespace
 
-Components needing cluster-wide access (how-to #2) — single controller reconciling a new namespace
+F5 how-to: [Components needing cluster-wide access](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/spk-whole-cluster.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: nothing
+&nbsp;·&nbsp; Wall time: **~4s**
 
-- Rating: **green**
+The F5 how-to itself is architectural prose — zero YAML, zero
+kubectl commands. Two load-bearing claims:
 
-## What it does
-
-Demonstrates BNK's "Whole Cluster"/cluster-wide-access pattern.
-The F5 how-to itself is architectural prose with no YAML or
-kubectl commands; it states two load-bearing claims:
-
-  - "A single BIG-IP Next for Kubernetes Controller [...]
-    watches multiple namespaces."
-  - "All BIG-IP Next for Kubernetes pods run in the same
-    namespace."
+- "A single BIG-IP Next for Kubernetes Controller […] watches
+  multiple namespaces."
+- "All BIG-IP Next for Kubernetes pods […] run in the same
+  namespace."
 
 Our ocibnkctl deploy already runs FLO in that posture:
-  - CNEInstance.spec.wholeCluster = true (watches every namespace)
-  - f5-cne-controller is a single Deployment in the
-    default namespace
-  - f5-cne-core hosts the shared CWC + DSSM + RabbitMQ +
-    cert-manager + Fluentd
-  - the same controller reconciles Gateways/HTTPRoutes in
-    every namespace (http-routing-e2e, external-resource-pool,
-    ai-token-counting, etc. already prove this incidentally)
 
-This scenario makes the claim explicit: applies a brand-new
-namespace + Gateway + HTTPRoute + nginx backend, then asserts
-that the existing single controller picks them up
-(Gateway Programmed=True, HTTPRoute Accepted=True) without
-any per-namespace controller install or configuration.
+- `CNEInstance.spec.watchNamespaces = ["All"]`
+- `f5-cne-controller` is a single Deployment in `default` (1
+  replica)
+- `f5-cne-core` namespace hosts the shared CWC + DSSM +
+  RabbitMQ + cert-manager + Fluentd
 
-Cleanup deletes the scn-cwatch namespace.
+This scenario doesn't reconfigure anything — it stands witness
+to the architectural claim by applying a brand-new namespace
++ Gateway + HTTPRoute + nginx backend, and asserting the
+existing single controller picks them up.
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `03-backend.yaml`
-- `04-gateway.yaml`
-- `05-httproute.yaml`
+| File | What it is |
+|---|---|
+| [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-cwatch` |
+| [`03-backend.yaml`](manifests/03-backend.yaml) | nginx Deployment + Service + ConfigMap |
+| [`04-gateway.yaml`](manifests/04-gateway.yaml) | Gateway with `spec.addresses=[203.0.113.105]`, HTTP listener |
+| [`05-httproute.yaml`](manifests/05-httproute.yaml) | HTTPRoute hostname `cwatch.ocibnkctl.local`, backendRefs → nginx |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+## How to run
+
+```bash
+ocibnkctl scenario run cluster-wide-watch --poc <pocdir>
+```
+
+Or by hand, on any BNK cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh)). It needs no edge client:
+
+```sh
+sh kit/scenarios/cluster-wide-watch/apply.sh
+sh kit/scenarios/cluster-wide-watch/verify.sh     # one JSON line per check, exit 0 when all pass
+sh kit/scenarios/cluster-wide-watch/cleanup.sh
+```
+
+## Verification (5/5)
+
+```
+✓ CNEInstance.spec.watchNamespaces contains "All"
+✓ f5-cne-controller Deployment is a single replica
+✓ nginx Deployment in scn-cwatch Available
+✓ Gateway in scn-cwatch Programmed=True (cross-namespace reconcile)
+✓ HTTPRoute in scn-cwatch Accepted=True
+```
+
+The combo — single-replica controller + a brand-new namespace's
+Gateway becoming Programmed — is the concrete proof of the
+doc's "single controller watching multiple namespaces" claim.
+
+## Cleanup
+
+`ocibnkctl scenario clean cluster-wide-watch` deletes the
+`scn-cwatch` namespace.

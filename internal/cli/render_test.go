@@ -51,7 +51,8 @@ func TestRenderBundleModes(t *testing.T) {
 	common := []string{
 		"README.md", "00-prereqs/01-namespaces.yaml", "10-flo/01-bnk-ca-issuer.yaml",
 		"10-flo/02-flo-values.yaml", "15-shrink/01-kyverno-shrink-requests.yaml",
-		"scenarios/http-routing-e2e/README.md", "scenarios/http-routing-e2e/06-httproute.yaml",
+		"scenarios/http-routing-e2e/README.md", "scenarios/http-routing-e2e/manifests/06-httproute.yaml",
+		"scenarios/http-routing-e2e/verify.sh", "lib/common.sh",
 		"scenarios/bgp-peer-frr/README.md",
 	}
 	for _, c := range cases {
@@ -100,8 +101,12 @@ func TestRenderBundleOmitsSecrets(t *testing.T) {
 		if strings.Contains(f.Body, ".dockerconfigjson:") {
 			t.Errorf("%s carries a pull secret", f.Path)
 		}
-		if f.Mode != 0o644 {
-			t.Errorf("%s mode %o, want 0644", f.Path, f.Mode)
+		want := os.FileMode(0o644)
+		if strings.HasSuffix(f.Path, ".sh") && !strings.Contains(f.Path, "/manifests/") {
+			want = 0o755 // scenario scripts and lib helpers stay executable
+		}
+		if f.Mode != want {
+			t.Errorf("%s mode %o, want %o", f.Path, f.Mode, want)
 		}
 	}
 	lic, ok := files["20-cne/04-license.yaml.tmpl"]

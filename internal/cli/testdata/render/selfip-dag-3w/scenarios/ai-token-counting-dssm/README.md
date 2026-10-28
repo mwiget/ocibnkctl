@@ -29,13 +29,13 @@ namespace.
 
 ## Manifests
 
-- `01-namespace.yaml`
-- `03-backend.yaml`
-- `04-irule.yaml`
-- `05-lb-chat.yaml`
-- `06-lb-code.yaml`
-- `07-lb-embed.yaml`
-- `08-lb-rag.yaml`
+- `manifests/01-namespace.yaml`
+- `manifests/03-backend.yaml`
+- `manifests/04-irule.yaml`
+- `manifests/05-lb-chat.yaml`
+- `manifests/06-lb-code.yaml`
+- `manifests/07-lb-embed.yaml`
+- `manifests/08-lb-rag.yaml`
 
 Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
 description above for ordering and waits between steps.

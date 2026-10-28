@@ -206,7 +206,21 @@ reconciled state, and writes a JSON+md report under `reports/<timestamp>/`.
 Scenarios self-register at `init()` time via `scenarios.Register(s)` and
 implement the `Scenario` interface in `internal/scenarios/scenario.go`:
 `Manifests` (pure render) → `Apply` → `Verify` → `Cleanup`. Each lives in
-its own subpackage (`aitokencount/`, `bgppeer/`, `httproutee2e/`, etc.).
+its own subpackage (`aitokencount/`, `bgppeer/`, etc.).
+
+**Script scenarios (the direction of travel).** A scenario can instead live
+entirely in `kit/scenarios/<name>/`: `scenario.yaml` (metadata),
+`scenario.env` (variables + defaults), `apply.sh` / `verify.sh` /
+`cleanup.sh` (POSIX sh + kubectl, sourcing `kit/lib/common.sh`) and
+`manifests/`. `internal/scenarios/shell.go` registers every kit scenario
+that has a `verify.sh` — no Go, no import. `verify.sh` prints one JSON
+`{"description","ok","got","skipped"}` line per check; `EDGE_DRIVER`
+(`kit/lib/edge.sh`) picks the data-plane client: `ocibnkctl` (the external
+FRR container, set by `scenario run`), `external` (the operator's own client
+and router) or `none` (data-plane checks reported *skipped*). Preflight
+(`kit_require`) reads the cluster, not poc.yaml. So far `cwc-admin-access`,
+`cluster-wide-watch` and `http-routing-e2e` are script scenarios;
+`shell_test.go` runs their real scripts against stub kubectl/docker.
 
 `Dependencies()` is the ordering contract: `scenario run --all` topo-sorts the
 green scenarios by it (`topoSortByDeps` in `internal/cli/scenario.go`) so e.g.
@@ -225,11 +239,10 @@ Ratings — set by the scenario itself, only after it's been run:
 | **amber** | control-plane verifies; data-plane plumbing partially missing (a real BNK 2.3 gap, the k3s shape, or both — see the scenario's `Description()` for which) |
 | **red**   | requires DPUs / real upstream BIG-IP / bondable NICs — listed for discoverability, never executed |
 
-When adding a new scenario, the convention is: subpackage under
-`internal/scenarios/<slug>/` exporting a `New()` constructor, registered via
-the package's `init()`. Wire it into the CLI by importing the new subpackage
-from `internal/cli/scenario.go`'s import block — registration happens as a
-side effect of the import.
+When adding a new scenario, prefer a script scenario in
+`kit/scenarios/<name>/` (copy one of the pilots). A Go scenario is a
+subpackage under `internal/scenarios/<slug>/` registered via the package's
+`init()` and imported from `internal/cli/scenario.go`'s import block.
 
 ## BGP / NAD detail (matters when touching scenarios)
 
