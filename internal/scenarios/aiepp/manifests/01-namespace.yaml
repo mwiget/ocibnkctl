@@ -1,0 +1,8 @@
+# The F5EPP CR, its InferencePool and the model-server pods must share one
+# namespace (F5 doc "Namespace Co-Location Rule"). Apply also adds it to
+# CNEInstance.spec.eppNamespaces — without that the controller ignores
+# every F5EPP in here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scn-epp

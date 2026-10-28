@@ -99,6 +99,15 @@ const (
 	WhereaboutsReservationCRDURL = "https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.8.0/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml"
 	WhereaboutsReservationCRDSHA = "59ff31b1cbe8ff7732160f3f533a71884c4bb03b18d2aa48c97b0a2aadcc4cb0"
 
+	// GAIE (Gateway API Inference Extension) CRDs — InferencePool,
+	// InferenceObjective, InferenceModelRewrite. BNK 2.4.0's F5 Endpoint
+	// Picker is built against GAIE v1.4.0 but does NOT bundle these CRDs;
+	// the ai-inference-epp scenario installs them. CRDs only, SHA-pinned
+	// like whereabouts.
+	GAIEVersion     = "v1.4.0"
+	GAIEManifestURL = "https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.4.0/manifests.yaml"
+	GAIEManifestSHA = "74e1ddc9394b5103e1a11df2226f4d65d7b384affaae8b88239b69a80d76c310"
+
 	// DockerNetworkInternal / External are the default names used when
 	// poc.yaml leaves networks.{internal,external}.name unset. The k3s
 	// cluster's two node containers both join these networks so
