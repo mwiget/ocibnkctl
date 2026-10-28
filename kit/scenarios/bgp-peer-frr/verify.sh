@@ -16,13 +16,14 @@ if ! edge_enabled || ! edge_has_bgp; then
 fi
 
 # established PREFIX — count neighbor rows of `show ip bgp summary` on the
-# edge L2 (PREFIX, e.g. 192.168.99.; empty = any) that are Established: FRR
-# shows an Up/Down timer (00:02:13) there, a state name otherwise.
+# edge L2 (PREFIX, e.g. 192.168.99.; empty = any) that are Established.
+# Columns: Neighbor V AS MsgRcvd MsgSent TblVer InQ OutQ Up/Down
+# State/PfxRcd ... — FRR prints the prefix count in State/PfxRcd for an
+# Established session and the state name (Active, Idle ...) otherwise. Don't
+# key on Up/Down: it reads 00:02:13 only for the first day, then 2d17h34m.
 established() {
 	printf '%s\n' "$summary" | awk -v p="$1" '
-		(p == "" || index($0, p)) && $0 !~ /Idle|Connect|Active|OpenSent|OpenConfirm/ {
-			for (i = 2; i <= NF; i++) if ($i ~ /^[0-9]+:[0-9]+:[0-9]+$/) { n++; break }
-		}
+		$1 ~ /^\*?[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && (p == "" || index($1, p)) && $10 ~ /^[0-9]+$/ { n++ }
 		END { print n + 0 }'
 }
 converged() {

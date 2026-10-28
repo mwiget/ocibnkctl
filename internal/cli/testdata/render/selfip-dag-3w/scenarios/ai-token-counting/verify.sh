@@ -31,6 +31,16 @@ edge_curls "$CURLS" "$MARKER" -H "Authorization: Bearer ocibnkctl-test-user" -H 
 	"http://$VIP:$PORT/v1/chat/completions"
 kit_count "$curls" "$EDGE_OK" "$CURLS" "last: $EDGE_LAST"
 
+# With CNEInstance.spec.telemetry.loggingSubsystem enabled (on with the AI
+# gateway's metrics), TMM's iRule log lines do not show in `kubectl logs`
+# (observed on BNK 2.4.1: only boot lines remain there), so the counters
+# cannot be checked this way — report that rather than a false failure.
+logging=$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.telemetry.loggingSubsystem.enabled}')
+if [ "$logging" = true ]; then
+	kit_skip "$fired" "telemetry.loggingSubsystem is enabled: TMM's iRule logs are not in kubectl logs"
+	kit_done "Gateway annotation reconciled + curls answered (iRule log check skipped)"
+fi
+
 # With N TMMs behind anycast, any of them may have served a curl, so read
 # every TMM's log. Per-request lines are recent; the INIT line is logged
 # once when TMM compiles the iRule, so look for it in the whole log (a

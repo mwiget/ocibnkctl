@@ -33,6 +33,31 @@ func TestShellScenariosHealthy(t *testing.T) {
 	}
 }
 
+// With the logging subsystem on, ai-token-counting skips the iRule-log
+// check instead of failing it (TMM's lines are not in kubectl logs then).
+func TestTokenCountingLoggingSubsystem(t *testing.T) {
+	stubs(t, strings.Replace(healthyKubectl, `*"get cneinstances"*wholeCluster*)`,
+		`*"get cneinstances"*loggingSubsystem*) printf true ;;
+*"get cneinstances"*wholeCluster*)`, 1), healthyDocker)
+	t.Setenv("EDGE_DRIVER", "")
+	r := runPilot(t, "ai-token-counting")
+	last := r.Assertions[len(r.Assertions)-1]
+	if r.Status != "ok" || !last.Skipped || !strings.Contains(last.Got, "loggingSubsystem") {
+		t.Fatalf("status=%s last=%+v", r.Status, last)
+	}
+}
+
+// A session up for days shows Up/Down as 2d17h34m, not hh:mm:ss; it is
+// still Established (the prefix count in State/PfxRcd says so).
+func TestBGPPeerLongLivedSession(t *testing.T) {
+	stubs(t, healthyKubectl, strings.Replace(healthyDocker, `0 0 0 00:02:13 3"`,
+		`0 0 0 2d17h34m 8 8 N/A"`, 1))
+	t.Setenv("EDGE_DRIVER", "")
+	if r := runPilot(t, "bgp-peer-frr"); r.Status != "ok" {
+		t.Fatalf("status=%s assertions=%+v", r.Status, r.Assertions)
+	}
+}
+
 // bgp-peer-frr counts only Established rows on the edge L2: an Active
 // neighbor next to an Established one is 1 of 2, a failure.
 func TestBGPPeerCountsEstablished(t *testing.T) {
