@@ -262,8 +262,10 @@ func RunningTMMPods(ctx context.Context, r *Runner) ([]string, error) {
 }
 
 // PasswdConfCmd writes the one-line passwd.conf imish needs, run in each TMM
-// pod's f5-tmm-routing container.
-const PasswdConfCmd = "echo 'enable password 0 zebos' > /config/zebos/rd0/passwd.conf"
+// pod's f5-tmm-routing container. The line itself is
+// kit/lib/ocnos-passwd.conf, which kit/lib/bnk.sh writes the same way.
+var PasswdConfCmd = "echo '" + strings.TrimSpace(mustRender("lib/ocnos-passwd.conf", nil)) +
+	"' > /config/zebos/rd0/passwd.conf"
 
 // InjectPasswdConfAll writes the one-line passwd.conf into every Running
 // TMM pod's f5-tmm-routing container — the gate bfd_watcher needs to

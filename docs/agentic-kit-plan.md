@@ -220,6 +220,36 @@ injection).
 **Exit:** one run on a cluster `ocibnkctl` didn't build, with
 `EDGE_DRIVER=none` and then `pod`.
 
+In batches, one PR each:
+
+| Batch | Scenarios | Status |
+|---|---|---|
+| A | `bgp-peer-frr`, `tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`, `proxy-protocol-l4` | done, verified live |
+| B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | |
+| C | `ai-inference-epp`, `llm-gateway`, `routing-template-multitenant`, `routing-config-tenant` | |
+| D | `pod` edge driver; third-party cluster run (the exit check) | |
+
+Batch A notes: `bgp-peer-frr` was moved forward rather than left for last —
+every data-plane scenario depends on it, and once it is a script the rest of
+the family needs no Go at all. The repeated "wait for the VIP in the peer's
+BGP table, retriggering OcNOS redistribute" loop became
+`edge_check_vip`, the N-curl loop `edge_curls`, and N-of-N checks
+`kit_count`. OcNOS's `passwd.conf` line joined the redistribute config in
+`kit/lib/` (read by `deploy cne` and `bnk.sh`). Preflight gained
+`gateway-settings` (fic-dynamic-ip). Each Gateway VIP is now `${VIP}`.
+`TestShellScenariosHealthy` runs every script scenario's real scripts
+against one stub cluster, under both edge drivers.
+
+The live run (BNK 2.4.1, anycast-bgp, AI gateway with metrics) found two
+things the Go originals shared: `bgp-peer-frr` only recognised the Up/Down
+column as `hh:mm:ss`, which FRR prints for the first 24h of a session only
+(`2d17h34m` after), so it failed on any long-running cluster — it now keys on
+the State/PfxRcd prefix count. And `ai-token-counting`'s iRule-log check
+cannot pass with `telemetry.loggingSubsystem` enabled (TMM's iRule lines are
+not in `kubectl logs` then; `main`'s Go version fails it identically there),
+so it is now reported skipped, with that reason, on such clusters. After the
+fixes all six pass via `ocibnkctl scenario run` and bare (`EDGE_DRIVER=none`).
+
 ### Phase 4 — platform install as scripts
 
 `kit/platform/<phase>/install.sh` for prereqs → flo → (shrink) → cne,

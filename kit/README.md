@@ -130,11 +130,15 @@ where it is: `none` (the default by hand: those checks are reported as
 skipped), `external` (`EDGE_EXEC` / `EDGE_VTYSH` run commands on your own
 client and BGP router), or `ocibnkctl` (the external FRR container
 `cluster up` builds; `ocibnkctl scenario run` sets it). The script
-helpers are in `lib/common.sh` (assertions, apply, retry, preflight),
-`lib/edge.sh` and `lib/bnk.sh` (TMM pods, OcNOS redistribute).
+helpers are in `lib/common.sh` (assertions, `kit_count`, apply, retry,
+preflight), `lib/edge.sh` (client commands, `edge_check_vip` waits for a
+VIP in the peer's BGP table, `edge_curls`) and `lib/bnk.sh` (TMM pods,
+OcNOS passwd.conf and redistribute).
 
-Script scenarios so far: `cwc-admin-access`, `cluster-wide-watch`,
-`http-routing-e2e`. The rest still have their checks in Go
+Script scenarios so far: `bgp-peer-frr`, `cwc-admin-access`,
+`cluster-wide-watch`, `http-routing-e2e`, `tcp-l4-loadbalance`,
+`udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`,
+`proxy-protocol-l4`. The rest still have their checks in Go
 (`internal/scenarios/<pkg>/`); what each checks is in `ocibnkctl scenario
 list` and in the per-scenario README that `ocibnkctl render` writes. Two files are templates, filled from
 live cluster state at apply time: `ai-semantic-cache/manifests/04-gateway.yaml.tmpl`

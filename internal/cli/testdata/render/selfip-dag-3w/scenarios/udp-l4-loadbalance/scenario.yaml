@@ -1,0 +1,16 @@
+name: udp-l4-loadbalance
+title: "UDP load balancer via L4Route — alpine/socat echo backend"
+rating: green
+dependencies: [bgp-peer-frr]
+description: |
+  Exercises L4Route's UDP protocol support. The Gateway listens on
+  UDP 5005; an alpine/socat backend forks per datagram and replies
+  with a marker string. The verify step sends a probe via socat
+  from inside the FRR pod (which has a BGP-learned route to the
+  Gateway IP) and asserts the reply contains the marker.
+
+  UDP is connectionless and per-flow hashed by the L4 LB, so we
+  don't assert distribution across the two replicas — the point
+  here is that the data path works end-to-end.
+
+  Cleanup deletes the scn-udp-lb namespace.

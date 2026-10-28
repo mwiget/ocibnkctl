@@ -77,7 +77,7 @@ Two findings fall out of this:
 1. **PVA acceleration is ruled out.** gRPC over the L4 path works with
    `pvaAccelerationMode: full/assisted` (the default — acceleration ON),
    so disabling PVA changes nothing for gRPC. The fix that resolved the
-   [`proxy-protocol-l4`](../internal/scenarios/proxyprotocol/README.md)
+   [`proxy-protocol-l4`](../kit/scenarios/proxy-protocol-l4/README.md)
    amber (`pvaAccelerationMode: disabled`) does **not** transfer here.
    `pvaAccelerationMode` doesn't even exist on the GRPCRoute CRD — it is
    an `L4Route`-only field.
@@ -126,7 +126,7 @@ today — by routing it as L4 instead of L7:
 
 - Bind the gRPC backend to an **`L4Route` (protocol: TCP)** on a TCP
   listener (the same pattern as the green
-  [`tcp-l4-loadbalance`](../internal/scenarios/tcpl4lb/) scenario —
+  [`tcp-l4-loadbalance`](../kit/scenarios/tcp-l4-loadbalance/) scenario —
   L4Route TCP at `pvaAccelerationMode: full/assisted`).
 - Use a **plain-TCP Service** (drop `appProtocol: h2c`) so the L4Route
   resolves its `backendRefs`.
@@ -167,5 +167,5 @@ All pass:
 
 - BNK Gateway API docs: [Configure HTTP traffic steering with Gateway API HTTPRoute](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/Configure-HTTP-traffic-steering-with-Gateway-API-HTTPRoute.html)
 - BNK GRPCRoute CRD: [BNK Gateway API GRPCRoute](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/bnk-gateway-api-grpcroute.html)
-- Related L4Route scenarios: [`tcp-l4-loadbalance`](../internal/scenarios/tcpl4lb/), [`proxy-protocol-l4`](../internal/scenarios/proxyprotocol/README.md)
+- Related L4Route scenarios: [`tcp-l4-loadbalance`](../kit/scenarios/tcp-l4-loadbalance/), [`proxy-protocol-l4`](../kit/scenarios/proxy-protocol-l4/README.md)
 - PR documenting findings: https://github.com/mwiget/ocibnkctl/pull/2

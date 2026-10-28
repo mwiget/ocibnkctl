@@ -1,11 +1,6 @@
-# fic-dynamic-ip
+# `fic-dynamic-ip` — Dynamic IP address allocation (FIC for Gateway API) — address-less Gateway + GatewaySettings/Infra IPAM
 
-Dynamic IP address allocation (FIC for Gateway API) — address-less Gateway + GatewaySettings/Infra IPAM
-
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
 Demonstrates dynamic IP allocation for a Gateway API Gateway.
 
@@ -30,13 +25,21 @@ FRR reach nginx through the allocated VIP.
 
 Cleanup deletes the scn-fic-dyn namespace (the platform Infra CR stays).
 
-## Manifests
+## How to run
 
-- `manifests/01-namespace.yaml`
-- `manifests/02-gatewaysettings.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-httproute.yaml`
+```bash
+ocibnkctl scenario run fic-dynamic-ip --poc <pocdir>
+```
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/fic-dynamic-ip/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/fic-dynamic-ip/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/fic-dynamic-ip/cleanup.sh
+```
+
+Variables (VIP, ports, namespace) and their defaults are in
+[`scenario.env`](scenario.env); set any of them in the environment.

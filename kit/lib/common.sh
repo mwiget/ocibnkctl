@@ -74,6 +74,16 @@ kit_check() {
 # kit_eq DESC WANT GOT
 kit_eq() { if [ "$2" = "$3" ]; then kit_pass "$1" "$3"; else kit_fail "$1" "$3"; fi; }
 
+# kit_count DESC OK TOTAL [DETAIL] — pass when OK == TOTAL; the "got" is
+# "OK/TOTAL", plus DETAIL (e.g. the last error) when it fails.
+kit_count() {
+	if [ "$2" -eq "$3" ]; then
+		kit_pass "$1" "$2/$3"
+	else
+		kit_fail "$1" "$2/$3${4:+ — $4}"
+	fi
+}
+
 # kit_contains DESC NEEDLE HAYSTACK
 kit_contains() {
 	case $3 in
@@ -138,6 +148,9 @@ kit_copy_secret() {
 #   anycast-bgp            the CNEInstance runs the anycast-bgp data plane:
 #                          a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE,
 #                          so net1 keeps its kernel IP for BGP
+#   gateway-settings       the CNE controller runs the Infra/GatewaySettings
+#                          network model (USE_GATEWAY_SETTINGS=true), which
+#                          address-less Gateways need
 kit_require() {
 	for _kq in "$@"; do
 		case $_kq in
@@ -161,6 +174,12 @@ kit_require() {
 			_kq_n=$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.networkAttachments[*]}' 2>&1)
 			[ "$_kq_m" = FALSE ] && [ -n "$_kq_n" ] ||
 				kit_die "precondition anycast-bgp: needs a NAD on TMM and TMM_MAPRES_ADDL_VETHS_ON_DP=FALSE (got mapres=${_kq_m:-unset} networkAttachments=${_kq_n:-none}); otherwise mapres takes net1 and BGP has no source address"
+			;;
+		gateway-settings)
+			_kq_g=$(kubectl get cneinstances -A -o \
+				jsonpath='{.items[0].spec.advanced.cneController.env[?(@.name=="USE_GATEWAY_SETTINGS")].value}' 2>&1)
+			[ "$_kq_g" = true ] ||
+				kit_die "precondition gateway-settings: USE_GATEWAY_SETTINGS=${_kq_g:-unset}; the legacy SPK model (selfip-dag) has no Infra IPAM, so address-less Gateways never get an address"
 			;;
 		*) kit_die "kit_require: unknown capability $_kq" ;;
 		esac
