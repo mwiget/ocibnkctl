@@ -1,11 +1,6 @@
-# bgp-anycast
+# `bgp-anycast` — BGP anycast all-active data plane (how-to #3) — every TMM advertises over the shared edge FRR
 
-BGP anycast all-active data plane (how-to #3) — every TMM advertises over the shared edge FRR
-
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
 Verification-only scenario for the anycast-bgp data-plane mode (the default).
 It applies nothing — the deploy path installed the bnk-bgp NAD, mapres=FALSE,
@@ -22,7 +17,24 @@ against that one external FRR:
     across workers, now that all TMMs share one L2 with one FRR (the edge-fabric
     improvement over per-node-isolated bridges)
 
-## Manifests
+## How to run
 
-None — this scenario acts imperatively (e.g. exec into TMM or the BGP peer);
-the steps are in the description above.
+```bash
+ocibnkctl scenario run bgp-anycast --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/bgp-anycast/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/bgp-anycast/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/bgp-anycast/cleanup.sh
+```
+
+Variables and their defaults are in [`scenario.env`](scenario.env); set any
+of them in the environment.
+
+The ECMP check needs `EDGE_PREFIX` (the edge L2, e.g. `192.168.99.`) and
+only applies with two or more TMM workers.

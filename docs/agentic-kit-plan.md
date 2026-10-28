@@ -225,7 +225,7 @@ In batches, one PR each:
 | Batch | Scenarios | Status |
 |---|---|---|
 | A | `bgp-peer-frr`, `tcp-l4-loadbalance`, `udp-l4-loadbalance`, `ai-token-counting`, `fic-dynamic-ip`, `proxy-protocol-l4` | done, verified live |
-| B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | |
+| B | `external-resource-pool`, `ai-semantic-cache`, `grpc-loadbalance`, `ai-token-counting-dssm`, `core-file-collection`, `bgp-anycast` | done; five verified live, `core-file-collection` stub-tested only (it permanently changes the cluster) |
 | C | `ai-inference-epp`, `llm-gateway`, `routing-template-multitenant`, `routing-config-tenant` | |
 | D | `pod` edge driver; third-party cluster run (the exit check) | |
 
@@ -249,6 +249,25 @@ cannot pass with `telemetry.loggingSubsystem` enabled (TMM's iRule lines are
 not in `kubectl logs` then; `main`'s Go version fails it identically there),
 so it is now reported skipped, with that reason, on such clusters. After the
 fixes all six pass via `ocibnkctl scenario run` and bare (`EDGE_DRIVER=none`).
+
+Batch B notes: every Gateway VIP is now a variable (the DSSM scenario's four
+too). `grpc-loadbalance` fetches the SHA-256-pinned grpcurl release with
+`kit_fetch` into `KIT_CACHE` (`ocibnkctl` points it at
+`<PoC>/artifacts/bin`, as the Go version did) and mounts it into the client
+via `EDGE_RUN_ARGS`; an external client brings its own. The DSSM delta check
+is awk over before/after snapshots and the backend's sums, comparing only
+buckets the backend reported, like the Go version. `core-file-collection`
+patches the live CNEInstance from `cneinstance-patch.yaml` and, as before,
+never reverts (its `cleanup.sh` says why). `bgp-anycast` shares
+`edge_bgp_wait` with `bgp-peer-frr` and reads the ECMP path count from FRR's
+own `Paths: (N available` line.
+
+Live (BNK 2.4.1, anycast-bgp, one TMM worker): the five non-invasive ones
+pass via `ocibnkctl scenario run` — DSSM counters matched the backend's
+usage in all 24 buckets over 40 requests, grpcurl was fetched and verified —
+and bare with `EDGE_DRIVER=none`. With one worker `bgp-anycast`'s ECMP check
+is trivially satisfied; it still wants a run on a multi-worker cluster with
+an edge router.
 
 ### Phase 4 — platform install as scripts
 

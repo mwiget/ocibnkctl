@@ -1,0 +1,11 @@
+# Merge patch apply.sh applies to the live CNEInstance (kubectl patch
+# --type=merge --patch-file): turn on core collection, with CoreMond keeping
+# cores on a hostPath so they survive TMM pod restarts. FLO reconciles it into
+# a CoreMond CR + DaemonSet and a core-dump volume in the TMM pod spec.
+# A patch, not a manifest: it merges into the existing object.
+spec:
+  coreCollection:
+    enabled: true
+  advanced:
+    coremon:
+      hostPath: true

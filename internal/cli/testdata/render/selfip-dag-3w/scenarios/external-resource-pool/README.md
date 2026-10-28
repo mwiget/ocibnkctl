@@ -1,50 +1,76 @@
-# external-resource-pool
+# `external-resource-pool` — BNK Pool CR as an HTTPRoute backend
 
-Load Balance Traffic to External Resources (how-to #10) — Pool CR + HTTPRoute backendRef
+F5 how-to: [Configure Load Balance Traffic to External Resources](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/configure-external-resource-load-balancing.html)
+&nbsp;·&nbsp; Rating: 🟢
+&nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
+&nbsp;·&nbsp; Wall time: **~14s** (no TMM restart)
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
+The novelty over `http-routing-e2e` is the BNK
+**`Pool`** CR (`group: k8s.f5net.com, kind: Pool`). HTTPRoute's
+`backendRefs` points at the Pool, not at a Service.
+`Pool.spec.members` lists endpoints by `address` + `port` —
+production BNK uses this for VMs / bare-metal / other clusters
+that aren't in the local Service registry.
 
-## What it does
-
-Demonstrates BNK's Pool CR as an HTTPRoute backend, the BNK-native
-way to load-balance to endpoints that aren't k8s Services.
-
-Production BNK uses Pool to point at out-of-cluster resources
-(VMs, other clusters, bare-metal hosts). On kind we stand in
-with an nginx pod attached to the bnk-bgp Multus NAD — TMM
-already has a net1 interface on that bridge (from the
-bgp-peer-frr setup), so the backend pod's NAD IP is reachable
-from TMM at L2.
-
-Pipeline:
-  - Gateway with static spec.addresses .101 (F5BnkGateway pools were dropped in BNK 2.4)
-  - ext-backend Deployment (nginx on bnk-bgp NAD)
-  - Gateway with spec.addresses=[203.0.113.101]
-  - HTTPRoute hostname=extres.ocibnkctl.local, backendRefs to
-    {group:k8s.f5net.com, kind:Pool, name:ext-backend-pool}
-  - Pool CR with one member at the discovered backend NAD IP
-
-Verification curls from inside the FRR pod (same client used by
-http-routing-e2e): the kernel route to 203.0.113.101/32 lands
-via BGP+net1, TMM proxies through to the Pool member IP. No
-new client plumbing.
-
-Cleanup deletes the scn-extres namespace; cluster-wide
-GatewayClass + bnk-bgp NAD stay (reused by other scenarios).
+On kind we simulate "external" with a plain Calico nginx pod;
+the Pool member references its `status.podIP`. TMM reaches it
+via normal cross-pod Kubernetes networking, exactly what BNK
+does in production when a Pool member is any reachable IP.
+(Earlier iterations attached the backend to the bnk-bgp NAD,
+but that just coupled the backend to the same node as TMM
+without adding capability.)
 
 ## Manifests
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-pool.yaml.tmpl`
-- `manifests/06-httproute.yaml`
+| File | What it is |
+|---|---|
+| [`01-namespace.yaml`](manifests/01-namespace.yaml) | `scn-extres` |
+| [`03-backend.yaml`](manifests/03-backend.yaml) | nginx Deployment + Service + ConfigMap (marker body) — plain Calico pod |
+| [`04-gateway.yaml.tmpl`](manifests/04-gateway.yaml.tmpl) | Gateway with `spec.addresses=${VIP}` (default 203.0.113.101), HTTP listener |
+| [`05-pool.yaml.tmpl`](manifests/05-pool.yaml.tmpl) | template — Pool CR with `${BACKEND_IP}` filled at apply time from `ext-backend`'s `status.podIP` |
+| [`06-httproute.yaml`](manifests/06-httproute.yaml) | HTTPRoute hostname `extres.ocibnkctl.local`, `backendRefs` → Pool CR |
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+## How to run
 
-`manifests/05-pool.yaml.tmpl` holds `${NAME}` placeholders that `ocibnkctl` fills from live
-cluster state at apply time (e.g. a Service ClusterIP). From this directory, fill them with
-`NAME=<value> sh ../../lib/render.sh manifests/05-pool.yaml.tmpl | kubectl apply -f -`. `kubectl apply
--f` on the directory skips `.tmpl` files.
+```bash
+ocibnkctl scenario run bgp-peer-frr           --poc <pocdir>   # if not running
+ocibnkctl scenario run external-resource-pool --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/external-resource-pool/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/external-resource-pool/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/external-resource-pool/cleanup.sh
+```
+
+Variables and their defaults are in [`scenario.env`](scenario.env); set any
+of them in the environment.
+
+## Verification
+
+```
+✓ ext-backend Deployment Available
+✓ Gateway Programmed=True
+✓ HTTPRoute Accepted=True
+✓ Pool CR has at least one member entry on :80
+✓ FRR BGP table has 203.0.113.101/32 advertised by TMM
+✓ 5/5 curls via Gateway return ext-backend marker body
+```
+
+Reproduce manually:
+
+```bash
+docker run --rm --network container:bnk-edge-frr-<cluster> nicolaka/netshoot \
+  curl -sS -H 'Host: extres.ocibnkctl.local' http://203.0.113.101/
+# → ocibnkctl-scenario-extres-pool-OK
+```
+
+## Cleanup
+
+`ocibnkctl scenario clean external-resource-pool` deletes the
+`scn-extres` namespace. GatewayClass + `bnk-bgp` NAD stay
+cluster-wide (reused by other scenarios).

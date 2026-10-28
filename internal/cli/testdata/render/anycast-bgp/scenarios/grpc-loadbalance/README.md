@@ -1,11 +1,6 @@
-# grpc-loadbalance
+# `grpc-loadbalance` — gRPC load balancing — L4Route (TCP) data plane; GRPCRoute control plane (kong/grpcbin)
 
-gRPC load balancing — L4Route (TCP) data plane; GRPCRoute control plane (kong/grpcbin)
-
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
-
-## What it does
+Rating: 🟢 &nbsp;·&nbsp; Depends on: [`bgp-peer-frr`](../bgp-peer-frr)
 
 Load-balances gRPC to a kong/grpcbin backend in the 2-node demo-TMM
 shape, and exercises BNK's GRPCRoute CRD alongside it.
@@ -49,15 +44,27 @@ Gateway IP. Full analysis: docs/grpc-route-investigation.md.
 
 Cleanup deletes the scn-grpc namespace.
 
-## Manifests
+## How to run
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-gateway.yaml`
-- `manifests/05-grpcroute.yaml`
-- `manifests/06-l4-backend-svc.yaml`
-- `manifests/07-l4-gateway.yaml`
-- `manifests/08-l4route.yaml`
+```bash
+ocibnkctl scenario run grpc-loadbalance --poc <pocdir>
+```
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/grpc-loadbalance/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/grpc-loadbalance/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/grpc-loadbalance/cleanup.sh
+```
+
+Variables and their defaults are in [`scenario.env`](scenario.env); set any
+of them in the environment.
+
+The edge client needs `grpcurl`: with `EDGE_DRIVER=ocibnkctl`, `verify.sh`
+fetches the SHA-256-pinned release into `KIT_CACHE` and mounts it into the
+client container; with `EDGE_DRIVER=external` it must be on the client's PATH.
+Why the GRPCRoute data plane is informational only:
+[docs/grpc-route-investigation.md](../../../docs/grpc-route-investigation.md).

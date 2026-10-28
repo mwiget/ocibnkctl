@@ -1,41 +1,90 @@
 # ai-token-counting-dssm
 
-AI Token Counting via custom iRule + DSSM/Redis — 4 LBs, streaming + non-streaming, persisted for tmm-stat-exporter
+AI token counting delivered by a **custom iRule** whose counters persist to the
+cluster's built-in **DSSM/Redis**, where `tmm-stat-exporter` (or any scraper) can
+read them for Prometheus/Grafana (the *TMM AI Token Usage* dashboard in
+[tmmscope](https://github.com/mwiget/tmmscope)).
 
-- Rating: **green**
-- Depends on: `bgp-peer-frr` (apply those first)
+This is the **custom-iRule complement** to the annotation-driven
+[`ai-token-counting`](../aitokencount) scenario (how-to #6). That one drives the
+built-in `k8s.f5.com/ai-token-counting` Gateway annotation; this one keeps
+explicit cumulative counters in an iRule `table` subtable instead. Two reasons it
+earns its own scenario:
 
-## What it does
+- **Durable, queryable counters.** With DSSM deployed
+  (`SESSIONDB_EXTERNAL_STORAGE=true` — default on a full BNK 2.3 install) the
+  iRule `table` command **persists to Redis**, so the counter is the durable
+  source of truth a dashboard's day/week/month/year tiles read — no HSL receiver
+  required.
+- **Streaming.** It detects and counts **streaming (SSE)** responses, parsing the
+  usage block from the final `usage` chunk — a path the request-scoped annotation
+  doesn't surface as a persisted counter.
 
-Deliver AI token counting with a custom iRule whose counters persist to the
-built-in DSSM/Redis — the complement to the annotation-driven ai-token-counting
-scenario, and the path that also counts STREAMING responses and persists durably
-to Redis.
+## Shape
 
-Four LBs (Gateways with an HTTP listener on 203.0.113.120-123) share one
-llm-d-inference-sim backend. One F5BigCneIrule (04-irule.yaml), bound to each
-HTTP listener via NetPolicy, fires on HTTP_RESPONSE / HTTP_RESPONSE_DATA,
-parses the OpenAI usage block, detects streaming vs non-streaming from the
-response Content-Type, and table-incr's cumulative total/prompt/completion
-counters keyed by vs + mode + model (an L4Route would yield a FastL4 VS that
-never runs the payload iRule). With DSSM up (SESSIONDB_EXTERNAL_STORAGE=true, default on full BNK) the
-table persists to Redis, where tmm-stat-exporter can emit
-f5tmm_token_*{vs,mode,model} for a dashboard.
+- **Backend** — one shared `stub-llm` Deployment running
+  [`llm-d-inference-sim`](https://github.com/llm-d/llm-d-inference-sim)
+  (`ghcr.io/llm-d/llm-d-inference-sim:v0.10.0`), a **GPU-free vLLM/OpenAI API
+  simulator**. A dummy `--model=gpt-stub` makes it return deterministic but
+  varying `usage` blocks, and it emits real SSE when a request sets
+  `"stream":true` with `stream_options.include_usage` — so both the streaming
+  and non-streaming token paths are exercised without a real model. Pulled via
+  `ghcr.io` (a mirrored regcache upstream).
+- **4 LBs** — Gateways on `203.0.113.120-123`, each a TCP listener bound by an
+  `L4Route` with `pvaAccelerationMode: disabled` (keeps the data path in TMM's
+  slow/TCL path so the iRule can read raw payload). All four share the one
+  `stub-llm` backend above.
+- **One iRule** (`04-irule.yaml`), bound to every listener via `NetPolicy`,
+  parses the OpenAI usage block, detects **streaming vs non-streaming** from the
+  response `Content-Type` (`text/event-stream` vs `application/json`), and
+  `table incr`s cumulative `total`/`prompt`/`completion` counters keyed by
+  `vs` + `mode` + `model` in the `TMMTOK` subtable (indefinite TTL, so Redis is
+  the durable source the dashboard's day/week/month/year tiles read).
+- **Exporter** — `tmm-stat-exporter` scans `TMMTOK` and emits
+  `f5tmm_token_{total,prompt,completion}{vs,mode,model}`.
 
-Verify drives ~60s of mixed streaming/non-streaming traffic across all four LBs,
-then reads the counters back out of DSSM and HARD-ASSERTS they equal the
-backend-reported usage for every LB and both modes. Cleanup deletes the
-namespace.
+## What Verify asserts (green)
 
-## Manifests
+1. `stub-llm` Available; all 4 Gateways Programmed; the iRule exists.
+2. FRR learns all 4 VIPs via BGP (re-triggering the OcNOS redistribute each poll
+   — full BNK only injects a redistributed kernel route once the statement is
+   re-issued at runtime after the VIP exists).
+3. ~60s of mixed streaming/non-streaming traffic across all 4 LBs; every request
+   returns a usage block.
+4. DSSM is readable; all 4 LBs have counters; both modes present (mode detection
+   works).
+5. **Load-bearing:** the DSSM counter *delta* over the run equals the
+   backend-reported usage exactly, for every LB and both modes — i.e. the iRule
+   counted accurately, **streaming included**. (The delta is baselined before
+   traffic, so re-runs are idempotent.)
 
-- `manifests/01-namespace.yaml`
-- `manifests/03-backend.yaml`
-- `manifests/04-irule.yaml`
-- `manifests/05-lb-chat.yaml`
-- `manifests/06-lb-code.yaml`
-- `manifests/07-lb-embed.yaml`
-- `manifests/08-lb-rag.yaml`
+## Notes
 
-Not every file is applied unconditionally by `ocibnkctl scenario run`; check the
-description above for ordering and waits between steps.
+- The iRule maps the listener VIP to a friendly `vs` name for clean dashboard
+  legends; a generic deployment can use `[virtual name]` instead.
+- DSSM is part of the standard BNK install (the `f5-dssm-db` pods in `default`),
+  so there's no extra deploy step. The scenario reads the counters back via
+  `redis-cli` in `f5-dssm-db-0` over the DSSM mTLS certs at `/tls/dssm/mds/svr/`.
+  Were DSSM ever absent, the "DSSM readable" assertion fails with a clear message.
+
+## How to run
+
+```bash
+ocibnkctl scenario run ai-token-counting-dssm --poc <pocdir>
+```
+
+Or by hand, on any cluster `kubectl` points at (plain `sh` + `kubectl`;
+contract: [kit/lib/common.sh](../../lib/common.sh), edge client:
+[kit/lib/edge.sh](../../lib/edge.sh)):
+
+```sh
+sh kit/scenarios/ai-token-counting-dssm/apply.sh
+EDGE_DRIVER=none sh kit/scenarios/ai-token-counting-dssm/verify.sh    # control plane only; data-plane checks skipped
+sh kit/scenarios/ai-token-counting-dssm/cleanup.sh
+```
+
+Variables and their defaults are in [`scenario.env`](scenario.env); set any
+of them in the environment.
+
+`verify.sh` prints the per-bucket (LB | mode | kind) DSSM-vs-backend
+breakdown to its log (stderr).

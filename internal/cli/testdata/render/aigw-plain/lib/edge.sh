@@ -28,6 +28,9 @@ EDGE_VTYSH=${EDGE_VTYSH:-}
 EDGE_PREFIX=${EDGE_PREFIX:-}
 # Throwaway image joined to the FRR netns for client commands (curl etc.).
 EDGE_TOOLS_IMAGE=${EDGE_TOOLS_IMAGE:-nicolaka/netshoot}
+# Extra `run` arguments for that container (e.g. "-v /path/grpcurl:/grpcurl:ro"
+# to bring a tool along); word-split on purpose.
+EDGE_RUN_ARGS=${EDGE_RUN_ARGS:-}
 
 case $EDGE_DRIVER in
 none | external) ;;
@@ -53,7 +56,8 @@ edge_has_bgp() {
 # routes over the BGP-learned routes and has the tools the FRR image lacks.
 edge_client() {
 	case $EDGE_DRIVER in
-	ocibnkctl) "$EDGE_RUNTIME" run --rm --network "container:$EDGE_FRR" "$EDGE_TOOLS_IMAGE" "$@" ;;
+	# shellcheck disable=SC2086 # EDGE_RUN_ARGS is a list of arguments
+	ocibnkctl) "$EDGE_RUNTIME" run --rm --network "container:$EDGE_FRR" $EDGE_RUN_ARGS "$EDGE_TOOLS_IMAGE" "$@" ;;
 	# shellcheck disable=SC2086 # EDGE_EXEC is a command prefix, split on purpose
 	external) $EDGE_EXEC "$@" ;;
 	*) kit_die "edge_client: EDGE_DRIVER=none has no client" ;;
@@ -121,4 +125,27 @@ edge_curls() {
 			EDGE_LAST=$_ecc_b
 		fi
 	done
+}
+
+# edge_bgp_wait WANT [SECONDS] — poll the BGP peer until WANT sessions on
+# the edge L2 (EDGE_PREFIX; empty = any) are Established and its table holds
+# routes from TMM. Sets EDGE_ESTABLISHED (count), EDGE_SUMMARY and EDGE_RIB
+# (last `show ip bgp summary` / `show ip bgp`) and EDGE_ROUTES (1 when routes
+# were seen). Needs edge_has_bgp.
+#
+# A session counts as Established when its State/PfxRcd column holds a prefix
+# count (FRR prints the state name, e.g. Active, otherwise). Not the Up/Down
+# column: that reads 00:02:13 only for a session's first day, 2d17h34m after.
+edge_bgp_wait() {
+	_ebw_want=$1
+	kit_retry "${2:-240}" 5 _edge_bgp_converged
+}
+_edge_bgp_converged() {
+	EDGE_SUMMARY=$(edge_vtysh "show ip bgp summary" 2>&1)
+	EDGE_RIB=$(edge_vtysh "show ip bgp" 2>&1)
+	EDGE_ESTABLISHED=$(printf '%s\n' "$EDGE_SUMMARY" | awk -v p="$EDGE_PREFIX" '
+		$1 ~ /^\*?[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && (p == "" || index($1, p)) && $10 ~ /^[0-9]+$/ { n++ }
+		END { print n + 0 }')
+	case $EDGE_RIB in *192.168.* | *203.0.113.* | *"$EDGE_PREFIX"*) EDGE_ROUTES=1 ;; *) EDGE_ROUTES= ;; esac
+	[ "$EDGE_ESTABLISHED" -ge "$_ebw_want" ] && [ -n "$EDGE_ROUTES" ]
 }

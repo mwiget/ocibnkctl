@@ -22,6 +22,8 @@ cd "$KIT_SCENARIO_DIR" || exit 2
 
 KIT_FAILED=0
 KIT_SKIPPED=0
+# Where scenarios keep downloaded tools (e.g. grpcurl) between runs.
+KIT_CACHE=${KIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/bnk-kit}
 
 kit_log() { printf '%s\n' "$*" >&2; }
 
@@ -99,6 +101,17 @@ kit_done() {
 	_KJ_S=$_kd_s awk 'BEGIN { s = ENVIRON["_KJ_S"]; gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); printf "{\"summary\":\"%s\"}\n", s }'
 	[ "$KIT_FAILED" -eq 0 ] && exit 0
 	exit 1
+}
+
+# kit_fetch URL SHA256 FILE — download URL to FILE unless FILE already has
+# that checksum; aborts if the download does not match.
+kit_fetch() {
+	_kf_sum() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+	[ -f "$3" ] && [ "$(_kf_sum "$3")" = "$2" ] && return 0
+	mkdir -p "$(dirname "$3")" || kit_die "mkdir for $3"
+	curl -fsSL -o "$3.part" "$1" || kit_die "download $1"
+	[ "$(_kf_sum "$3.part")" = "$2" ] || { rm -f "$3.part"; kit_die "checksum mismatch for $1"; }
+	mv "$3.part" "$3"
 }
 
 # kit_retry SECONDS INTERVAL CMD... — rerun CMD until it succeeds or

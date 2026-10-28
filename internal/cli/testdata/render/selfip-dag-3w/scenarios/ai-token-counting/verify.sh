@@ -35,8 +35,7 @@ kit_count "$curls" "$EDGE_OK" "$CURLS" "last: $EDGE_LAST"
 # gateway's metrics), TMM's iRule log lines do not show in `kubectl logs`
 # (observed on BNK 2.4.1: only boot lines remain there), so the counters
 # cannot be checked this way — report that rather than a false failure.
-logging=$(kubectl get cneinstances -A -o jsonpath='{.items[0].spec.telemetry.loggingSubsystem.enabled}')
-if [ "$logging" = true ]; then
+if bnk_logging_subsystem; then
 	kit_skip "$fired" "telemetry.loggingSubsystem is enabled: TMM's iRule logs are not in kubectl logs"
 	kit_done "Gateway annotation reconciled + curls answered (iRule log check skipped)"
 fi
@@ -45,13 +44,8 @@ fi
 # every TMM's log. Per-request lines are recent; the INIT line is logged
 # once when TMM compiles the iRule, so look for it in the whole log (a
 # re-run with an unchanged Gateway does not recompile).
-recent= all=
-for pod in $(bnk_tmm_pods); do
-	recent="$recent
-$(kubectl -n "$BNK_NAMESPACE" logs "$pod" -c f5-tmm --since=60s 2>/dev/null)"
-	all="$all
-$(kubectl -n "$BNK_NAMESPACE" logs "$pod" -c f5-tmm 2>/dev/null)"
-done
+recent=$(bnk_tmm_logs 60s)
+all=$(bnk_tmm_logs)
 seen=$(printf '%s\n' "$recent" | grep -F 'TOKEN(' | head -4 | tr '\n' '|')
 case $all in *"TOKEN COUNTING IRULE INIT"*) init=1 ;; *) init= ;; esac
 case $recent in

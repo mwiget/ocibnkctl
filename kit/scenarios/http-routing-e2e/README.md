@@ -86,7 +86,7 @@ EDGE_DRIVER=external EDGE_EXEC="ssh lab-client" EDGE_VTYSH="ssh lab-frr vtysh -c
 Reproduce the curl manually:
 
 ```bash
-kubectl -n scn-bgp exec deploy/scn-frr -c frr -- \
+docker run --rm --network container:bnk-edge-frr-<cluster> nicolaka/netshoot \
   curl -sS -H 'Host: ocibnkctl.local' http://203.0.113.100/
 # → ocibnkctl-scenario-httproute-e2e-OK
 ```

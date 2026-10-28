@@ -19,12 +19,6 @@ import (
 	// scenario(s) with internal/scenarios at init time. Add new ones
 	// here as they land.
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aiepp"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aisemcache"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/aitokencountdssm"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/bgpanycast"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/corefiles"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/extrespool"
-	_ "github.com/mwiget/ocibnkctl/internal/scenarios/grpcroute"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/llmgateway"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingconfigtenant"
 	_ "github.com/mwiget/ocibnkctl/internal/scenarios/routingtemplate"

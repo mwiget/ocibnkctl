@@ -15,26 +15,8 @@ if ! edge_enabled || ! edge_has_bgp; then
 	kit_done "BGP peering not checked"
 fi
 
-# established PREFIX — count neighbor rows of `show ip bgp summary` on the
-# edge L2 (PREFIX, e.g. 192.168.99.; empty = any) that are Established.
-# Columns: Neighbor V AS MsgRcvd MsgSent TblVer InQ OutQ Up/Down
-# State/PfxRcd ... — FRR prints the prefix count in State/PfxRcd for an
-# Established session and the state name (Active, Idle ...) otherwise. Don't
-# key on Up/Down: it reads 00:02:13 only for the first day, then 2d17h34m.
-established() {
-	printf '%s\n' "$summary" | awk -v p="$1" '
-		$1 ~ /^\*?[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && (p == "" || index($1, p)) && $10 ~ /^[0-9]+$/ { n++ }
-		END { print n + 0 }'
-}
-converged() {
-	summary=$(edge_vtysh "show ip bgp summary" 2>&1)
-	table=$(edge_vtysh "show ip bgp" 2>&1)
-	got=$(established "$EDGE_PREFIX")
-	case $table in *192.168.* | *203.0.113.*) routes=1 ;; *) routes= ;; esac
-	[ "$got" -ge "$want" ] && [ -n "$routes" ]
-}
-kit_retry "$BGP_WAIT" 5 converged
-kit_eq "$peers" "$want/$want established" "$got/$want established"
-if [ -n "$routes" ]; then kit_pass "$rib" "$table"; else kit_fail "$rib" "$table"; fi
+edge_bgp_wait "$want" "$BGP_WAIT"
+kit_eq "$peers" "$want/$want established" "$EDGE_ESTABLISHED/$want established"
+if [ -n "$EDGE_ROUTES" ]; then kit_pass "$rib" "$EDGE_RIB"; else kit_fail "$rib" "$EDGE_RIB"; fi
 
 kit_done "$want TMM(s) Established with external FRR; routes learned"
