@@ -219,6 +219,18 @@ func TestDataplaneMode(t *testing.T) {
 // TestValidateDataplaneMode covers the enum validation + the legacy-bool
 // conflict rule.
 func TestValidateDataplaneMode(t *testing.T) {
+	t.Run("selfip-dag worker cap", func(t *testing.T) {
+		p := goodPoC(t)
+		p.BNK.TMMDataplaneMode = DataplaneSelfIPDAG
+		p.Cluster.TMMNodes = MaxSelfIPDAGWorkers
+		if r := p.Validate(); !r.Valid() {
+			t.Fatalf("%d workers should validate: %v", MaxSelfIPDAGWorkers, r.Errors)
+		}
+		p.Cluster.TMMNodes = MaxSelfIPDAGWorkers + 1
+		if r := p.Validate(); r.Valid() || !strings.Contains(strings.Join(r.Errors, "\n"), "at most") {
+			t.Fatalf("%d workers should fail, got %v", MaxSelfIPDAGWorkers+1, r.Errors)
+		}
+	})
 	t.Run("bad mode value", func(t *testing.T) {
 		p := goodPoC(t)
 		p.BNK.TMMDataplaneMode = "anycast"

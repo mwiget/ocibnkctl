@@ -154,6 +154,11 @@ func (c Cluster) EdgeNet() int {
 // still keeps an accidental large value from oversubscribing the box.
 const MaxTMMNodes = 32
 
+// MaxSelfIPDAGWorkers caps tmm_nodes in selfip-dag mode: each TMM gets a
+// self-IP from 192.0.2.10 up (kit/platform/lib.sh dag_self_ips), and those
+// must stay below the DAG NAD's IPAM range, which starts at .20.
+const MaxSelfIPDAGWorkers = 10
+
 // Networks are the two docker bridge networks attached to both k3s
 // node containers. They exist as "scenery" — a routable space where
 // operators can spin up test clients, routers, or upstreams alongside

@@ -158,11 +158,17 @@ func (p *PoC) Validate() ValidationResult {
 	}
 	// selfip-dag drives TMM through an F5SPKVlan, which BNK 2.4.0 only
 	// reconciles in the legacy SPK model — so this mode renders the
-	// CNEInstance with USE_GATEWAY_SETTINGS=false (see deploy.RenderCNEInstance).
+	// CNEInstance with USE_GATEWAY_SETTINGS=false (kit/platform/lib.sh cne_vars).
 	// That switch is cluster-wide and mutually exclusive: it silences
 	// Infra/GatewaySettings, and with it the platform IPAM pool that
 	// address-less Gateways allocate from. Warn rather than reject — the mode
 	// works, it just costs the Infra-dependent scenarios.
+	if p.BNK.IsSelfIPDAG() && p.Cluster.Workers() > MaxSelfIPDAGWorkers {
+		r.Errors = append(r.Errors, fmt.Sprintf(
+			"cluster.tmm_nodes %d: bnk.tmm_dataplane_mode=%s supports at most %d workers "+
+				"(one self-IP per TMM from 192.0.2.10, below the DAG NAD's IPAM range at .20)",
+			p.Cluster.Workers(), DataplaneSelfIPDAG, MaxSelfIPDAGWorkers))
+	}
 	if p.BNK.IsSelfIPDAG() {
 		r.Warnings = append(r.Warnings, fmt.Sprintf(
 			"bnk.tmm_dataplane_mode=%s selects BNK 2.4's LEGACY SPK network model "+
