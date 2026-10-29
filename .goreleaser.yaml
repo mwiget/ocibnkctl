@@ -22,7 +22,7 @@ builds:
       - -X github.com/mwiget/ocibnkctl/internal/version.Version={{.Version}}
       - -X github.com/mwiget/ocibnkctl/internal/version.Commit={{.ShortCommit}}
       - -X github.com/mwiget/ocibnkctl/internal/version.BuildDate={{.Date}}
-      - -X github.com/mwiget/ocibnkctl/internal/version.BNKVersion=2.4.1
+      - -X github.com/mwiget/ocibnkctl/internal/version.BNKVersion=2.4.2
     goos:
       - linux
       - darwin
@@ -73,7 +73,7 @@ release:
   header: |
     ## ocibnkctl {{ .Tag }}
 
-    Pinned to **BNK 2.4.1**.
+    Pinned to **BNK 2.4.2**.
 
     Download the archive for your platform, extract `ocibnkctl`,
     and place it on your `$PATH`. Verify with:

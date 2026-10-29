@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this binary is
 
 `ocibnkctl` is a single-binary Go CLI that drives a full F5 BIG-IP Next for
-Kubernetes (BNK) 2.4.1 deployment onto a native k3s cluster: one **dedicated
+Kubernetes (BNK) 2.4.2 deployment onto a native k3s cluster: one **dedicated
 control node** (server, tainted `control-plane:NoSchedule`) plus **N worker
 nodes** (`cluster.tmm_nodes`), each labelled `app=f5-tmm`. TMM runs in **demo
 mode** (virtio inside the pod netns, no DPU/SR-IOV) as a FLO **wholeCluster
@@ -60,16 +60,16 @@ make install             # → ~/.local/bin/ocibnkctl
 make test                # go test ./...
 make smoke               # unit tests + Layer-A CLI smoke (no cluster, ~5s) — the gate before pushing
 make fmt vet tidy
-make runner-image RUNNER_VERSION=2.4.1 PUSH=1   # BNK Forge container-runner image
+make runner-image RUNNER_VERSION=2.4.2 PUSH=1   # BNK Forge container-runner image
 ```
 
 Release tagging is unusual and deliberate: the binary is hard-pinned to one BNK
 release, so **every tag carries the `v<BNK>` prefix** and tool-level changes get
-an incrementing suffix rather than a new semver — `v2.4.1`, `v2.4.1-1`,
-`v2.4.1-2`. Pushing any `v*` tag triggers the goreleaser workflow
+an incrementing suffix rather than a new semver — `v2.4.2`, `v2.4.2-1`,
+`v2.4.2-2`. Pushing any `v*` tag triggers the goreleaser workflow
 (`.github/workflows/release.yml`), which is the canonical release path;
 `make release` is the manual fallback. Prior BNK lines live on
-`release/2.4.0`, `release/2.3.2`, `release/2.3.1`, `release/2.3.0`. Full publish chain (binary → runner image → `bnkctl-index`
+`release/2.4.1`, `release/2.4.0`, `release/2.3.2`, `release/2.3.1`, `release/2.3.0`. Full publish chain (binary → runner image → `bnkctl-index`
 digest → BNK Forge) is in `docs/RELEASE.md`.
 
 Run one test:
@@ -191,7 +191,7 @@ internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)
 internal/embedded/     go:embed of PoC scaffolding (AGENTS.md, CLAUDE.md, profiles/)
 kit/                   every applied manifest as plain files + render.sh (see kit/README.md)
-internal/version/      build-stamped version + BNK 2.4.1 pins + min-spec floor
+internal/version/      build-stamped version + BNK 2.4.2 pins + min-spec floor
 ```
 
 **`internal/runtimeenv` matters more than its size suggests.** `ocibnkctl` is a

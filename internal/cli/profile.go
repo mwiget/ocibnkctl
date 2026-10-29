@@ -34,7 +34,7 @@ type profile struct {
 
 var profiles = map[string]profile{
 	"llm-gateway": {
-		summary: "BNK 2.4.1 AI/LLM gateway demo: console, virtual keys, metering, a mock LLM",
+		summary: "BNK AI/LLM gateway demo: console, virtual keys, metering, a mock LLM",
 		apply: func(p *poc.PoC) {
 			p.BNK.AIGateway = poc.AIGateway{Enabled: true, AIMetrics: true}
 			// Clients reach the Gateway VIP from the edge over BGP: the

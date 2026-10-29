@@ -5,10 +5,10 @@ var (
 	Version    = "dev"
 	Commit     = "none"
 	BuildDate  = "unknown"
-	BNKVersion = "2.4.1"
+	BNKVersion = "2.4.2"
 )
 
-// Pinned defaults for BNK 2.4.1 running in demo-mode on the native k3s
+// Pinned defaults for BNK 2.4.2 running in demo-mode on the native k3s
 // backend. The FLO, CIS, and cert-gen chart versions are NOT pinned
 // here — they're resolved at deploy time from the f5-bigip-k8s-manifest
 // release-manifest chart pulled from repo.f5.com (see
@@ -67,7 +67,11 @@ const (
 	// (BOM releases[0].version == 2.4.0; FLO v2.30.0-0.5.2). 2.4.1 keeps
 	// the plain tag and only bumps F5 build suffixes (FLO v2.30.0-0.11.4,
 	// f5ingress v14.91.12-0.18.0, TMM v10.204.15-0.6.0); probed 2026-10-18.
-	CNEManifestVersion = "2.4.1"
+	// 2.4.2 is build bumps again (f5ingress v14.91.12-0.18.1 with chart
+	// v15.1016.2-0.8.3, TMM v10.204.15-0.6.5, CWC chart 0.92.22-0.0.29; FLO
+	// unchanged at v2.30.0-0.11.4) plus the bnk-configurator v0.1.0 image;
+	// probed 2026-10-28.
+	CNEManifestVersion = "2.4.2"
 
 	// FARRegistryHost is the OCI registry hostname for all F5-published
 	// charts and images.

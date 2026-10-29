@@ -62,7 +62,7 @@ invalid value is an error, never a silent fallback:
 
 Profiles seed poc.yaml for one use case (edit it afterwards as usual):
 
-  llm-gateway   BNK 2.4.1 AI/LLM gateway demo — bnk.ai_gateway with metrics;
+  llm-gateway   BNK AI/LLM gateway demo — bnk.ai_gateway with metrics;
                 e2e --with-scenarios then runs bgp-peer-frr + llm-gateway
                 (mock LLM, virtual keys, console). See docs/llm-gateway-howto.md.`,
 		Args: initArgs,
