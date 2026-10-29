@@ -627,7 +627,7 @@ This is the operator + agent guide shipped verbatim into every PoC
 
 #### What this PoC deploys
 
-F5 BIG-IP Next for Kubernetes (BNK) 2.4.1 on a **two-node k3s cluster**:
+F5 BIG-IP Next for Kubernetes (BNK) 2.4.2 on a **two-node k3s cluster**:
 one combined control-plane + worker (server) and one worker (agent)
 dedicated to TMM. The k3s nodes run directly as containers on the host
 OCI runtime (docker or podman) — there is **no kind, no k3d, no

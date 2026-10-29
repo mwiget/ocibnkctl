@@ -26,9 +26,9 @@ ocibnkctl tag  ──goreleaser──>  GitHub release (binaries + checksums)
 
 The binary is hard-pinned to one BNK release, so every tag carries the
 `v<BNK>` prefix: the first release of a BNK line is the bare version
-(`v2.4.1`), and later tool-level releases add a packaging counter `N`
-(`v2.4.1-1`, `v2.4.1-2`, …). Find the last one with
-`git tag -l 'v2.4.1*' --sort=-v:refname | head -1` and bump `N`.
+(`v2.4.2`), and later tool-level releases add a packaging counter `N`
+(`v2.4.2-1`, `v2.4.2-2`, …). Find the last one with
+`git tag -l 'v2.4.2*' --sort=-v:refname | head -1` and bump `N`.
 
 ## Step 1 — tag + publish the binaries
 
@@ -62,9 +62,9 @@ band (the target downloads + checksum-verifies the released binary, so pass the
 same version):
 
 ```bash
-make runner-image RUNNER_VERSION=2.4.1-2 \
+make runner-image RUNNER_VERSION=2.4.2-2 \
   RUNNER_PLATFORM=linux/amd64,linux/arm64 PUSH=1
-docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.4.1-2 \
+docker buildx imagetools inspect ghcr.io/mwiget/ocibnkctl-tools-runner:2.4.2-2 \
   --format '{{.Manifest.Digest}}'
 ```
 
