@@ -163,9 +163,11 @@ loop, so admission (which runs after FLO's apply) is the only durable layer.
 any cluster; variables and defaults in `kit/platform/platform.env`, helpers in
 `kit/platform/lib.sh`). `internal/cli/deploy.go` only gates, maps poc.yaml and
 ocibnkctl's pins onto the scripts' variables (`platformEnv`), and records
-status; change install behaviour in the scripts. `TestPlatformEnvMatchesGo`
-keeps platform.env's defaults equal to the Go pins, `TestPlatformCNEMatchesGo`
-keeps the scripts' CNEInstance equal to Go's (`render` still uses Go).
+status; change install behaviour in the scripts. Every manifest the scripts
+apply comes from a `render_*` function in `lib.sh`, and `ocibnkctl render`
+calls the same functions (`internal/cli/kitrender.go`), so there is one source.
+`TestPlatformEnvMatchesGo` keeps platform.env's defaults equal to the Go pins;
+`internal/cli/kitrender_test.go` pins the rendered manifests' properties.
 
 The deploy phase composes: cert-manager via helm, Multus + whereabouts
 (cluster-wide IPAM for per-TMM net1) and the `bnk-bgp` NAD for the default
@@ -183,8 +185,8 @@ cmd/ocibnkctl/        main entrypoint (just wires internal/cli.NewRootCmd)
 internal/cli/          cobra subcommands — root.go assembles the tree
 internal/poc/          poc.yaml schema + I/O + validation
 internal/cluster/      native k3s backend (Provisioner) + docker/podman wrappers
-internal/deploy/       Go renderers (for `render`), FAR/JWT/manifest helpers (`manifest probe`), Runner (kubectl wrapper)
-internal/scenarios/    test-case framework + per-scenario subpackages (see below)
+internal/deploy/       FAR + release-manifest helpers (`manifest probe`), shared names, Runner (kubectl wrapper)
+internal/scenarios/    test-case framework + the shell-scenario adapter (see below)
 internal/bnkforge/     bnk-forge HTTP client (copy-fork from dpubnkctl)
 internal/runtimeenv/   host-vs-container detection (leaf pkg, stdlib only)
 internal/embedded/     go:embed of PoC scaffolding (AGENTS.md, CLAUDE.md, profiles/)
@@ -214,8 +216,10 @@ renders manifests into `artifacts/scenarios/<name>/`, applies them, asserts
 reconciled state, and writes a JSON+md report under `reports/<timestamp>/`.
 
 Scenarios implement the `Scenario` interface in
-`internal/scenarios/scenario.go`: `Manifests` (pure render) → `Apply` →
-`Verify` → `Cleanup`.
+`internal/scenarios/scenario.go` (`Manifests` → `Apply` → `Verify` →
+`Cleanup`); the one
+implementation is the shell adapter (`internal/scenarios/shell.go`), which
+runs a kit scenario's scripts.
 
 **Every scenario is a script scenario.** Each lives entirely in
 `kit/scenarios/<name>/`: `scenario.yaml` (metadata),
@@ -360,5 +364,4 @@ CLAUDE.md stays short on purpose; the deep write-ups are checked in:
   real e2e report tree.
 - `examples/license-tst-jwt.yaml` — the License + JWKS ConfigMap for a test
   JWT as a plain manifest, for FLO clusters not deployed by ocibnkctl. A test
-  (`internal/deploy/example_license_test.go`) keeps it equal to what
-  `deploy cne` renders.
+  (`TestExampleLicenseTstJWT`) keeps it equal to what `deploy cne` renders.

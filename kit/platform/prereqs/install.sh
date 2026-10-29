@@ -14,18 +14,11 @@ kit_log "[2/5] FAR credential from $FAR_KEY"
 far_init
 
 kit_log "[3/5] namespaces $OPERATOR_NAMESPACE, $SHARED_NAMESPACE"
-for ns in "$OPERATOR_NAMESPACE" "$SHARED_NAMESPACE"; do
-	plat_render namespace.yaml NAME="$ns" | kubectl apply -f - >&2 || kit_die "namespace $ns"
-done
+render_namespaces | kubectl apply -f - >&2 || kit_die "namespaces"
 
 kit_log "[4/5] far-secret in $OPERATOR_NAMESPACE, $SHARED_NAMESPACE, $BNK_NAMESPACE"
-# The credential reaches the renderer through its environment, not its argv.
-DOCKERCONFIGJSON_B64=$(plat_b64 <"$PLAT_WORK/dockerconfig.json")
-export DOCKERCONFIGJSON_B64
-for ns in "$OPERATOR_NAMESPACE" "$SHARED_NAMESPACE" "$BNK_NAMESPACE"; do
-	plat_render far-secret.yaml NAMESPACE="$ns" | kubectl apply -f - >&2 || kit_die "far-secret in $ns"
-done
-unset DOCKERCONFIGJSON_B64
+render_far_secrets >"$PLAT_WORK/far-secrets.yaml" || kit_die "render far-secret"
+kubectl apply -f "$PLAT_WORK/far-secrets.yaml" >&2 || kit_die "apply far-secret"
 
 kit_log "[5/5] cert-manager $CERT_MANAGER_VERSION"
 helm upgrade --install cert-manager cert-manager --repo "$CERT_MANAGER_REPO" --version "$CERT_MANAGER_VERSION" \

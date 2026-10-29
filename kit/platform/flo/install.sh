@@ -38,8 +38,7 @@ kubectl -n cert-manager wait --for=condition=Ready certificate/bnk-ca --timeout=
 
 kit_log "[4/6] FLO $FLO_CHART_VERSION"
 values=$(plat_state flo-values-rendered.yaml)
-plat_render flo-values.yaml OPERATOR_NAMESPACE="$OPERATOR_NAMESPACE" SHARED_NAMESPACE="$SHARED_NAMESPACE" \
-	CLUSTER_ISSUER=bnk-ca-cluster-issuer >"$values" || kit_die "render flo-values.yaml"
+render_flo_values >"$values" || kit_die "render flo-values.yaml"
 helm upgrade --install flo "$FLO_CHART" --version "$FLO_CHART_VERSION" --namespace "$OPERATOR_NAMESPACE" \
 	--create-namespace -f "$values" >&2 || kit_die "helm install FLO"
 

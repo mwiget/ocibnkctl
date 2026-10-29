@@ -1,0 +1,15 @@
+# BNK's PVCs request `storageClassName: standard` — the name kind gives
+# its default local-path StorageClass. k3s instead names its default
+# `local-path`, so without this a fresh k3s cluster has no `standard` SC
+# and every BNK PVC (dssm-db, observers, downloader, …) stays Pending,
+# stalling deploy-cne. We add `standard` backed by the same
+# rancher.io/local-path provisioner k3s already runs. Left non-default:
+# k3s's `local-path` stays the cluster default for any PVC that omits a
+# storageClassName; this only satisfies the ones that name `standard`.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+provisioner: rancher.io/local-path
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer

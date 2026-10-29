@@ -98,7 +98,7 @@ spec:
       #
       #   true  — Infra + GatewaySettings (the F5BnkGateway-pool replacement).
       #           Infra.spec.networks/vrfs program TMM; address-less Gateways
-      #           allocate from the platform Infra IPAM pool (deploy.RenderInfra,
+      #           allocate from the platform Infra IPAM pool (render_infra,
       #           the fic-dynamic-ip scenario). The LEGACY SPK CRs (F5SPKVlan,
       #           Vrf) are still accepted by the API server and the validation
       #           webhook, then never reconciled — no .status, no gRPC push, TMM

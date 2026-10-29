@@ -73,9 +73,11 @@ func TestRenderBundleModes(t *testing.T) {
 }
 
 // Every .yaml in the bundle must parse — a hand operator applies them as-is.
+// platform/ is the kit's own template tree (rendered by its scripts; the
+// rendered copies are the numbered phase directories).
 func TestRenderBundleYAMLParses(t *testing.T) {
 	for _, f := range renderFor(t, poc.DataplaneAnycastBGP) {
-		if !strings.HasSuffix(f.Path, ".yaml") {
+		if !strings.HasSuffix(f.Path, ".yaml") || strings.HasPrefix(f.Path, "platform/") {
 			continue
 		}
 		dec := yaml.NewDecoder(strings.NewReader(f.Body))
@@ -94,11 +96,11 @@ func TestRenderBundleYAMLParses(t *testing.T) {
 }
 
 // Without --include-secrets no file may carry the FAR secret or a JWT, and
-// the License CR is a template the README fills via envsubst.
+// the License CR is a template the README fills via lib/render.sh.
 func TestRenderBundleOmitsSecrets(t *testing.T) {
 	files := renderFor(t, poc.DataplaneAnycastBGP)
 	for _, f := range files {
-		if strings.Contains(f.Body, ".dockerconfigjson:") {
+		if strings.Contains(f.Body, ".dockerconfigjson:") && !strings.Contains(f.Body, ".dockerconfigjson: ${DOCKERCONFIGJSON_B64}") {
 			t.Errorf("%s carries a pull secret", f.Path)
 		}
 		want := os.FileMode(0o644)
@@ -110,8 +112,8 @@ func TestRenderBundleOmitsSecrets(t *testing.T) {
 		}
 	}
 	lic, ok := files["20-cne/04-license.yaml.tmpl"]
-	if !ok || !strings.Contains(lic.Body, "${BNK_JWT}") {
-		t.Fatalf("license template missing or without ${BNK_JWT} placeholder")
+	if !ok || !strings.Contains(lic.Body, "${JWT}") {
+		t.Fatalf("license template missing or without ${JWT} placeholder")
 	}
 }
 

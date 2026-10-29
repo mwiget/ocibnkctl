@@ -3,8 +3,8 @@
 # CWC's built-in test signing certificate expired on 2026-10-11, so a test JWT
 # fails RegistrationFailed ("x509: certificate has expired") unless the License
 # points CWC at TEEM's current test JWKS through spec.jwksConfigMapRef. This is
-# what `ocibnkctl deploy cne` applies for a test JWT (RenderJWKSConfigMap +
-# RenderLicenseCR in internal/deploy/license_cr.go). Production JWTs need
+# what `ocibnkctl deploy cne` applies for a test JWT (render_jwks_configmap +
+# render_license in kit/platform/lib.sh). Production JWTs need
 # neither the ConfigMap nor jwksConfigMapRef.
 #
 # Both objects go in CWC's namespace (f5-cne-core here; FLO's

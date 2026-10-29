@@ -178,10 +178,17 @@ func yamlDocs(docs ...string) string {
 	return strings.Join(docs, "---\n")
 }
 
-// renderBundle builds the full render for p. Pure apart from reading the
+// renderBundle builds the full render for p. The platform manifests come
+// from the kit's own render_* functions (kit/platform/lib.sh), so they are
+// byte for byte what the install scripts apply. Pure apart from reading the
 // PoC's keys (only with includeSecrets), its cached release manifest, and
-// a scratch directory for scenario Manifests().
+// scratch directories for the kit and scenario Manifests().
 func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile, error) {
+	k, err := newKitRenderer(repo, p)
+	if err != nil {
+		return nil, err
+	}
+	defer k.close()
 	b := &renderBuilder{}
 	floVer, certGenVer := resolvedChartVersions(repo, p)
 	mode := p.BNK.DataplaneMode()
@@ -205,25 +212,27 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	b.say("All commands assume `kubectl`/`helm` already point at the target cluster, and that you\n")
 	b.say("have logged in to the F5 registry: see [registry login](#registry-login). On macOS use\n")
 	b.say("`shasum -a 256 -c` for `sha256sum -c` and `sed -i ''` for `sed -i`.\n\n")
+	b.say("The same steps also run as scripts: `platform/<phase>/install.sh` for prereqs, flo, shrink\n")
+	b.say("and cne, with the variables in `platform/platform.env` (set them in the environment).\n")
+	b.say("The files below are rendered by those scripts' own `render_*` functions (`platform/lib.sh`).\n\n")
 
 	// ---- 00 prereqs ----
 	b.say("## 00-prereqs\n\n")
-	b.add("00-prereqs/01-namespaces.yaml", yamlDocs(
-		deploy.RenderNamespace("f5-operators"), deploy.RenderNamespace(shared)))
+	ns, err := k.manifest("render_namespaces")
+	if err != nil {
+		return nil, err
+	}
+	b.add("00-prereqs/01-namespaces.yaml", ns)
 	b.say("```sh\nkubectl apply -f 00-prereqs/01-namespaces.yaml\n```\n\n")
 	b.say("**FAR pull secret** `far-secret` in %s. The FAR tarball holds a base64 GCP\n",
 		backtickJoin(pullNamespaces))
 	b.say("service-account key (`cne_pull_64.json`); the registry user is `_json_key_base64`:\n\n")
 	if includeSecrets {
-		cfg, err := deploy.ExtractFARDockerConfig(resolveRef(repo, p.BNK.FARKeyRef))
+		far, err := k.manifest("render_far_secrets")
 		if err != nil {
 			return nil, fmt.Errorf("--include-secrets: %w", err)
 		}
-		var docs []string
-		for _, ns := range pullNamespaces {
-			docs = append(docs, deploy.RenderFARSecret(ns, cfg))
-		}
-		b.addSecret("00-prereqs/02-far-secret.yaml", yamlDocs(docs...))
+		b.addSecret("00-prereqs/02-far-secret.yaml", far)
 		b.say("```sh\nkubectl apply -f 00-prereqs/02-far-secret.yaml   # contains your FAR credential\n```\n\n")
 	} else {
 		b.say("```sh\ntar -xzf %s   # → cne_pull_64.json\nfor ns in %s; do\n", p.BNK.FARKeyRef, strings.Join(pullNamespaces, " "))
@@ -238,12 +247,12 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 
 	// ---- 10 FLO ----
 	b.say("## 10-flo\n\n")
-	b.add("10-flo/01-bnk-ca-issuer.yaml", deploy.CertIssuerChain())
-	values, err := deploy.RenderFLOValues(deploy.FLOInputs{
-		Namespace:                "f5-operators",
-		SharedComponentNamespace: shared,
-		ClusterIssuer:            "bnk-ca-cluster-issuer",
-	})
+	issuer, err := kit.Read("platform/flo/bnk-ca-issuer.yaml")
+	if err != nil {
+		return nil, err
+	}
+	b.add("10-flo/01-bnk-ca-issuer.yaml", issuer)
+	values, err := k.manifest("render_flo_values")
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +271,7 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	b.say("kubectl -n %s apply -f cwc-license-certs.yaml -f cwc-license-client-certs.yaml\n```\n\n", shared)
 
 	// ---- 15 shrink (optional) ----
-	policy, err := deploy.RenderShrinkPolicy(deploy.ShrinkInputs{})
+	policy, err := k.manifest("render_shrink_policy")
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +282,8 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	b.say("**before** 20-cne creates the TMM/DSSM pods.\n\n```sh\n")
 	b.say("helm upgrade --install kyverno %s --repo %s --namespace kyverno --create-namespace \\\n",
 		version.KyvernoChart, version.KyvernoRepo)
-	b.say("  --version %s %s\n", version.KyvernoVersion, strings.Join(deploy.KyvernoHelmArgs, " "))
+	b.say("  --version %s --set backgroundController.enabled=false --set cleanupController.enabled=false \\\n", version.KyvernoVersion)
+	b.say("  --set reportsController.enabled=false --set admissionController.replicas=1\n")
 	b.say("kubectl -n kyverno wait --for=condition=Available deployment/kyverno-admission-controller --timeout=5m\n")
 	b.say("kubectl apply -f 15-shrink/01-kyverno-shrink-requests.yaml\n```\n\n")
 	if p.BNK.IsSmallHost() {
@@ -281,7 +291,7 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	}
 
 	// ---- 20 CNE ----
-	if err := renderCNE(b, repo, p, includeSecrets); err != nil {
+	if err := renderCNE(b, k, repo, p, includeSecrets); err != nil {
 		return nil, err
 	}
 
@@ -295,18 +305,20 @@ func renderBundle(repo string, p *poc.PoC, includeSecrets bool) ([]renderedFile,
 	b.say("```sh\ntr -d '\\n' < cne_pull_64.json | helm registry login %s --username _json_key_base64 --password-stdin\n```\n",
 		version.FARRegistryHost)
 
-	if err := b.addKitTree("lib", "lib"); err != nil {
-		return nil, err
+	for _, dir := range []string{"lib", "platform"} {
+		if err := b.addKitTree(dir, dir); err != nil {
+			return nil, err
+		}
 	}
 	b.say("\n`lib/render.sh` fills the `${NAME}` placeholders in the `.tmpl` files from environment\n")
 	b.say("variables (POSIX sh + awk, also on macOS); see its header. The other `lib/` files are the\n")
-	b.say("helpers the scenario scripts source.\n")
+	b.say("helpers the scenario scripts source; `platform/` holds the install scripts and their templates.\n")
 
 	b.add("README.md", b.readme.String())
 	return b.files, nil
 }
 
-func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) error {
+func renderCNE(b *renderBuilder, k *kitRenderer, repo string, p *poc.PoC, includeSecrets bool) error {
 	shared := deploy.SharedComponentNamespace
 	b.say("## 20-cne\n\n")
 	n := 0
@@ -314,19 +326,33 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 		n++
 		return fmt.Sprintf("20-cne/%02d-%s.yaml", n, name)
 	}
+	add := func(path, fn string) error {
+		body, err := k.manifest(fn)
+		if err == nil {
+			b.add(path, body)
+		}
+		return err
+	}
 
 	if p.BNK.IsAllActive() {
+		patches, err := k.manifest("multus_patches 100m 200Mi")
+		if err != nil {
+			return err
+		}
+		shrink, err := k.manifest(`printf 'cpu %s, memory %s' "$SHRINK_CPU" "$SHRINK_MEMORY"`)
+		if err != nil {
+			return err
+		}
 		b.say("**Multus** (thick plugin) — download, check, apply, then the two fixes `deploy cne` patches in\n")
 		b.say("(rename-based shim install against the restart deadlock; 500Mi limit against OOMKills):\n\n```sh\n")
 		b.say("curl -fsSLo multus.yaml %s\n", deploy.MultusManifestURL)
 		b.say("echo '%s  multus.yaml' | sha256sum -c -\n", deploy.MultusManifestSHA)
 		b.say("kubectl apply -f multus.yaml\n")
-		for _, patch := range deploy.MultusPatches("100m", "200Mi") {
+		for _, patch := range strings.Split(strings.TrimSpace(patches), "\n") {
 			b.say("kubectl -n kube-system patch daemonset/kube-multus-ds --type=json -p '%s'\n", patch)
 		}
 		b.say("kubectl -n kube-system rollout status daemonset/kube-multus-ds --timeout=3m\n```\n\n")
-		b.say("With 15-shrink applied, use its requests (cpu %s, memory %s) in the second patch.\n\n",
-			deploy.DefaultShrinkCPURequest, deploy.DefaultShrinkMemoryRequest)
+		b.say("With 15-shrink applied, use its requests (%s) in the second patch.\n\n", shrink)
 		b.say("Every node also needs the `bridge` CNI plugin in `/opt/cni/bin` (k3s ships it as `/bin/bridge`;\n")
 		b.say("`deploy cne` copies it there on each node).\n\n")
 	}
@@ -349,8 +375,12 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 		b.say("breaks traffic on the NAD bridge.\n\n")
 
 		nad, ocnos := next("nad-bnk-bgp"), next("ocnos-template")
-		b.add(nad, deploy.RenderBGPNADWhereabouts("default", p.Cluster.EdgeNet()))
-		b.add(ocnos, deploy.RenderAnycastZebosConfigMap("default", peerIP, ""))
+		if err := add(nad, "render_bgp_nad"); err != nil {
+			return err
+		}
+		if err := add(ocnos, "render_ocnos"); err != nil {
+			return err
+		}
 		b.say("The `%s` NAD puts TMM's net1 on bridge `br-bnk-bgp`, which must reach your BGP peer at L2.\n", deploy.BGPNADName)
 		b.say("The OcNOS template peers **%s** (AS %d) from TMM AS %d — edit `neighbor` for your router.\n",
 			peerIP, deploy.BGPPeerAS, deploy.BGPTMMAS)
@@ -358,16 +388,16 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 		b.say("```sh\nkubectl apply -f %s -f %s\n```\n\n", nad, ocnos)
 	case p.BNK.IsSelfIPDAG():
 		nad := next("nad-dag")
-		b.add(nad, deploy.RenderDAGNAD("default"))
+		if err := add(nad, "render_dag_nad"); err != nil {
+			return err
+		}
 		b.say("```sh\nkubectl apply -f %s\n```\n\n", nad)
 	}
 
-	cne, err := deploy.RenderCNEInstance(p)
-	if err != nil {
+	cneFile := next("cne-instance")
+	if err := add(cneFile, "render_cne"); err != nil {
 		return err
 	}
-	cneFile := next("cne-instance")
-	b.add(cneFile, cne)
 	b.say("**CNEInstance** — FLO installs the BNK CRDs (License among them) in response to it:\n\n")
 	b.say("```sh\nkubectl apply -f %s\n", cneFile)
 	b.say("kubectl wait --for=create crd/licenses.k8s.f5net.com --timeout=8m   # first pull of the manifest can be slow\n")
@@ -381,22 +411,24 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 	// Same rule as `deploy cne`: a tst JWT needs TEEM's current tst JWKS
 	// (CWC's built-in tst certs expired). Only the JWT's claims are read
 	// here; the token itself is written only with --include-secrets.
-	jwksCM, err := deploy.RenderJWKSConfigMap(shared)
-	if err != nil {
-		return err
-	}
 	// The ConfigMap shares the License's step number (and sorts first), so
 	// adding it leaves every other file's number unchanged.
 	licFile := next("license")
 	jwksFile := strings.TrimSuffix(licFile, ".yaml") + "-jwks-configmap.yaml"
-	b.add(jwksFile, jwksCM)
-	lic := deploy.LicenseInputs{JWT: "${BNK_JWT}"}
-	switch info, err := deploy.InspectJWT(resolveRef(repo, p.BNK.JWTRef)); {
-	case err == nil && info.Type == "tst":
-		lic.JWKSConfigMap = deploy.JWKSConfigMapName
+	if err := add(jwksFile, "render_jwks_configmap"); err != nil {
+		return err
+	}
+	jwtType, err := k.manifest("jwt_type")
+	if err != nil {
+		return err
+	}
+	jwks := ""
+	switch strings.TrimSpace(jwtType) {
+	case "tst":
+		jwks = deploy.JWKSConfigMapName
 		b.say("This PoC's JWT is a **test** JWT, so the License points CWC at TEEM's current test JWKS\n")
 		b.say("(`%s`, apply it first). Production JWTs need neither.\n\n", jwksFile)
-	case err == nil:
+	case "prod":
 		b.say("This PoC's JWT is a production JWT: skip `%s`, which only test JWTs need.\n\n", jwksFile)
 	default:
 		b.say("For a **test** JWT (`jku` on `product-tst…`): apply `%s` first and add to the License spec\n", jwksFile)
@@ -405,7 +437,7 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 		b.say("need neither.\n\n")
 	}
 	b.say("```sh\n")
-	if lic.JWKSConfigMap != "" {
+	if jwks != "" {
 		b.say("kubectl apply -f %s\n", jwksFile)
 	}
 	if includeSecrets {
@@ -413,54 +445,60 @@ func renderCNE(b *renderBuilder, repo string, p *poc.PoC, includeSecrets bool) e
 		if err != nil {
 			return fmt.Errorf("--include-secrets: %w", err)
 		}
-		lic.JWT = jwt
-		cr, err := deploy.RenderLicenseCR(lic)
+		cr, err := k.manifest("render_license "+jwks, "JWT="+jwt)
 		if err != nil {
 			return err
 		}
 		b.addSecret(licFile, cr)
 		b.say("kubectl apply -f %s   # contains your JWT\n", licFile)
 	} else {
-		cr, err := deploy.RenderLicenseCR(lic)
+		cr, err := k.manifest("render_license "+jwks, "JWT=${JWT}")
 		if err != nil {
 			return err
 		}
 		// .tmpl suffix keeps `kubectl apply -f 20-cne/` from applying the placeholder.
 		licFile += ".tmpl"
 		b.add(licFile, cr)
-		b.say("BNK_JWT=\"$(tr -d '\\n' < %s)\" sh lib/render.sh %s | kubectl apply -f -\n", p.BNK.JWTRef, licFile)
+		b.say("JWT=\"$(tr -d '\\n' < %s)\" sh lib/render.sh %s | kubectl apply -f -\n", p.BNK.JWTRef, licFile)
 	}
 	b.say("kubectl -n %s wait --for=jsonpath='{.status.state}'=Active license.k8s.f5net.com/%s --timeout=20m\n```\n\n",
 		shared, deploy.LicenseCRName)
 
 	gc := next("gatewayclass")
-	b.add(gc, deploy.RenderGatewayClass())
+	if err := add(gc, "render_gatewayclass"); err != nil {
+		return err
+	}
 	b.say("**GatewayClass** — wait for Accepted before creating any Gateway, or the Gateway can stick at\n")
 	b.say("\"Waiting for controller\":\n\n```sh\nkubectl apply -f %s\n", gc)
 	b.say("kubectl wait --for=condition=Accepted gatewayclass/%s --timeout=5m\n```\n\n", deploy.GatewayClassName)
 
 	if p.BNK.IsSelfIPDAG() {
 		vlan := next("f5spkvlan")
-		b.add(vlan, deploy.RenderTMMVlan("default", deploy.DAGSelfIPs(p.Cluster.Workers())))
+		if err := add(vlan, "render_f5spkvlan"); err != nil {
+			return err
+		}
 		b.say("**F5SPKVlan** (once every TMM has net1) — one self-IP per TMM. No Infra CR in this mode:\n")
 		b.say("the legacy SPK network model never reconciles it.\n\n")
 		b.say("```sh\nkubectl apply -f %s\n", vlan)
-		b.say("kubectl -n default wait --for=condition=Programmed f5-spk-vlans/%s --timeout=2m\n```\n\n", deploy.DAGVlanName)
+		b.say("kubectl -n default wait --for=condition=Programmed f5-spk-vlans/f5-tmm-dag --timeout=2m\n```\n\n")
 	} else {
 		infra := next("infra")
-		b.add(infra, deploy.RenderInfra("default"))
-		b.say("**Infra** — the IPAM pool `%s` (%s–%s) for address-less Gateways. Retry if the\n",
-			deploy.DynamicVIPPool, deploy.DynamicVIPRangeStart, deploy.DynamicVIPRangeEnd)
-		b.say("`f5-single-infra-quota` is not populated yet:\n\n")
+		if err := add(infra, "render_infra"); err != nil {
+			return err
+		}
+		b.say("**Infra** — the IPAM pool `bnk-dynamic-vips` (203.0.113.110–203.0.113.119) for address-less\n")
+		b.say("Gateways. Retry if the `f5-single-infra-quota` is not populated yet:\n\n")
 		b.say("```sh\nkubectl apply -f %s\n", infra)
-		b.say("kubectl -n default wait --for=condition=Programmed infras.gateway.k8s.f5.com/%s --timeout=3m\n```\n\n", deploy.InfraName)
+		b.say("kubectl -n default wait --for=condition=Programmed infras.gateway.k8s.f5.com/infra --timeout=3m\n```\n\n")
 	}
 
 	if p.BNK.IsAnycastBGP() {
-		b.say("**BGP bring-up** on every running TMM, once `daemonset/f5-tmm` has rolled out:\n\n```sh\n")
+		b.say("**BGP bring-up** on every running TMM, once `daemonset/f5-tmm` has rolled out (what\n")
+		b.say("`bnk_ocnos_passwd` and `bnk_ocnos_redistribute` in `lib/bnk.sh` do):\n\n```sh\n")
 		b.say("for pod in $(kubectl -n default get pod -l app=f5-tmm --field-selector=status.phase=Running -o name); do\n")
-		b.say("  kubectl -n default exec $pod -c f5-tmm-routing -- sh -c %s\n", shellQuote(deploy.PasswdConfCmd))
-		b.say("  kubectl -n default exec $pod -c f5-tmm-routing -- sh -c %s\n", shellQuote(deploy.OcNOSRedistributeScript()))
+		b.say("  kubectl -n default exec -i $pod -c f5-tmm-routing -- sh -c 'cat > /config/zebos/rd0/passwd.conf' < lib/ocnos-passwd.conf\n")
+		b.say("  LOCAL_AS=%d sh lib/render.sh lib/ocnos-redistribute.cfg |\n", deploy.BGPTMMAS)
+		b.say("    kubectl -n default exec -i $pod -c f5-tmm-routing -- sh -c 'cat > /tmp/redist.cfg; imish -f /tmp/redist.cfg'\n")
 		b.say("done\n```\n\n")
 		b.say("OcNOS only advertises once `redistribute` is re-issued at runtime, hence the second exec.\n\n")
 	}

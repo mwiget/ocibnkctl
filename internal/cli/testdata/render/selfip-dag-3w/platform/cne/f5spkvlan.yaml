@@ -1,0 +1,14 @@
+apiVersion: k8s.f5net.com/v1
+kind: F5SPKVlan
+metadata:
+  name: ${VLAN_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  name: ${VLAN_NAME}
+  category: external
+  interfaces: ["${INTERFACE}"]
+  selfip_v4s: [${SELF_IPS}]
+  prefixlen_v4: ${PREFIX_LEN}
+  pod_hash: ${POD_HASH}
+  cmp_hash: ${POD_HASH}
+  mtu: 1500
