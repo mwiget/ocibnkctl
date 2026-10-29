@@ -18,8 +18,7 @@ kubectl -n kyverno wait --for=condition=Available deployment/kyverno-admission-c
 
 kit_log "[2/4] shrink policy (cpu=$SHRINK_CPU mem=$SHRINK_MEMORY per container, f5-tmm excluded)"
 policy=$(plat_state kyverno-shrink-requests-rendered.yaml)
-plat_render kyverno-shrink-requests.yaml SHARED_NAMESPACE="$SHARED_NAMESPACE" OPERATOR_NAMESPACE="$OPERATOR_NAMESPACE" \
-	CPU_REQUEST="$SHRINK_CPU" MEMORY_REQUEST="$SHRINK_MEMORY" >"$policy" || kit_die "render the shrink policy"
+render_shrink_policy >"$policy" || kit_die "render the shrink policy"
 kubectl apply -f "$policy" >&2 || kit_die "apply the shrink policy"
 
 # Kyverno leaves system namespaces alone and these DaemonSets have no

@@ -108,7 +108,7 @@ controller's `USE_GATEWAY_SETTINGS` env var. Only one of them reconciles
 | address-less Gateway (`fic-dynamic-ip`) | works | unavailable |
 
 So this scenario needs `bnk.tmm_dataplane_mode: selfip-dag`, which renders
-`USE_GATEWAY_SETTINGS=false` (see `deploy.RenderCNEInstance`). `Apply` refuses
+`USE_GATEWAY_SETTINGS=false` (`cne_vars` in `kit/platform/lib.sh`). `Apply` refuses
 up front in any other mode, and if `.vlans` comes back empty `Verify` names
 this as the cause rather than reporting six mysterious field failures.
 

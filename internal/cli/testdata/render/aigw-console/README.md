@@ -20,6 +20,10 @@ All commands assume `kubectl`/`helm` already point at the target cluster, and th
 have logged in to the F5 registry: see [registry login](#registry-login). On macOS use
 `shasum -a 256 -c` for `sha256sum -c` and `sed -i ''` for `sed -i`.
 
+The same steps also run as scripts: `platform/<phase>/install.sh` for prereqs, flo, shrink
+and cne, with the variables in `platform/platform.env` (set them in the environment).
+The files below are rendered by those scripts' own `render_*` functions (`platform/lib.sh`).
+
 ## 00-prereqs
 
 ```sh
@@ -75,7 +79,8 @@ spec, so requests are capped at admission by Kyverno, not in chart values. Must 
 
 ```sh
 helm upgrade --install kyverno kyverno --repo https://kyverno.github.io/kyverno/ --namespace kyverno --create-namespace \
-  --version 3.8.1 --set backgroundController.enabled=false --set cleanupController.enabled=false --set reportsController.enabled=false --set admissionController.replicas=1
+  --version 3.8.1 --set backgroundController.enabled=false --set cleanupController.enabled=false \
+  --set reportsController.enabled=false --set admissionController.replicas=1
 kubectl -n kyverno wait --for=condition=Available deployment/kyverno-admission-controller --timeout=5m
 kubectl apply -f 15-shrink/01-kyverno-shrink-requests.yaml
 ```
@@ -141,7 +146,7 @@ For a **test** JWT (`jku` on `product-tst…`): apply `20-cne/04-license-jwks-co
 need neither.
 
 ```sh
-BNK_JWT="$(tr -d '\n' < keys/.jwt)" sh lib/render.sh 20-cne/04-license.yaml.tmpl | kubectl apply -f -
+JWT="$(tr -d '\n' < keys/.jwt)" sh lib/render.sh 20-cne/04-license.yaml.tmpl | kubectl apply -f -
 kubectl -n f5-cne-core wait --for=jsonpath='{.status.state}'=Active license.k8s.f5net.com/f5-cne-cluster-license --timeout=20m
 ```
 
@@ -153,20 +158,22 @@ kubectl apply -f 20-cne/05-gatewayclass.yaml
 kubectl wait --for=condition=Accepted gatewayclass/bnk-gatewayclass --timeout=5m
 ```
 
-**Infra** — the IPAM pool `bnk-dynamic-vips` (203.0.113.110–203.0.113.119) for address-less Gateways. Retry if the
-`f5-single-infra-quota` is not populated yet:
+**Infra** — the IPAM pool `bnk-dynamic-vips` (203.0.113.110–203.0.113.119) for address-less
+Gateways. Retry if the `f5-single-infra-quota` is not populated yet:
 
 ```sh
 kubectl apply -f 20-cne/06-infra.yaml
 kubectl -n default wait --for=condition=Programmed infras.gateway.k8s.f5.com/infra --timeout=3m
 ```
 
-**BGP bring-up** on every running TMM, once `daemonset/f5-tmm` has rolled out:
+**BGP bring-up** on every running TMM, once `daemonset/f5-tmm` has rolled out (what
+`bnk_ocnos_passwd` and `bnk_ocnos_redistribute` in `lib/bnk.sh` do):
 
 ```sh
 for pod in $(kubectl -n default get pod -l app=f5-tmm --field-selector=status.phase=Running -o name); do
-  kubectl -n default exec $pod -c f5-tmm-routing -- sh -c 'echo '\''enable password 0 zebos'\'' > /config/zebos/rd0/passwd.conf'
-  kubectl -n default exec $pod -c f5-tmm-routing -- sh -c 'printf '\''router bgp 65000\naddress-family ipv4 unicast\nredistribute kernel route-map RMALL\nredistribute connected route-map RMALL\nexit\nexit\n'\'' > /tmp/ocibnkctl-redist.cfg; imish -f /tmp/ocibnkctl-redist.cfg'
+  kubectl -n default exec -i $pod -c f5-tmm-routing -- sh -c 'cat > /config/zebos/rd0/passwd.conf' < lib/ocnos-passwd.conf
+  LOCAL_AS=65000 sh lib/render.sh lib/ocnos-redistribute.cfg |
+    kubectl -n default exec -i $pod -c f5-tmm-routing -- sh -c 'cat > /tmp/redist.cfg; imish -f /tmp/redist.cfg'
 done
 ```
 
@@ -223,4 +230,4 @@ tr -d '\n' < cne_pull_64.json | helm registry login repo.f5.com --username _json
 
 `lib/render.sh` fills the `${NAME}` placeholders in the `.tmpl` files from environment
 variables (POSIX sh + awk, also on macOS); see its header. The other `lib/` files are the
-helpers the scenario scripts source.
+helpers the scenario scripts source; `platform/` holds the install scripts and their templates.

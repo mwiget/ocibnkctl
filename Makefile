@@ -199,7 +199,7 @@ smoke: test build
 	           scenarios/http-routing-e2e/manifests/06-httproute.yaml scenarios/http-routing-e2e/verify.sh; do \
 	    test -s $(SMOKE_DIR)/artifacts/render/$$f || { echo "render MISSING $$f"; exit 1; }; \
 	  done; \
-	  if grep -rq "dockerconfigjson:" $(SMOKE_DIR)/artifacts/render; then \
+	  if grep -r "dockerconfigjson:" $(SMOKE_DIR)/artifacts/render | grep -qv "DOCKERCONFIGJSON_B64}"; then \
 	    echo "render leaked a pull secret"; exit 1; \
 	  fi; \
 	  if ./bin/ocibnkctl render --poc $(SMOKE_DIR) >/dev/null 2>&1; then \

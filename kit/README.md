@@ -70,10 +70,11 @@ Node-level prep (the bridge CNI plugin, bridge netfilter) runs through
 `NODE_EXEC`, a prefix that runs a command on a node (`docker exec` for
 ocibnkctl's k3s-in-containers); left empty, the script says what to do on the
 nodes yourself. With `KIT_STATE` set, the scripts record what they rendered
-and resolved there (`ocibnkctl`: `<PoC>/artifacts`). The CNEInstance they
-render is checked against ocibnkctl's own renderer for every golden PoC shape
-(`TestPlatformCNEMatchesGo`), and `platform.env`'s defaults against
-ocibnkctl's pins (`TestPlatformEnvMatchesGo`).
+and resolved there (`ocibnkctl`: `<PoC>/artifacts`). Every manifest
+they apply comes from a `render_*` function in `lib.sh`, which `ocibnkctl
+render` calls too, so the render bundle is byte for byte what the scripts
+apply. `platform.env`'s defaults are checked against ocibnkctl's pins
+(`TestPlatformEnvMatchesGo`).
 
 ### Manifests
 
