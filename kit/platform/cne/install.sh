@@ -10,10 +10,9 @@
 nodes=$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
 # Multus (thick) unless it is already running, then two fixes to the
-# upstream DaemonSet: install the shim by rename (a plain cp hits "Text file
-# busy" after a node restart and deadlocks every sandbox), and 500Mi memory
-# (50Mi OOMKills under CNI churn), with the shrink policy's requests when it
-# is applied (shrink runs before cne, so it could not cap Multus itself).
+# upstream DaemonSet (multus_patches), with the shrink policy's requests
+# when it is applied (shrink runs before cne, so it could not cap Multus
+# itself).
 ensure_multus() {
 	st=$(kubectl -n kube-system get daemonset/kube-multus-ds -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}' 2>/dev/null)
 	case $st in */* ) [ "${st%%/*}" -gt 0 ] 2>/dev/null && running=1 || running= ;; *) running= ;; esac
@@ -21,14 +20,12 @@ ensure_multus() {
 		kit_fetch "$MULTUS_URL" "$MULTUS_SHA" "$KIT_CACHE/multus/multus-daemonset-thick.yml"
 		kubectl apply -f "$KIT_CACHE/multus/multus-daemonset-thick.yml" >&2 || kit_die "apply Multus"
 	fi
-	kubectl -n kube-system patch daemonset/kube-multus-ds --type=json -p \
-		'[{"op":"replace","path":"/spec/template/spec/initContainers/0/command","value":["/usr/bin/sh","-c","cp -f /usr/src/multus-cni/bin/multus-shim /host/opt/cni/bin/multus-shim.tmp && mv -f /host/opt/cni/bin/multus-shim.tmp /host/opt/cni/bin/multus-shim"]}]' >&2 ||
-		kit_die "patch the Multus shim install"
 	cpu=100m mem=200Mi
 	set -- $(kubectl get clusterpolicy f5-bnk-shrink-requests -o jsonpath='{.spec.rules[?(@.name=="shrink-f5-requests")].mutate.foreach[0].patchStrategicMerge.spec.containers[0].resources.requests.cpu} {.spec.rules[?(@.name=="shrink-f5-requests")].mutate.foreach[0].patchStrategicMerge.spec.containers[0].resources.requests.memory}' 2>/dev/null)
 	[ $# -eq 2 ] && cpu=$1 mem=$2
-	kubectl -n kube-system patch daemonset/kube-multus-ds --type=json -p \
-		"[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/limits/memory\",\"value\":\"500Mi\"},{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/cpu\",\"value\":\"$cpu\"},{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/memory\",\"value\":\"$mem\"}]" >&2
+	multus_patches "$cpu" "$mem" | while IFS= read -r patch; do
+		kubectl -n kube-system patch daemonset/kube-multus-ds --type=json -p "$patch" >&2 || kit_die "patch Multus"
+	done || exit 2
 	kubectl -n kube-system rollout status daemonset/kube-multus-ds --timeout=3m >&2 || kit_die "Multus not rolled out"
 }
 
@@ -65,11 +62,6 @@ bridge_nf_off() {
 	done
 }
 
-ocnos() {
-	plat_render ocnos-template.yaml CONFIGMAP_NAME=f5-tmm-dynamic-routing-template NAMESPACE="$BNK_NAMESPACE" \
-		LOCAL_AS="$LOCAL_AS" PEER_IP="$EDGE_PEER_IP" PEER_AS="$PEER_AS" VIP=
-}
-
 # 0. Data-plane prep: Multus, the bridge plugin and the NAD must all exist
 #    before the CNEInstance attaches the NAD to TMM, or TMM sandboxes fail
 #    ("failed to find plugin bridge").
@@ -78,8 +70,7 @@ selfip-dag)
 	kit_log "[0/4] selfip-dag prep: Multus + bridge CNI + DAG NAD"
 	ensure_multus
 	seed_bridge_plugin
-	plat_render nad-bridge-host-local.yaml NAD_NAME=f5-tmm-dag NAMESPACE="$BNK_NAMESPACE" BRIDGE=br-f5-tmm-dag \
-		SUBNET=192.0.2.0/24 RANGE_START=192.0.2.20 RANGE_END=192.0.2.250 | kubectl apply -f - >&2 || kit_die "apply the DAG NAD"
+	render_dag_nad | kubectl apply -f - >&2 || kit_die "apply the DAG NAD"
 	;;
 anycast-bgp)
 	kit_log "[0/4] anycast-bgp prep: Multus + whereabouts + bridge CNI + bnk-bgp NAD + OcNOS template"
@@ -87,12 +78,10 @@ anycast-bgp)
 	ensure_whereabouts
 	seed_bridge_plugin
 	bridge_nf_off
-	plat_render nad-bridge-whereabouts.yaml NAD_NAME=bnk-bgp NAMESPACE="$BNK_NAMESPACE" BRIDGE=br-bnk-bgp \
-		SUBNET="192.168.$EDGE_OCTET.0/24" RANGE_START="192.168.$EDGE_OCTET.160" RANGE_END="192.168.$EDGE_OCTET.250" |
-		kubectl apply -f - >&2 || kit_die "apply the bnk-bgp NAD"
+	render_bgp_nad | kubectl apply -f - >&2 || kit_die "apply the bnk-bgp NAD"
 	# Pre-seed the routing template before the CNEInstance exists, so TMM
 	# mounts the final config on its first boot instead of rolling again.
-	ocnos | kubectl apply -f - >&2 || kit_log "warning: pre-seed the OcNOS template (falling back to a TMM re-roll later)"
+	render_ocnos | kubectl apply -f - >&2 || kit_log "warning: pre-seed the OcNOS template (falling back to a TMM re-roll later)"
 	;;
 standby) ;;
 *) kit_die "DATAPLANE_MODE=$DATAPLANE_MODE: want anycast-bgp, selfip-dag or standby" ;;
@@ -124,8 +113,7 @@ else
 	# A test JWT needs TEEM's current test JWKS: CWC's built-in test certs
 	# expired. Production JWTs keep CWC's defaults.
 	if [ "$(jwt_type)" = tst ]; then
-		{ printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cwc-jwks-cm\n  namespace: %s\ndata:\n  key: |\n' "$SHARED_NAMESPACE"
-			sed 's/^/    /' jwks-tst.json; } | kubectl apply -f - >&2 || kit_die "apply the JWKS ConfigMap"
+		render_jwks_configmap | kubectl apply -f - >&2 || kit_die "apply the JWKS ConfigMap"
 		jwks=cwc-jwks-cm
 		kit_log "      test JWT — applied $SHARED_NAMESPACE/cwc-jwks-cm, the License references it"
 	fi
@@ -133,8 +121,7 @@ else
 	# The JWT reaches the renderer through its environment, not its argv.
 	JWT=$(tr -d '\n\r ' <"$jwt")
 	export JWT
-	plat_render license.yaml NAME="$lic" NAMESPACE="$SHARED_NAMESPACE" \
-		OPERATION_MODE=connected JWKS_CONFIGMAP="$jwks" JWKS_KEY=key >"$PLAT_WORK/license.yaml" || kit_die "render the License"
+	render_license "$jwks" >"$PLAT_WORK/license.yaml" || kit_die "render the License"
 	unset JWT
 	# CWC creates its ResourceQuota as it reconciles: retry for ~100s.
 	apply_quota_retry "$PLAT_WORK/license.yaml" f5-single-license-quota 100 || kit_die "apply the License"
@@ -155,7 +142,7 @@ fi
 # 4. GatewayClass: wait until the CNE controller accepts it, or the next
 #    Gateway races it and sticks at "Waiting for controller".
 kit_log "[4/4] GatewayClass $GATEWAYCLASS_NAME"
-plat_render gatewayclass.yaml GATEWAYCLASS_NAME="$GATEWAYCLASS_NAME" | kubectl apply -f - >&2 || kit_die "apply the GatewayClass"
+render_gatewayclass | kubectl apply -f - >&2 || kit_die "apply the GatewayClass"
 wait_condition "gatewayclass/$GATEWAYCLASS_NAME" "" Accepted 480 ||
 	kit_die "$GATEWAYCLASS_NAME not Accepted (kubectl describe gatewayclass $GATEWAYCLASS_NAME)"
 
@@ -166,8 +153,7 @@ if [ "$DATAPLANE_MODE" = selfip-dag ]; then
 else
 	kit_log "      Infra infra (IPAM pool bnk-dynamic-vips)"
 	plat_work
-	plat_render infra.yaml INFRA_NAME=infra NAMESPACE="$BNK_NAMESPACE" VIP_POOL=bnk-dynamic-vips \
-		VIP_RANGE_START=203.0.113.110 VIP_RANGE_END=203.0.113.119 >"$PLAT_WORK/infra.yaml"
+	render_infra >"$PLAT_WORK/infra.yaml" || kit_die "render Infra"
 	apply_quota_retry "$PLAT_WORK/infra.yaml" f5-single-infra-quota 360 || kit_die "apply Infra"
 	wait_condition infra/infra "$BNK_NAMESPACE" Programmed 180 ||
 		kit_die "Infra never Programmed (USE_GATEWAY_SETTINGS=true on the CNE controller? kubectl -n $BNK_NAMESPACE describe infra infra)"
@@ -179,16 +165,9 @@ fi
 # 5. The mode's finishing steps, once TMM has net1.
 case $DATAPLANE_MODE in
 selfip-dag)
-	# One self-IP per TMM: 192.0.2.10, .11, ...
-	ips= i=0
-	while [ "$i" -lt "$TMM_WORKERS" ] || [ "$i" -eq 0 ]; do
-		ips=${ips:+$ips,}192.0.2.$((10 + i))
-		i=$((i + 1))
-	done
-	kit_log "[5/5] F5SPKVlan with self-IP(s) $ips + pod_hash DAG"
+	kit_log "[5/5] F5SPKVlan with self-IP(s) $(dag_self_ips) + pod_hash DAG"
 	wait_tmm_net1 f5-tmm-dag 180
-	if plat_render f5spkvlan.yaml VLAN_NAME=f5-tmm-dag NAMESPACE="$BNK_NAMESPACE" INTERFACE=1.1 SELF_IPS="$ips" \
-		PREFIX_LEN=24 POD_HASH=SRC_ADDR | kubectl apply -f - >&2; then
+	if render_f5spkvlan | kubectl apply -f - >&2; then
 		# Applying is not programming: BNK 2.4 reconciles F5SPKVlan only in
 		# the legacy SPK model, and says nothing otherwise.
 		wait_condition f5-spk-vlans/f5-tmm-dag "$BNK_NAMESPACE" Programmed 120 ||
@@ -202,7 +181,7 @@ anycast-bgp)
 	wait_tmm_net1 bnk-bgp 180
 	# Pre-seeded above, so TMM normally booted with it; roll TMM only when
 	# this apply changed it (FLO reasserted its own copy meanwhile).
-	if out=$(ocnos | kubectl apply -f - 2>&1); then
+	if out=$(render_ocnos | kubectl apply -f - 2>&1); then
 		case $out in
 		*unchanged*) kit_log "      OcNOS template already current — no TMM re-roll" ;;
 		*) kubectl -n "$BNK_NAMESPACE" rollout restart daemonset/f5-tmm >&2 || kit_log "warning: restart f5-tmm" ;;

@@ -326,10 +326,11 @@ chosen). As built:
   "Installing BNK with the scripts" section of `kit/README.md`.
 - `ocibnkctl deploy *` keeps the gates, poc.yaml mapping (`platformEnv`),
   reachability and status, and runs the scripts; ~2,200 lines of Go deploy
-  logic are gone. `render` keeps the Go renderers; `TestPlatformCNEMatchesGo`
-  (the scripts' CNEInstance == Go's for every golden PoC shape) and
-  `TestPlatformEnvMatchesGo` (platform.env defaults == ocibnkctl's pins)
-  guard the two from drifting.
+  logic are gone. `render` kept the Go renderers at first, guarded by a
+  parity test; since 2026-10-29 it calls the scripts' own `render_*`
+  functions instead and the Go renderers are deleted (see "Render from the
+  kit" below). `TestPlatformEnvMatchesGo` (platform.env defaults ==
+  ocibnkctl's pins) remains.
 - Gate, on a fresh PoC (BNK 2.4.1, anycast-bgp, one worker, test JWT):
   `e2e` green in ~6 min (prereqs 16s, flo 12s, cne 4m42s; shrink correctly
   skipped), no warnings, License Active via the JWKS path, the applied
@@ -383,6 +384,26 @@ serves that captured output), and `http-routing-e2e` lacked the
 anycast-bgp preflight the Go version had, so it ran and failed instead of
 being skipped (`TestDataPlaneScenariosSkipOutsideAnycast` now requires the
 preflight of every scenario depending on `bgp-peer-frr`).
+
+### Render from the kit (2026-10-29)
+
+`ocibnkctl render` no longer has renderers of its own. Every manifest the
+install scripts apply now comes from a `render_*` function in
+`kit/platform/lib.sh` (`render_namespaces`, `render_far_secrets`,
+`render_flo_values`, `render_shrink_policy`, `render_bgp_nad`,
+`render_dag_nad`, `render_ocnos`, `render_cne`, `render_jwks_configmap`,
+`render_license`, `render_gatewayclass`, `render_infra`, `render_f5spkvlan`,
+plus `multus_patches` and `dag_self_ips`); the scripts pipe them into
+kubectl, and `render` (`internal/cli/kitrender.go`) runs the same functions
+and writes their output. The render bundle also carries `platform/`, so it
+can install BNK by script as well as by hand. The Go renderers in
+`internal/deploy` (~1,500 lines with their tests) are gone; their tests that
+pinned behaviour rather than bytes moved to `internal/cli/kitrender_test.go`
+against the kit's output. The golden files did not change apart from the
+License placeholder (`${JWT}`, the kit's name, was `${BNK_JWT}`). Porting
+the self-IP test exposed a latent gap: selfip-dag self-IPs (`.10` up) meet
+the DAG NAD's IPAM range (`.20`) past 10 workers, while `tmm_nodes` allowed
+32; `validate` now caps selfip-dag at 10.
 
 ## Open questions
 

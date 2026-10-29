@@ -282,5 +282,5 @@ rating).
 - Configure the Network — [clouddocs.f5.com/.../bnk-configure-network.html](https://clouddocs.f5.com/bigip-next-for-kubernetes/2.0.0-GA/bnk-configure-network.html)
 - BIG-IP Next for Kubernetes CRDs index — [clouddocs.f5.com/.../spk-custom-resources.html](https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/spk-custom-resources.html)
 - SPK troubleshooting (mlx5/vfio/DPDK PMD) — [clouddocs.f5.com/.../spk-troubleshooting.html](https://clouddocs.f5.com/bigip-next-for-kubernetes/2.0.0-GA/spk-troubleshooting.html)
-- ocibnkctl side: [`README.md`](../README.md) ("All-active data plane" + "Network topology"); `internal/deploy/activeactive.go` (selfip-dag), `internal/deploy/bgp.go` (anycast-bgp), `internal/poc/schema.go` (`tmm_dataplane_mode`).
+- ocibnkctl side: [`README.md`](../README.md) ("All-active data plane" + "Network topology"); `kit/platform/cne/install.sh` and `kit/platform/lib.sh` (`cne_vars` and the `render_*` functions per mode), `internal/poc/schema.go` (`tmm_dataplane_mode`).
 - Adapted from the sibling [`tmmlite`](https://github.com/mwiget/tmmlitectl) project's [`docs/networking-vs-bnk.md`](https://github.com/mwiget/tmmlitectl/blob/main/docs/networking-vs-bnk.md) and its README "Datapath: two wires and one splice".

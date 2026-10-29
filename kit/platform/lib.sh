@@ -112,10 +112,116 @@ cne_vars() {
 		METRIC_SUBSYSTEM LOGGING_SUBSYSTEM AIGW_ENABLED AIGW_METRICS AIGW_CONSOLE_URL
 }
 
-# render_cne — the CNEInstance for this environment, on stdout.
+# render_* — each platform manifest for this environment, on stdout. The
+# install scripts apply them; `ocibnkctl render` writes them to files.
+# Multi-document output is separated by "---".
+_plat_t() { printf '%s\n' "$KIT_LIB/../platform/$1"; }
+
+render_namespaces() {
+	plat_render "$(_plat_t prereqs/namespace.yaml)" NAME="$OPERATOR_NAMESPACE" &&
+		echo --- && plat_render "$(_plat_t prereqs/namespace.yaml)" NAME="$SHARED_NAMESPACE"
+}
+
+# render_far_secrets — far-secret in the operator, shared and BNK
+# namespaces. Holds the FAR credential.
+render_far_secrets() {
+	far_init
+	# The credential reaches the renderer through its environment, not its argv.
+	DOCKERCONFIGJSON_B64=$(plat_b64 <"$PLAT_WORK/dockerconfig.json")
+	export DOCKERCONFIGJSON_B64
+	_rfs_sep=
+	for _rfs_ns in "$OPERATOR_NAMESPACE" "$SHARED_NAMESPACE" "$BNK_NAMESPACE"; do
+		[ -n "$_rfs_sep" ] && echo ---
+		_rfs_sep=1
+		plat_render "$(_plat_t prereqs/far-secret.yaml)" NAMESPACE="$_rfs_ns" || { unset DOCKERCONFIGJSON_B64; return 1; }
+	done
+	unset DOCKERCONFIGJSON_B64
+}
+
+render_flo_values() {
+	plat_render "$(_plat_t flo/flo-values.yaml)" OPERATOR_NAMESPACE="$OPERATOR_NAMESPACE" \
+		SHARED_NAMESPACE="$SHARED_NAMESPACE" CLUSTER_ISSUER=bnk-ca-cluster-issuer
+}
+
+render_shrink_policy() {
+	plat_render "$(_plat_t shrink/kyverno-shrink-requests.yaml)" SHARED_NAMESPACE="$SHARED_NAMESPACE" \
+		OPERATOR_NAMESPACE="$OPERATOR_NAMESPACE" CPU_REQUEST="$SHRINK_CPU" MEMORY_REQUEST="$SHRINK_MEMORY"
+}
+
+# multus_patches CPU MEMORY — the two JSON patches cne applies to the
+# upstream Multus DaemonSet, one per line: install the shim by rename (a
+# plain cp hits "Text file busy" after a node restart and deadlocks every
+# sandbox), and 500Mi memory (50Mi OOMKills under CNI churn) with CPU/MEMORY
+# requests.
+multus_patches() {
+	printf '%s\n' '[{"op":"replace","path":"/spec/template/spec/initContainers/0/command","value":["/usr/bin/sh","-c","cp -f /usr/src/multus-cni/bin/multus-shim /host/opt/cni/bin/multus-shim.tmp && mv -f /host/opt/cni/bin/multus-shim.tmp /host/opt/cni/bin/multus-shim"]}]'
+	printf '[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"500Mi"},{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"%s"},{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"%s"}]\n' "$1" "$2"
+}
+
+# render_dag_nad — selfip-dag: the f5-tmm-dag NAD (host-local IPAM).
+render_dag_nad() {
+	plat_render "$(_plat_t cne/nad-bridge-host-local.yaml)" NAD_NAME=f5-tmm-dag NAMESPACE="$BNK_NAMESPACE" \
+		BRIDGE=br-f5-tmm-dag SUBNET=192.0.2.0/24 RANGE_START=192.0.2.20 RANGE_END=192.0.2.250
+}
+
+# render_bgp_nad — anycast-bgp: the bnk-bgp NAD (whereabouts IPAM, one
+# pool for every TMM's net1).
+render_bgp_nad() {
+	plat_render "$(_plat_t cne/nad-bridge-whereabouts.yaml)" NAD_NAME=bnk-bgp NAMESPACE="$BNK_NAMESPACE" \
+		BRIDGE=br-bnk-bgp SUBNET="192.168.$EDGE_OCTET.0/24" RANGE_START="192.168.$EDGE_OCTET.160" \
+		RANGE_END="192.168.$EDGE_OCTET.250"
+}
+
+# render_ocnos — anycast-bgp: TMM's OcNOS routing template, peering
+# EDGE_PEER_IP.
+render_ocnos() {
+	plat_render "$(_plat_t cne/ocnos-template.yaml)" CONFIGMAP_NAME=f5-tmm-dynamic-routing-template \
+		NAMESPACE="$BNK_NAMESPACE" LOCAL_AS="$LOCAL_AS" PEER_IP="$EDGE_PEER_IP" PEER_AS="$PEER_AS" VIP=
+}
+
+# render_cne — the CNEInstance.
 render_cne() {
 	cne_vars
-	sh "$KIT_LIB/render.sh" "$KIT_LIB/../platform/cne/cne-instance.yaml"
+	sh "$KIT_LIB/render.sh" "$(_plat_t cne/cne-instance.yaml)"
+}
+
+# render_jwks_configmap — cwc-jwks-cm: TEEM's current test JWKS, which a
+# test JWT's License needs (CWC's built-in test certs expired).
+render_jwks_configmap() {
+	printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cwc-jwks-cm\n  namespace: %s\ndata:\n  key: |\n' "$SHARED_NAMESPACE"
+	sed 's/^/    /' "$(_plat_t cne/jwks-tst.json)"
+}
+
+# render_license [JWKS_CONFIGMAP] — the License, with the JWT from the
+# environment variable JWT (never argv); JWKS_CONFIGMAP for a test JWT.
+render_license() {
+	plat_render "$(_plat_t cne/license.yaml)" NAME=f5-cne-cluster-license NAMESPACE="$SHARED_NAMESPACE" \
+		OPERATION_MODE=connected JWKS_CONFIGMAP="${1:-}" JWKS_KEY=key
+}
+
+render_gatewayclass() {
+	plat_render "$(_plat_t cne/gatewayclass.yaml)" GATEWAYCLASS_NAME="$GATEWAYCLASS_NAME"
+}
+
+# render_infra — the platform Infra CR: IPAM for address-less Gateways.
+render_infra() {
+	plat_render "$(_plat_t cne/infra.yaml)" INFRA_NAME=infra NAMESPACE="$BNK_NAMESPACE" VIP_POOL=bnk-dynamic-vips \
+		VIP_RANGE_START=203.0.113.110 VIP_RANGE_END=203.0.113.119
+}
+
+# dag_self_ips — selfip-dag: one self-IP per TMM, 192.0.2.10, .11, ...
+dag_self_ips() {
+	_dsi= _dsi_i=0
+	while [ "$_dsi_i" -lt "$TMM_WORKERS" ] || [ "$_dsi_i" -eq 0 ]; do
+		_dsi=${_dsi:+$_dsi,}192.0.2.$((10 + _dsi_i))
+		_dsi_i=$((_dsi_i + 1))
+	done
+	printf '%s\n' "$_dsi"
+}
+
+render_f5spkvlan() {
+	plat_render "$(_plat_t cne/f5spkvlan.yaml)" VLAN_NAME=f5-tmm-dag NAMESPACE="$BNK_NAMESPACE" INTERFACE=1.1 \
+		SELF_IPS="$(dag_self_ips)" PREFIX_LEN=24 POD_HASH=SRC_ADDR
 }
 
 # apply_quota_retry MANIFEST QUOTA SECONDS — kubectl apply, retrying while
